@@ -1,4 +1,7 @@
 import Config
+config :scrawly, token_signing_secret: "NEJORPDXRKdx2DeKtIU31gR5wR7fugo8"
+config :bcrypt_elixir, log_rounds: 1
+config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 
 # Configure your database
 #

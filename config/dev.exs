@@ -1,4 +1,5 @@
 import Config
+config :ash, policies: [show_policy_breakdowns?: true]
 
 # Configure your database
 config :scrawly, Scrawly.Repo,
@@ -64,7 +65,7 @@ config :scrawly, ScrawlyWeb.Endpoint,
   ]
 
 # Enable dev routes for dashboard and mailbox
-config :scrawly, dev_routes: true
+config :scrawly, dev_routes: true, token_signing_secret: "d5o3sxoXkmn1mG8nxPzXoPYNC8yNAh7R"
 
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"

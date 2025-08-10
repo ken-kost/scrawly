@@ -15,7 +15,8 @@ defmodule Scrawly.Application do
       # Start a worker by calling: Scrawly.Worker.start_link(arg)
       # {Scrawly.Worker, arg},
       # Start to serve requests, typically the last entry
-      ScrawlyWeb.Endpoint
+      ScrawlyWeb.Endpoint,
+      {AshAuthentication.Supervisor, [otp_app: :scrawly]}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
