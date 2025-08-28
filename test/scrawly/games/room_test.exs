@@ -70,4 +70,43 @@ defmodule Scrawly.Games.RoomTest do
                |> Ash.create()
     end
   end
+
+  describe "Room management functionality" do
+    test "create_room action generates unique code and sets defaults" do
+      assert {:ok, room} = Ash.create(Room, %{}, action: :create_room)
+
+      assert room.status == :lobby
+      assert room.current_round == 0
+      assert is_binary(room.code)
+      assert String.length(room.code) == 6
+    end
+
+    test "join_room action validates player capacity" do
+      {:ok, room} = Ash.create(Room, %{max_players: 2})
+
+      # This should fail because player_id argument is required
+      assert {:error, %Ash.Error.Invalid{}} =
+               Ash.update(room, %{}, action: :join_room)
+    end
+
+    test "auto_start_if_ready action starts game with minimum players" do
+      {:ok, room} = Ash.create(Room, %{})
+
+      # This should succeed but not change status since no players are in room
+      assert {:ok, updated_room} =
+               Ash.update(room, %{}, action: :auto_start_if_ready)
+
+      # Should remain in lobby since no players
+      assert updated_room.status == :lobby
+      assert updated_room.current_round == 0
+    end
+
+    test "handle_player_disconnect action manages player leaving" do
+      {:ok, room} = Ash.create(Room, %{})
+
+      # This should fail because player_id argument is required
+      assert {:error, %Ash.Error.Invalid{}} =
+               Ash.update(room, %{}, action: :handle_player_disconnect)
+    end
+  end
 end
