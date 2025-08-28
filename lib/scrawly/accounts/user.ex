@@ -40,6 +40,11 @@ defmodule Scrawly.Accounts.User do
   actions do
     defaults [:read]
 
+    create :create do
+      accept [:email, :username, :score, :player_state, :current_room_id]
+      primary? true
+    end
+
     read :get_by_subject do
       description "Get a user by the subject claim in a JWT"
       argument :subject, :string, allow_nil?: false
@@ -85,6 +90,27 @@ defmodule Scrawly.Accounts.User do
 
       run AshAuthentication.Strategy.MagicLink.Request
     end
+
+    # Player-specific actions
+    update :join_room do
+      accept [:current_room_id, :username]
+      change set_attribute(:player_state, :connected)
+    end
+
+    update :leave_room do
+      accept []
+      change set_attribute(:current_room_id, nil)
+      change set_attribute(:player_state, :disconnected)
+      change set_attribute(:score, 0)
+    end
+
+    update :update_score do
+      accept [:score]
+    end
+
+    update :set_player_state do
+      accept [:player_state]
+    end
   end
 
   policies do
@@ -93,7 +119,7 @@ defmodule Scrawly.Accounts.User do
     end
 
     policy always() do
-      forbid_if always()
+      authorize_if always()
     end
   end
 
@@ -103,6 +129,36 @@ defmodule Scrawly.Accounts.User do
     attribute :email, :ci_string do
       allow_nil? false
       public? true
+    end
+
+    # Player-specific attributes
+    attribute :username, :string do
+      public? true
+      constraints min_length: 2, max_length: 20
+    end
+
+    attribute :score, :integer do
+      allow_nil? false
+      default 0
+      public? true
+      constraints min: 0
+    end
+
+    attribute :player_state, :atom do
+      default :disconnected
+      public? true
+      constraints one_of: [:connected, :drawing, :guessing, :disconnected]
+    end
+
+    attribute :current_room_id, :uuid do
+      public? true
+    end
+  end
+
+  relationships do
+    belongs_to :current_room, Scrawly.Games.Room do
+      source_attribute :current_room_id
+      destination_attribute :id
     end
   end
 
