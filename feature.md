@@ -91,7 +91,7 @@ MANDATORY BEFORE ANY IMPLEMENTATION:
 **REQUIRED**:
 1. Use TodoWrite to create tasks from implementation checklist
 2. Update `<project_root>/notes/<number>-<name>.md` with a `## Log` section
-3. Log EVERY significant decision or discovery
+3. Log EVERY significant decision or discovery by date and time
 
 ### Step 3.2: Write at least one failing test
 1. Create a test in the most idiomatic place, or create a new test.
@@ -120,7 +120,7 @@ MANDATORY BEFORE ANY IMPLEMENTATION:
 ### Step 4.1: Verification
 **REQUIRED CHECKS**:
 1. All requirements met (check against original list)
-2. All tests passing by running each test individually like so: mix test test/my_test:13 and make sure to give it time to compile and run please!
+2. All tests passing by running each test individually like so: mix test test/my_test:13 and make sure to give it time to compile and run please! When you run test commands do not cancel them with Ctrl + c!
 3. No compilation warnings
 4. Code follows Ash patterns
 

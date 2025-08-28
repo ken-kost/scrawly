@@ -42,24 +42,24 @@ This phase establishes the fundamental game mechanics including basic room manag
 
 ### 3. Real-time Communication Infrastructure
 
-- [ ] Set up Phoenix channels for WebSocket communication
-  - [ ] Create GameChannel for room-specific communication
-  - [ ] Implement presence tracking for players
-  - [ ] Handle connection lifecycle events
-  - [ ] Set up message broadcasting patterns
+- [x] Set up Phoenix channels for WebSocket communication
+  - [x] Create GameChannel for room-specific communication
+  - [x] Implement presence tracking for players
+  - [x] Handle connection lifecycle events
+  - [x] Set up message broadcasting patterns
 
-- [ ] Create channel event handlers
-  - [ ] Drawing events (start, move, stop)
-  - [ ] Chat message events
-  - [ ] Game state update events
-  - [ ] Player action events
+- [x] Create channel event handlers
+  - [x] Drawing events (start, move, stop)
+  - [x] Chat message events
+  - [x] Game state update events
+  - [x] Player action events
 
-- [ ] Unit Tests:
-  - [ ] Test channel join/leave behavior
-  - [ ] Test presence tracking accuracy
-  - [ ] Test message broadcasting
-  - [ ] Test event handler responses
-  - [ ] Test connection error handling
+- [x] Unit Tests:
+  - [x] Test channel join/leave behavior
+  - [x] Test presence tracking accuracy
+  - [x] Test message broadcasting
+  - [x] Test event handler responses
+  - [x] Test connection error handling
 
 ### 4. Frontend Foundation with Hologram
 
