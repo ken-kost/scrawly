@@ -83,7 +83,7 @@ MANDATORY BEFORE ANY IMPLEMENTATION:
 
 1. Create feature branch: git checkout -b feature/<section-number>-<feature-name>
 2. Example: git checkout -b feature/1.3-initial-clustering-infrastructure
-3. Verify you are on the feature branch: git branch
+3. Verify you are on the feature branch: git --no-pager branch
 4. ALL implementation work MUST happen on this feature branch
 5. Keep main branch clean for other work
 
@@ -120,7 +120,7 @@ MANDATORY BEFORE ANY IMPLEMENTATION:
 ### Step 4.1: Verification
 **REQUIRED CHECKS**:
 1. All requirements met (check against original list)
-2. All tests passing
+2. All tests passing by running each test individually like so: mix test test/my_test:13 and make sure to give it time to compile and run please!
 3. No compilation warnings
 4. Code follows Ash patterns
 

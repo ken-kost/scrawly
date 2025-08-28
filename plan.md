@@ -20,25 +20,25 @@ This phase establishes the fundamental game mechanics including basic room manag
 
 ### 2. Room Management System
 
-- [ ] Implement Room resource with Ash
-  - [ ] Create room with unique code generation
-  - [ ] Join room functionality (max 12 players)
-  - [ ] Auto-start when minimum 2 players present
-  - [ ] Handle player disconnection/reconnection
-  - [ ] Room state management (lobby, playing, ended)
+- [x] Implement Room resource with Ash
+  - [x] Create room with unique code generation
+  - [x] Join room functionality (max 12 players)
+  - [x] Auto-start when minimum 2 players present
+  - [x] Handle player disconnection/reconnection
+  - [x] Room state management (lobby, playing, ended)
 
-- [ ] Implement Player resource
-  - [ ] Player creation with username
-  - [ ] Player state tracking (connected, drawing, guessing)
-  - [ ] Score tracking per player
-  - [ ] Current room association
+- [x] Implement Player resource
+  - [x] Player creation with username
+  - [x] Player state tracking (connected, drawing, guessing)
+  - [x] Score tracking per player
+  - [x] Current room association
 
-- [ ] Unit Tests:
-  - [ ] Test room creation and code uniqueness
-  - [ ] Test player joining with capacity limits
-  - [ ] Test auto-start logic with player count
-  - [ ] Test player state transitions
-  - [ ] Test disconnection handling
+- [x] Unit Tests:
+  - [x] Test room creation and code uniqueness
+  - [x] Test player joining with capacity limits
+  - [x] Test auto-start logic with player count
+  - [x] Test player state transitions
+  - [x] Test disconnection handling
 
 ### 3. Real-time Communication Infrastructure
 
