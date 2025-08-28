@@ -12,6 +12,8 @@ defmodule Scrawly.Application do
       Scrawly.Repo,
       {DNSCluster, query: Application.get_env(:scrawly, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Scrawly.PubSub},
+      # Presence tracking for game channels
+      ScrawlyWeb.Presence,
       # Start a worker by calling: Scrawly.Worker.start_link(arg)
       # {Scrawly.Worker, arg},
       # Start to serve requests, typically the last entry
