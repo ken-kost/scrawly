@@ -6,17 +6,17 @@ This phase establishes the fundamental game mechanics including basic room manag
 
 ### 1. Backend Infrastructure Setup
 
-- [ ] Initialize Ash application structure
-  - [ ] Create domain contexts for Game, Room, and Player
-  - [ ] Configure Ash resources with proper attributes and actions
-  - [ ] Set up PostgreSQL data layer with ash_postgres
-  - [ ] Configure Ash authentication for player sessions
+- [x] Initialize Ash application structure
+  - [x] Create domain contexts for Game, Room, and Player
+  - [x] Configure Ash resources with proper attributes and actions
+  - [x] Set up PostgreSQL data layer with ash_postgres
+  - [x] Configure Ash authentication for player sessions
 
-- [ ] Unit Tests:
-  - [ ] Test Ash resource creation and validation
-  - [ ] Test domain context boundaries
-  - [ ] Test database migrations and schema
-  - [ ] Test authentication token generation
+- [x] Unit Tests:
+  - [x] Test Ash resource creation and validation
+  - [x] Test domain context boundaries
+  - [x] Test database migrations and schema
+  - [x] Test authentication token generation
 
 ### 2. Room Management System
 
