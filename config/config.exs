@@ -51,7 +51,7 @@ config :spark,
 config :scrawly,
   ecto_repos: [Scrawly.Repo],
   generators: [timestamp_type: :utc_datetime],
-  ash_domains: [Scrawly.Accounts]
+  ash_domains: [Scrawly.Games, Scrawly.Accounts]
 
 # Configures the endpoint
 config :scrawly, ScrawlyWeb.Endpoint,
