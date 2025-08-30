@@ -63,22 +63,22 @@ This phase establishes the fundamental game mechanics including basic room manag
 
 ### 4. Frontend Foundation with Hologram
 
-- [ ] Set up Hologram pages structure
-  - [ ] Create HomePage for room selection
-  - [ ] Create GamePage for main gameplay
-  - [ ] Set up routing between pages
-  - [ ] Configure layouts for consistent UI
+- [x] Set up Hologram pages structure
+  - [x] Create HomePage for room selection
+  - [x] Create GamePage for main gameplay
+  - [x] Set up routing between pages
+  - [x] Configure layouts for consistent UI
 
-- [ ] Implement basic UI components
-  - [ ] RoomList component for available rooms
-  - [ ] PlayerList component showing connected players
-  - [ ] ChatBox component for messages
-  - [ ] ScoreBoard component for current standings
+- [x] Implement basic UI components
+  - [x] RoomList component for available rooms
+  - [x] PlayerList component showing connected players
+  - [x] ChatBox component for messages
+  - [x] ScoreBoard component for current standings
 
-- [ ] Unit Tests:
-  - [ ] Test page routing and navigation
-  - [ ] Test component state management
-  - [ ] Test component event handling
+- [x] Unit Tests:
+  - [x] Test page routing and navigation
+  - [x] Test component state management
+  - [x] Test component event handling
   - [ ] Test UI state synchronization
 
 ### 5. Drawing System Implementation
