@@ -43,6 +43,8 @@ defmodule ScrawlyWeb.Router do
 
     auth_routes AuthController, Scrawly.Accounts.User, path: "/auth"
     sign_out_route AuthController
+    # Home page route
+    get "/", PageController, :show
 
     # Remove these if you'd like to use your own authentication views
     sign_in_route register_path: "/register",
