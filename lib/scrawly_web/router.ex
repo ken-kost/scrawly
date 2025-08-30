@@ -41,7 +41,6 @@ defmodule ScrawlyWeb.Router do
   scope "/", ScrawlyWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
     auth_routes AuthController, Scrawly.Accounts.User, path: "/auth"
     sign_out_route AuthController
 
