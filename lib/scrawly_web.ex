@@ -38,7 +38,7 @@ defmodule ScrawlyWeb do
 
   def controller do
     quote do
-      use Phoenix.Controller, formats: [:html, :json]
+      use Phoenix.Controller, formats: [:html, :json], layouts: [html: ScrawlyWeb.Layouts]
 
       use Gettext, backend: ScrawlyWeb.Gettext
 
@@ -50,7 +50,7 @@ defmodule ScrawlyWeb do
 
   def live_view do
     quote do
-      use Phoenix.LiveView
+      use Phoenix.LiveView, layout: {ScrawlyWeb.Layouts, :app}
 
       unquote(html_helpers())
     end
@@ -89,7 +89,6 @@ defmodule ScrawlyWeb do
 
       # Common modules used in templates
       alias Phoenix.LiveView.JS
-      alias ScrawlyWeb.Layouts
 
       # Routes generation with the ~p sigil
       unquote(verified_routes())

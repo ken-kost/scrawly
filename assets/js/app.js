@@ -21,14 +21,12 @@ import "phoenix_html"
 // Establish Phoenix Socket and LiveView configuration.
 import { Socket } from "phoenix"
 import { LiveSocket } from "phoenix_live_view"
-import { hooks as colocatedHooks } from "phoenix-colocated/scrawly"
 import topbar from "../vendor/topbar"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
-  params: { _csrf_token: csrfToken },
-  hooks: { ...colocatedHooks },
+  params: { _csrf_token: csrfToken }
 })
 
 // Show progress bar on live navigation and form submits
@@ -46,7 +44,7 @@ liveSocket.connect()
 window.liveSocket = liveSocket
 
 // expose gameSocket on window for game functionality
-window.gameSocket = gameSocket
+//window.gameSocket = gameSocket
 
 // The lines below enable quality of life phoenix_live_reload
 // development features:
@@ -54,32 +52,19 @@ window.gameSocket = gameSocket
 //     1. stream server logs to the browser console
 //     2. click on elements to jump to their definitions in your code editor
 //
-if (process.env.NODE_ENV === "development") {
-  window.addEventListener("phx:live_reload:attached", ({ detail: reloader }) => {
-    // Enable server log streaming to client.
-    // Disable with reloader.disableServerLogs()
-    reloader.enableServerLogs()
+// if (process.env.NODE_ENV === "development") {
+//   window.addEventListener("phx:live_reload:attached", ({ detail: reloader }) => {
+//     // Enable server log streaming to client.
+//     // Disable with reloader.disableServerLogs()
+//     reloader.enableServerLogs()
 
-    // Open configured PLUG_EDITOR at file:line of the clicked element's HEEx component
-    //
-    //   * click with "c" key pressed to open at caller location
-    //   * click with "d" key pressed to open at function component definition location
-    let keyDown
-    window.addEventListener("keydown", e => keyDown = e.key)
-    window.addEventListener("keyup", e => keyDown = null)
-    window.addEventListener("click", e => {
-      if (keyDown === "c") {
-        e.preventDefault()
-        e.stopImmediatePropagation()
-        reloader.openEditorAtCaller(e.target)
-      } else if (keyDown === "d") {
-        e.preventDefault()
-        e.stopImmediatePropagation()
-        reloader.openEditorAtDef(e.target)
-      }
-    }, true)
+//     // Open configured PLUG_EDITOR at file:line of the clicked element's HEEx component
+//     //
+//     //   * click with "c" key pressed to open at caller location
+//     //   * click with "d" key pressed to open at function component definition location
 
-    window.liveReloader = reloader
-  })
-}
+
+//     window.liveReloader = reloader
+//   })
+// }
 

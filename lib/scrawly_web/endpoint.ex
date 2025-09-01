@@ -15,9 +15,9 @@ defmodule ScrawlyWeb.Endpoint do
     websocket: [connect_info: [session: @session_options]],
     longpoll: [connect_info: [session: @session_options]]
 
-  socket "/socket", ScrawlyWeb.UserSocket,
-    websocket: true,
-    longpoll: false
+  # socket "/socket", ScrawlyWeb.UserSocket,
+  #   websocket: true,
+  #   longpoll: false
 
   # Serve at "/" the static files from "priv/static" directory.
   #
@@ -27,12 +27,12 @@ defmodule ScrawlyWeb.Endpoint do
   plug Plug.Static,
     at: "/",
     from: :scrawly,
-    gzip: not code_reloading?,
+    gzip: false,
     only: ["hologram" | ScrawlyWeb.static_paths()]
 
-  if Code.ensure_loaded?(Tidewave) do
-    plug Tidewave
-  end
+  # if Code.ensure_loaded?(Tidewave) do
+  #   plug Tidewave
+  # end
 
   # Code reloading can be explicitly enabled under the
   # :code_reloader configuration of your endpoint.
@@ -59,6 +59,7 @@ defmodule ScrawlyWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
+
   plug Hologram.Router
   plug ScrawlyWeb.Router
 end

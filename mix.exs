@@ -10,8 +10,7 @@ defmodule Scrawly.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
-      compilers: [:phoenix_live_view, :hologram] ++ Mix.compilers(),
-      listeners: [Phoenix.CodeReloader],
+      compilers: Mix.compilers() ++ [:hologram],
       consolidate_protocols: Mix.env() != :dev
     ]
   end
@@ -33,8 +32,8 @@ defmodule Scrawly.MixProject do
   end
 
   # Specifies which paths to compile per environment.
-  defp elixirc_paths(:test), do: ["lib", "test/support"]
-  defp elixirc_paths(_), do: ["lib"]
+  defp elixirc_paths(:test), do: ["app", "lib", "test/support"]
+  defp elixirc_paths(_), do: ["app", "lib"]
 
   # Specifies your project dependencies.
   #
@@ -46,7 +45,6 @@ defmodule Scrawly.MixProject do
       {:picosat_elixir, "~> 0.2"},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:tidewave, "~> 0.3", only: [:dev]},
-      {:live_debugger, "~> 0.3", only: [:dev]},
       {:ash_admin, "~> 0.13"},
       {:ash_authentication_phoenix, "~> 2.0"},
       {:ash_authentication, "~> 4.0"},
@@ -54,16 +52,16 @@ defmodule Scrawly.MixProject do
       {:ash_phoenix, "~> 2.0"},
       {:ash, "~> 3.0"},
       {:igniter, "~> 0.6", only: [:dev, :test]},
-      {:phoenix, "~> 1.8.0"},
+      {:phoenix, "~> 1.7.20"},
       {:phoenix_ecto, "~> 4.5"},
       {:ecto_sql, "~> 3.13"},
       {:postgrex, ">= 0.0.0"},
       {:phoenix_html, "~> 4.1"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
-      {:phoenix_live_view, "~> 1.1.0"},
+      {:phoenix_live_view, "~> 1.0.0", override: true},
       {:lazy_html, ">= 0.1.0", only: :test},
       {:phoenix_live_dashboard, "~> 0.8.3"},
-      {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
+      {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
       {:tailwind, "~> 0.3", runtime: Mix.env() == :dev},
       {:heroicons,
        github: "tailwindlabs/heroicons",
@@ -73,12 +71,13 @@ defmodule Scrawly.MixProject do
        compile: false,
        depth: 1},
       {:swoosh, "~> 1.16"},
+      {:finch, "~> 0.13"},
       {:req, "~> 0.5"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 0.26"},
       {:jason, "~> 1.2"},
-      {:dns_cluster, "~> 0.2.0"},
+      {:dns_cluster, "~> 0.1.1"},
       {:bandit, "~> 1.5"}
     ]
   end

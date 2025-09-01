@@ -33,7 +33,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
         </div>
 
         <div class="text-center mb-8">
-          <button $click="like_post" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-6 rounded-lg">
+          <button $click={:show_create_room} class="bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-6 rounded-lg">
             Create New Room
           </button>
         </div>
@@ -66,6 +66,17 @@ defmodule ScrawlyWeb.Pages.HomePage do
     """
   end
 
+  def command(:save_like, params, server) do
+    # In real app, save to database
+    IO.inspect("Liked post #{params.post_id}")
+    server
+  end
+
+  def action(:show_create_room, _params, component) do
+    IO.inspect("DEBUG: show_create_room action called")
+    put_state(component, :show_create_room, true)
+  end
+
   def action(:like_post, _params, component) do
     IO.inspect("like_post")
     # Update likes locally first for instant feedback
@@ -74,19 +85,8 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_command(:save_like, post_id: component.state.post.id)
   end
 
-  def command(:save_like, params, server) do
-    # In real app, save to database
-    IO.puts("Liked post #{params.post_id}")
-    server
-  end
-
-  def action(:show_create_room, _params, component) do
-    IO.puts("DEBUG: show_create_room action called")
-    put_state(component, :show_create_room, true)
-  end
-
   def action("hide_create_room", _params, component) do
-    IO.puts("DEBUG: hide_create_room action called")
+    IO.inspect("DEBUG: hide_create_room action called")
 
     component
     |> put_state(:show_create_room, false)
