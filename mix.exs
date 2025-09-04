@@ -42,7 +42,9 @@ defmodule Scrawly.MixProject do
   defp deps do
     [
       {:usage_rules, "~> 0.1", only: [:dev]},
-      {:hologram, "~> 0.5.1"},
+      {:hologram,
+       git: "https://github.com/bartblast/hologram.git",
+       ref: "28b3cfe7e19ddd6c6bff96d84a7cbc6f7405f927"},
       {:picosat_elixir, "~> 0.2"},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:tidewave, "~> 0.3", only: [:dev]},

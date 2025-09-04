@@ -15,9 +15,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
     |> put_state(:room_id, params.room_id)
     |> put_state(:room_name, "Room #{params.room_id}")
     |> put_state(:players, [
-      %{id: 1, name: "You", score: 0, is_connected: true},
-      %{id: 2, name: "Alice", score: 15, is_connected: true},
-      %{id: 3, name: "Bob", score: 8, is_connected: false}
+      %{id: 1, username: "You", score: 0, is_connected: true},
+      %{id: 2, username: "Alice", score: 15, is_connected: true},
+      %{id: 3, username: "Bob", score: 8, is_connected: false}
     ])
     |> put_state(:current_drawer, %{id: 2, name: "Alice"})
     |> put_state(:current_word, "_ _ _   _ _ _ _")
@@ -55,7 +55,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     put_state(component, :new_message, message)
   end
 
-  def action("leave_room", _params, component) do
+  def action(:leave_room, _params, component) do
     put_page(component, ScrawlyWeb.Pages.HomePage)
   end
 

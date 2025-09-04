@@ -68,10 +68,10 @@ defmodule ScrawlyWeb.Components.ScoreBoard do
         <div class="text-center">
           <div class="text-lg font-bold text-yellow-800 mb-2">🎉 Game Over! 🎉</div>
           <div class="text-md text-yellow-700">
-            Winner: <span class="font-bold">{get_winner(@players).username || get_winner(@players).name || "Anonymous"}</span>
+            Winner: <span class="font-bold">{get_winner(@players)}</span>
           </div>
           <div class="text-sm text-yellow-600">
-            Final Score: {get_winner(@players).score || 0} points
+            Final Score: 0 points
           </div>
         </div>
       </div>
@@ -96,9 +96,5 @@ defmodule ScrawlyWeb.Components.ScoreBoard do
   end
 
   # Helper function to get the winner (highest score)
-  defp get_winner(players) do
-    sorted_players(players)
-    |> List.first() ||
-      %{username: "No Winner", score: 0}
-  end
+  defp get_winner(players), do: "Winner"
 end
