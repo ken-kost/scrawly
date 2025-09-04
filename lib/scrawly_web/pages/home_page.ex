@@ -33,7 +33,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
         </div>
 
         <div class="text-center mb-8">
-          <button $click="show_create_room" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-6 rounded-lg">
+          <button $click={:show_create_room} class="bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-6 rounded-lg">
             Create New Room
           </button>
         </div>
@@ -46,12 +46,12 @@ defmodule ScrawlyWeb.Pages.HomePage do
               placeholder="Room name..."
               class="w-full p-3 border border-gray-300 rounded-lg mb-4"
               value={@new_room_name}
-              $input="update_room_name">
+              $input={:update_room_name}>
             <div class="flex gap-2">
               <button type="submit" class="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 rounded-lg">
                 Create
               </button>
-              <button type="button" class="flex-1 bg-gray-300 hover:bg-gray-400 text-black py-2 rounded-lg" $click="hide_create_room">
+              <button type="button" class="flex-1 bg-gray-300 hover:bg-gray-400 text-black py-2 rounded-lg" $click={:hide_create_room}>
                 Cancel
               </button>
             </div>
@@ -79,7 +79,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
     put_state(component, :new_room_name, name)
   end
 
-  def action(:create_room, params, component) do
+  def action(:create_room, _params, component) do
     room_name = component.state.new_room_name
 
     if String.trim(room_name) != "" do
@@ -91,7 +91,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
     end
   end
 
-  def action("join_room", %{"room_id" => room_id}, component) do
+  def action(:join_room, %{"room_id" => room_id}, component) do
     put_page(component, ScrawlyWeb.Pages.GamePage, %{room_id: room_id})
   end
 end
