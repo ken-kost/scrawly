@@ -80,21 +80,21 @@ defmodule ScrawlyWeb.Components.ScoreBoard do
   end
 
   # Helper function to sort players by score (descending)
-  defp sorted_players(players) do
-    Enum.sort_by(players, &(&1.score || 0), :desc)
-  end
+  # defp sorted_players(players) do
+  #   Enum.sort_by(players, &(&1.score || 0), :desc)
+  # end
 
   # Helper function to get player rank
-  defp get_player_rank(player, players) do
-    sorted_players(players)
-    |> Enum.with_index(1)
-    |> Enum.find(fn {p, _rank} -> p.id == player.id end)
-    |> case do
-      {_player, rank} -> rank
-      nil -> "?"
-    end
-  end
+  # defp get_player_rank(player, players) do
+  #   sorted_players(players)
+  #   |> Enum.with_index(1)
+  #   |> Enum.find(fn {p, _rank} -> p.id == player.id end)
+  #   |> case do
+  #     {_player, rank} -> rank
+  #     nil -> "?"
+  #   end
+  # end
 
   # Helper function to get the winner (highest score)
-  defp get_winner(players), do: "Winner"
+  defp get_winner(_players), do: "Winner"
 end

@@ -35,13 +35,13 @@ defmodule ScrawlyWeb.Components.RoomList do
                 </div>
               </div>
               <div class="flex gap-2">
-                <button 
-                  class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors" 
+                <button
+                  class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                   $click={"join_room", %{room_id: "1"}}>
                   Join
                 </button>
-                <button 
-                  class="bg-gray-300 hover:bg-gray-400 text-black px-4 py-2 rounded-lg text-sm font-medium transition-colors" 
+                <button
+                  class="bg-gray-300 hover:bg-gray-400 text-black px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                   $click={"watch_room", %{room_id: "1"}}>
                   Watch
                 </button>
@@ -62,13 +62,13 @@ defmodule ScrawlyWeb.Components.RoomList do
                 </div>
               </div>
               <div class="flex gap-2">
-                <button 
-                  class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors" 
+                <button
+                  class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                   $click={"join_room", %{room_id: "2"}}>
                   Join
                 </button>
-                <button 
-                  class="bg-gray-300 hover:bg-gray-400 text-black px-4 py-2 rounded-lg text-sm font-medium transition-colors" 
+                <button
+                  class="bg-gray-300 hover:bg-gray-400 text-black px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                   $click={"watch_room", %{room_id: "2"}}>
                   Watch
                 </button>
@@ -86,13 +86,13 @@ defmodule ScrawlyWeb.Components.RoomList do
                 </div>
               </div>
               <div class="flex gap-2">
-                <button 
-                  class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors" 
+                <button
+                  class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                   $click={"join_room", %{room_id: "3"}}>
                   Join
                 </button>
-                <button 
-                  class="bg-gray-300 hover:bg-gray-400 text-black px-4 py-2 rounded-lg text-sm font-medium transition-colors" 
+                <button
+                  class="bg-gray-300 hover:bg-gray-400 text-black px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                   $click={"watch_room", %{room_id: "3"}}>
                   Watch
                 </button>
@@ -105,12 +105,12 @@ defmodule ScrawlyWeb.Components.RoomList do
     """
   end
 
-  def action("join_room", %{"room_id" => room_id}, component) do
+  def action(:join_room, %{"room_id" => room_id}, component) do
     # Navigate directly to the game page
     put_page(component, ScrawlyWeb.Pages.GamePage, %{room_id: room_id})
   end
 
-  def action("watch_room", %{"room_id" => room_id}, component) do
+  def action(:watch_room, %{"room_id" => room_id}, component) do
     # Navigate directly to the game page (same as join for now)
     put_page(component, ScrawlyWeb.Pages.GamePage, %{room_id: room_id})
   end
