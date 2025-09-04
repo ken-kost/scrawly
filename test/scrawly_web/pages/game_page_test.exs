@@ -19,14 +19,14 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
   describe "action/3" do
     test "update_message updates the message" do
       component = %Hologram.Component{state: %{new_message: ""}}
-      result = GamePage.action("update_message", %{"value" => "Hello"}, component)
+      result = GamePage.action(:update_message, %{event: %{value: "Hello"}}, component)
 
       assert result.state.new_message == "Hello"
     end
 
     test "send_message adds message and clears input" do
       component = %Hologram.Component{state: %{new_message: "Test message", chat_messages: []}}
-      result = GamePage.action("send_message", %{}, component)
+      result = GamePage.action(:send_message, %{}, component)
 
       assert result.state.new_message == ""
       assert length(result.state.chat_messages) == 1
@@ -35,7 +35,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
 
     test "send_message ignores empty messages" do
       component = %Hologram.Component{state: %{new_message: "   ", chat_messages: []}}
-      result = GamePage.action("send_message", %{}, component)
+      result = GamePage.action(:send_message, %{}, component)
 
       assert result.state.new_message == "   "
       assert length(result.state.chat_messages) == 0

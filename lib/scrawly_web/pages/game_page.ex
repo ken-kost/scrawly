@@ -7,7 +7,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   param :room_id, :string
 
-  alias ScrawlyWeb.Components.{PlayerList, ChatBox, ScoreBoard}
+  alias ScrawlyWeb.Components.{PlayerList, ChatBox, ScoreBoard, DrawingCanvas}
 
   def init(params, component, _server) do
     # Simulating room data for now
@@ -29,7 +29,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     |> put_state(:is_drawer, false)
   end
 
-  def action("send_message", _params, component) do
+  def action(:send_message, _params, component) do
     message = component.state.new_message
 
     if String.trim(message) != "" do
@@ -51,7 +51,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  def action("update_message", %{"value" => message}, component) do
+  def action(:update_message, %{event: %{value: message}}, component) do
     put_state(component, :new_message, message)
   end
 
@@ -65,7 +65,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
       <div class="bg-white shadow-sm border-b p-4">
         <div class="max-w-7xl mx-auto flex items-center justify-between">
           <div class="flex items-center gap-4">
-            <button class="text-black hover:text-gray-700" $click="leave_room">← Back</button>
+            <button class="text-black hover:text-gray-700" $click={:leave_room}>← Back</button>
             <h1 class="text-xl font-semibold text-black">{@room_name}</h1>
             <span class="text-sm text-gray-500">Round {@round}/{@total_rounds}</span>
           </div>
@@ -102,9 +102,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
               <span $show={!@is_drawer}>Guess the word!</span>
             </div>
           </div>
-          <div class="border border-gray-300 bg-gray-50 h-96 rounded flex items-center justify-center">
-            <p class="text-gray-500">Canvas placeholder - Drawing system coming soon!</p>
-          </div>
+          <DrawingCanvas
+            cid="drawing_canvas"
+            room_id={@room_id}
+            is_drawer={@is_drawer}
+            disabled={false} />
         </div>
 
         <!-- Right Sidebar: Chat -->

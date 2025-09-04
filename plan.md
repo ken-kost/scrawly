@@ -83,24 +83,24 @@ This phase establishes the fundamental game mechanics including basic room manag
 
 ### 5. Drawing System Implementation
 
-- [ ] Create DrawingCanvas component
-  - [ ] Implement SVG-based drawing (referencing draw.md)
-  - [ ] Handle pointer events (down, move, up, cancel)
-  - [ ] Track drawing state and path data
-  - [ ] Implement clear canvas functionality
+- [x] Create DrawingCanvas component
+  - [x] Implement SVG-based drawing (referencing draw.md)
+  - [x] Handle pointer events (down, move, up, cancel)
+  - [x] Track drawing state and path data
+  - [x] Implement clear canvas functionality
 
-- [ ] Synchronize drawing across clients
-  - [ ] Batch drawing coordinates for efficiency
-  - [ ] Broadcast drawing updates via WebSocket
-  - [ ] Handle drawing playback for late joiners
-  - [ ] Optimize for performance with throttling
+- [x] Synchronize drawing across clients
+  - [x] Batch drawing coordinates for efficiency
+  - [x] Broadcast drawing updates via WebSocket
+  - [x] Handle drawing playback for late joiners
+  - [x] Optimize for performance with throttling
 
-- [ ] Unit Tests:
-  - [ ] Test drawing event capture
-  - [ ] Test path data generation
-  - [ ] Test drawing state management
-  - [ ] Test canvas clearing
-  - [ ] Test coordinate batching logic
+- [x] Unit Tests:
+  - [x] Test drawing event capture
+  - [x] Test path data generation
+  - [x] Test drawing state management
+  - [x] Test canvas clearing
+  - [x] Test coordinate batching logic
 
 ### 6. Basic Game Flow
 
