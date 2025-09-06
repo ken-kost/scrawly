@@ -15,6 +15,10 @@ defmodule ScrawlyWeb.GameChannel do
         |> assign(:room_id, room.id)
         |> assign(:user_id, user_id)
 
+      # Subscribe to game events for this room
+      # Note: We'll subscribe based on game_id when a game starts
+      Phoenix.PubSub.subscribe(Scrawly.PubSub, "game:#{room.id}")
+
       # Track the user's presence in the room
       send(self(), :after_join)
 
@@ -161,6 +165,36 @@ defmodule ScrawlyWeb.GameChannel do
     {:reply, {:ok, %{status: "turn_changed"}}, socket}
   end
 
+  # Round timer events
+  @impl true
+  def handle_in("start_round_timer", %{"game_id" => game_id}, socket) do
+    case Games.start_round_timer(game_id) do
+      :ok ->
+        {:reply, {:ok, %{status: "timer_started"}}, socket}
+
+      {:error, reason} ->
+        {:reply, {:error, %{reason: reason}}, socket}
+    end
+  end
+
+  @impl true
+  def handle_in("stop_round_timer", %{"game_id" => game_id}, socket) do
+    case Games.stop_round_timer(game_id) do
+      :ok ->
+        {:reply, {:ok, %{status: "timer_stopped"}}, socket}
+
+      {:error, reason} ->
+        {:reply, {:error, %{reason: reason}}, socket}
+    end
+  end
+
+  @impl true
+  def handle_in("get_timer_status", %{"game_id" => game_id}, socket) do
+    remaining_seconds = Games.get_round_time_remaining(game_id)
+
+    {:reply, {:ok, %{remaining_seconds: remaining_seconds}}, socket}
+  end
+
   # Handle presence tracking after join
   @impl true
   def handle_info(:after_join, socket) do
@@ -174,6 +208,50 @@ defmodule ScrawlyWeb.GameChannel do
 
       push(socket, "presence_state", Presence.list(socket))
     end
+
+    {:noreply, socket}
+  end
+
+  # Handle timer PubSub messages
+  @impl true
+  def handle_info({:timer_started, %{game_id: game_id, duration_seconds: duration}}, socket) do
+    push(socket, "timer_started", %{
+      game_id: game_id,
+      duration_seconds: duration,
+      timestamp: DateTime.utc_now() |> DateTime.to_iso8601()
+    })
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:timer_update, %{game_id: game_id, remaining_seconds: remaining}}, socket) do
+    push(socket, "timer_update", %{
+      game_id: game_id,
+      remaining_seconds: remaining,
+      timestamp: DateTime.utc_now() |> DateTime.to_iso8601()
+    })
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:timer_stopped, %{game_id: game_id}}, socket) do
+    push(socket, "timer_stopped", %{
+      game_id: game_id,
+      timestamp: DateTime.utc_now() |> DateTime.to_iso8601()
+    })
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:round_ended, %{game_id: game_id, reason: reason}}, socket) do
+    push(socket, "round_ended_timer", %{
+      game_id: game_id,
+      reason: reason,
+      timestamp: DateTime.utc_now() |> DateTime.to_iso8601()
+    })
 
     {:noreply, socket}
   end
