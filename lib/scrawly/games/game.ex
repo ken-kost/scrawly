@@ -32,6 +32,64 @@ defmodule Scrawly.Games.Game do
       accept []
       change set_attribute(:status, :completed)
     end
+
+    update :start_round do
+      accept [:current_drawer_id]
+      require_atomic? false
+
+      # Select a random word for this round
+      change fn changeset, _context ->
+        case Scrawly.Games.get_random_word() do
+          {:ok, word} ->
+            Ash.Changeset.change_attribute(changeset, :current_word, word)
+
+          {:error, _reason} ->
+            Ash.Changeset.add_error(changeset,
+              field: :current_word,
+              message: "No words available"
+            )
+        end
+      end
+    end
+
+    update :select_next_drawer do
+      accept []
+      require_atomic? false
+
+      argument :player_queue, {:array, :uuid} do
+        allow_nil? false
+        description "Ordered list of player IDs for drawer rotation"
+      end
+
+      # Select next drawer from the queue
+      change fn changeset, _context ->
+        game = changeset.data
+        player_queue = Ash.Changeset.get_argument(changeset, :player_queue)
+
+        # Find current drawer index and select next one
+        current_drawer_id = game.current_drawer_id
+        current_index = Enum.find_index(player_queue, &(&1 == current_drawer_id))
+
+        next_index =
+          case current_index do
+            # First drawer
+            nil -> 0
+            # Next in rotation
+            index -> rem(index + 1, length(player_queue))
+          end
+
+        next_drawer_id = Enum.at(player_queue, next_index)
+        Ash.Changeset.change_attribute(changeset, :current_drawer_id, next_drawer_id)
+      end
+    end
+
+    update :complete_round do
+      accept []
+
+      # Clear current word and drawer for round transition
+      change set_attribute(:current_word, nil)
+      change set_attribute(:current_drawer_id, nil)
+    end
   end
 
   attributes do
