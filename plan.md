@@ -104,25 +104,25 @@ This phase establishes the fundamental game mechanics including basic room manag
 
 ### 6. Basic Game Flow
 
-- [ ] Implement round-based gameplay
-  - [ ] Round initialization with drawer selection
-  - [ ] 80-second timer per round
-  - [ ] Word selection from basic word list
-  - [ ] Turn rotation logic
-  - [ ] Round completion handling
+- [x] Implement round-based gameplay
+  - [x] Round initialization with drawer selection
+  - [x] 80-second timer per round
+  - [x] Word selection from basic word list
+  - [x] Turn rotation logic
+  - [x] Round completion handling
 
-- [ ] Create GameController for state management
-  - [ ] Track current round number
-  - [ ] Manage drawer queue
-  - [ ] Handle round transitions
-  - [ ] Calculate and update scores
+- [x] Create GameController for state management
+  - [x] Track current round number
+  - [x] Manage drawer queue
+  - [x] Handle round transitions
+  - [x] Calculate and update scores
 
-- [ ] Unit Tests:
-  - [ ] Test round initialization
-  - [ ] Test timer countdown accuracy
-  - [ ] Test drawer rotation fairness
-  - [ ] Test score calculation logic
-  - [ ] Test game end conditions
+- [x] Unit Tests:
+  - [x] Test round initialization
+  - [x] Test timer countdown accuracy
+  - [x] Test drawer rotation fairness
+  - [x] Test score calculation logic
+  - [x] Test game end conditions
 
 ### 7. Word and Guessing System
 

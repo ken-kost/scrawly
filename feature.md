@@ -65,7 +65,7 @@
 - [ ] Test implementation
 - [ ] Verify no regressions
 
-## Questions for Zach
+## Questions for Ken
 1. [Any clarifications needed]
 ```
 
