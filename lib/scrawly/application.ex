@@ -14,6 +14,8 @@ defmodule Scrawly.Application do
       {Phoenix.PubSub, name: Scrawly.PubSub},
       # Presence tracking for game channels
       ScrawlyWeb.Presence,
+      # Round timer for game flow management
+      Scrawly.Games.RoundTimer,
       # Start a worker by calling: Scrawly.Worker.start_link(arg)
       # {Scrawly.Worker, arg},
       # Start to serve requests, typically the last entry
