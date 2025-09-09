@@ -18,30 +18,11 @@ defmodule Scrawly.Games.Room do
     end
 
     create :create do
-      accept [:max_players, :code]
+      accept [:name, :max_players]
       primary? true
 
       change fn changeset, _context ->
-        case Ash.Changeset.get_attribute(changeset, :code) do
-          nil ->
-            code = generate_room_code()
-            Ash.Changeset.force_change_attribute(changeset, :code, code)
-
-          _ ->
-            changeset
-        end
-      end
-    end
-
-    create :create_room do
-      accept [:max_players]
-
-      change set_attribute(:status, :lobby)
-      change set_attribute(:current_round, 0)
-
-      change fn changeset, _context ->
-        code = generate_room_code()
-        Ash.Changeset.force_change_attribute(changeset, :code, code)
+        Ash.Changeset.force_change_attribute(changeset, :code, generate_room_code())
       end
     end
 
@@ -164,6 +145,11 @@ defmodule Scrawly.Games.Room do
 
   attributes do
     uuid_primary_key :id
+
+    attribute :name, :string do
+      allow_nil? false
+      public? true
+    end
 
     attribute :code, :string do
       allow_nil? true

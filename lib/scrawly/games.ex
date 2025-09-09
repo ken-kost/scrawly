@@ -10,7 +10,8 @@ defmodule Scrawly.Games do
   resources do
     resource Scrawly.Games.Room do
       # Room management code interfaces
-      define :create_room, action: :create_room
+      define :create_room, action: :create
+      define :get_rooms, action: :read
       define :get_room_by_id, action: :read, get_by: [:id]
       define :get_room_by_code, action: :read, get_by: :code
       define :join_room, action: :join_room, args: [:player_id]
