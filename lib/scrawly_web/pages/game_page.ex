@@ -6,26 +6,25 @@ defmodule ScrawlyWeb.Pages.GamePage do
   layout ScrawlyWeb.Layouts.AppLayout
 
   param :room_id, :string
+  param :user_id, :string, optional: true
 
   alias ScrawlyWeb.Components.{PlayerList, ChatBox, ScoreBoard, DrawingCanvas}
   alias Scrawly.Games
 
   def init(params, component, _server) do
     room_id = params.room_id
-
+    user_id = Map.get(params, :user_id)
+    dbg(user_id)
     # Try to get actual room and game data
     case Games.get_room_by_id(room_id) do
       {:ok, room} ->
-        # Get current user from session (assuming it's available)
-        current_user_id = get_current_user_id(component)
-
-        # Initialize with real room data
+        # Initialize with real room data and user
         component
+        |> put_state(:watching?, user_id == "Watcher")
         |> put_state(:room_id, room_id)
         |> put_state(:room_code, room.code)
-        |> put_state(:room_name, "Room #{room.code}")
+        |> put_state(:room_name, "Room #{room.name}")
         |> put_state(:room_status, room.status)
-        |> put_state(:current_user_id, current_user_id)
         |> put_state(:game_id, nil)
         |> put_state(:players, [])
         |> put_state(:current_drawer, nil)
@@ -39,6 +38,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
         |> put_state(:is_drawer, false)
         |> put_state(:game_started, room.status == :playing)
         |> put_state(:can_start_game, false)
+        |> put_state(:current_user_id, user_id)
+        |> put_state(:current_user, nil)
+        |> load_user_data(user_id)
         |> load_room_players()
         |> check_game_status()
 
@@ -48,20 +50,46 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  defp get_current_user_id(_component) do
-    # TODO: Get from session/authentication
-    # For now, return a placeholder
-    "current-user-id"
+  defp load_user_data(component, "Watcher") do
+    component
+    |> put_state(:current_user, %{username: "Watcher", id: "Watcher"})
+    |> put_state(:current_user_username, "Watcher")
+  end
+
+  defp load_user_data(component, user_id) do
+    case Ash.get(Scrawly.Accounts.User, user_id) do
+      {:ok, user} ->
+        dbg(user)
+
+        component
+        |> put_state(:current_user, user)
+        |> put_state(:current_user_username, user.username)
+
+      {:error, _} ->
+        # User not found, keep defaults
+        component
+    end
   end
 
   defp load_room_players(component) do
     # TODO: Load actual players from room
-    # For now, use mock data
-    players = [
-      %{id: "current-user-id", username: "You", score: 0, is_connected: true},
-      %{id: "player-2", username: "Alice", score: 0, is_connected: true},
-      %{id: "player-3", username: "Bob", score: 0, is_connected: true}
-    ]
+    # For now, use mock data with real current user
+    current_user_id = Map.get(component.state, :current_user_id, "unknown")
+    current_username = Map.get(component.state, :current_user_username, "You")
+
+    players =
+      if current_user_id != "unknown" do
+        [
+          %{id: current_user_id, username: current_username, score: 0, is_connected: true},
+          %{id: "player-2", username: "Alice", score: 0, is_connected: true},
+          %{id: "player-3", username: "Bob", score: 0, is_connected: true}
+        ]
+      else
+        [
+          %{id: "player-2", username: "Alice", score: 0, is_connected: true},
+          %{id: "player-3", username: "Bob", score: 0, is_connected: true}
+        ]
+      end
 
     component
     |> put_state(:players, players)
@@ -88,9 +116,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
     message = component.state.new_message
 
     if String.trim(message) != "" do
+      player_name = Map.get(component.state, :current_user_username, "You")
+
       new_chat_message = %{
         id: :rand.uniform(10000),
-        player_name: "You",
+        player_name: player_name,
         message: message,
         timestamp: DateTime.utc_now(),
         is_guess: true
@@ -133,7 +163,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
       })
       |> put_state(:current_word, updated_game.current_word)
       |> put_state(:current_word_display, generate_word_display(updated_game.current_word))
-      |> put_state(:is_drawer, first_drawer_id == component.state.current_user_id)
+      |> put_state(:is_drawer, first_drawer_id == Map.get(component.state, :current_user_id))
       |> put_state(:time_left, 80)
     else
       {:error, _reason} -> component
@@ -160,7 +190,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
         })
         |> put_state(:current_word, final_game.current_word)
         |> put_state(:current_word_display, generate_word_display(final_game.current_word))
-        |> put_state(:is_drawer, final_game.current_drawer_id == component.state.current_user_id)
+        |> put_state(
+          :is_drawer,
+          final_game.current_drawer_id == Map.get(component.state, :current_user_id)
+        )
         |> put_state(:time_left, 80)
       else
         {:error, _reason} -> component
@@ -238,8 +271,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
           </div>
           <div class="flex items-center gap-4">
             <div class="text-lg font-semibold text-gray-400">
-              $show={@game_started}
-              {@time_left}s
+               {@time_left}s
             </div>
             <!-- Game Control Buttons -->
             <button
@@ -268,14 +300,14 @@ defmodule ScrawlyWeb.Pages.GamePage do
       <div class="flex-1 flex items-center justify-center" $show={!@game_started}>
         <div class="text-center">
           <div class="text-6xl mb-4">🎨</div>
-          <h2 class="text-2xl font-bold text-gray-800 mb-2">Ready to Play?</h2>
+          <h2 class="text-2xl font-bold text-gray-800 mb-2">Ready to {if(@watching?, do: "Watch", else: "Play" <> " " <> @current_user_username)}?</h2>
           <p class="text-gray-600 mb-6">
             {length(@players)} player(s) in the room
             <span $show={!@can_start_game}> • Need at least 2 players to start</span>
           </p>
           <button
             class="px-6 py-3 bg-green-600 text-white rounded-lg text-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={!@can_start_game}
+            disabled={!@can_start_game and not @watching?}
             $click={:start_game}>
             {if((@can_start_game), do: "Start Game", else: "Waiting for players...")}
           </button>
