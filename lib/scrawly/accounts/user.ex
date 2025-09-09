@@ -99,7 +99,7 @@ defmodule Scrawly.Accounts.User do
 
     # Player-specific actions
     update :join_room do
-      accept [:current_room_id, :username]
+      accept [:current_room_id]
       change set_attribute(:player_state, :connected)
     end
 

@@ -22,8 +22,7 @@ defmodule ScrawlyWeb.Components.ChatBox do
 
                 <div class="text-center py-4 text-gray-600">
           <p>{length(@messages)} message(s)</p>
-          <p class="text-sm mt-2">ChatBox component loaded successfully!</p>
-        </div>
+         </div>
       </div>
 
       <!-- Message Input -->

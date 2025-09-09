@@ -32,7 +32,7 @@ defmodule ScrawlyWeb.Components.RoomList do
               <div class="flex-1">
                 <h3 class="font-semibold text-lg text-black">{room.name}</h3>
                 <div class="text-sm text-gray-600 mt-1">
-                  <span>0/{room.max_players} players</span>
+                  <span>{length(room.players)}/{room.max_players} players</span>
                 </div>
               </div>
               <div class="flex gap-2">

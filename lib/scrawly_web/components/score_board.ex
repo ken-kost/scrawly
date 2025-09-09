@@ -58,8 +58,7 @@ defmodule ScrawlyWeb.Components.ScoreBoard do
                 <div $show={length(@players) > 0} class="space-y-2">
           <div class="text-center py-4 text-gray-600">
             <p>{length(@players)} player(s) on scoreboard</p>
-            <p class="text-sm mt-2">ScoreBoard component loaded successfully!</p>
-          </div>
+           </div>
         </div>
       </div>
 

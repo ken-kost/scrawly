@@ -9,17 +9,19 @@ defmodule ScrawlyWeb.Components.PlayerList do
     ~HOLO"""
     <div class="bg-white rounded-lg shadow-md p-4">
       <h3 class="text-lg font-semibold text-black mb-4">Players ({length(@players)})</h3>
-
-      <div $show={length(@players) == 0} class="text-center py-4 text-gray-500">
+    {%if length(@players) == 0}
+      <div class="text-center py-4 text-gray-500">
         <p>No players yet</p>
       </div>
-
-            <div $show={length(@players) > 0} class="space-y-2">
+      {%else}
+      <div class="space-y-2">
         <div class="text-center py-4 text-gray-600">
-          <p>{length(@players)} player(s) in game</p>
-          <p class="text-sm mt-2">PlayerList component loaded successfully!</p>
-        </div>
+            {%for player <- @players}
+              <p>{player.username}</p>
+            {/for}
+         </div>
       </div>
+    {/if}
     </div>
     """
   end

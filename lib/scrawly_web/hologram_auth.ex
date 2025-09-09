@@ -64,7 +64,7 @@ defmodule ScrawlyWeb.HologramAuth do
       user_token when is_binary(user_token) ->
         IO.puts("Found user_token string in session: #{inspect(user_token)}")
         # Session contains user ID, load full user
-        load_user_by_token(user_token) |> dbg()
+        load_user_by_token(user_token)
 
       other ->
         IO.puts("Found unexpected session data: #{inspect(other)}")
@@ -103,8 +103,7 @@ defmodule ScrawlyWeb.HologramAuth do
       {:ok, user} when not is_nil(user) ->
         {:ok, user}
 
-      error ->
-        dbg(error)
+      _error ->
         {:error, :not_authenticated}
     end
   end

@@ -154,13 +154,13 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_state(:join_room_id, room_id)
   end
 
-  def action(:join_room_with_user, %{room_id: room_id, user_id: user_id}, component) do
-    put_page(component, ScrawlyWeb.Pages.GamePage, room_id: room_id, user_id: user_id)
+  def action(:join_room_with_user, %{room_id: room_id}, component) do
+    put_page(component, ScrawlyWeb.Pages.GamePage, room_id: room_id)
   end
 
   def action(:watch_room, %{room_id: room_id}, component) do
     IO.inspect("Watching room: #{room_id}")
-    put_page(component, ScrawlyWeb.Pages.GamePage, room_id: room_id, user_id: "Watcher")
+    put_page(component, ScrawlyWeb.Pages.GamePage, room_id: room_id)
   end
 
   def command(:create_room, params, component) do
@@ -171,12 +171,13 @@ defmodule ScrawlyWeb.Pages.HomePage do
   end
 
   def command(:create_user, %{email: email, room_id: room_id}, component) do
-    case Scrawly.Accounts.create_user(email) do
-      {:ok, user} ->
-        component
-        |> put_action(:join_room_with_user, room_id: room_id, user_id: user.id)
-
-      {:error, _} ->
+    with {:ok, user} <- Scrawly.Accounts.create_user(email),
+         {:ok, _player} <- Scrawly.Accounts.join_room(user, room_id) do
+      component
+      |> put_session(:user_id, user.id)
+      |> put_action(:join_room_with_user, room_id: room_id)
+    else
+      {:error, _reason} ->
         # TODO: Show error message to user
         component
     end

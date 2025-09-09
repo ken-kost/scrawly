@@ -143,6 +143,10 @@ defmodule Scrawly.Games.Room do
     end
   end
 
+  preparations do
+    prepare build(load: :players)
+  end
+
   attributes do
     uuid_primary_key :id
 
