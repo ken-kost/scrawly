@@ -7,6 +7,9 @@ defmodule Scrawly.Accounts do
 
   resources do
     resource Scrawly.Accounts.Token
-    resource Scrawly.Accounts.User
+
+    resource Scrawly.Accounts.User do
+      define :create_user, action: :create, args: [:email]
+    end
   end
 end
