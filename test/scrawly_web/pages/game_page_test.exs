@@ -141,10 +141,10 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
     test "next_round progresses to next round with new drawer", %{component: component} do
       # First start a game
       game_started = GamePage.action(:start_game, %{}, component)
-
+      dbg(game_started)
       # Then go to next round
       result = GamePage.action(:next_round, %{}, game_started)
-
+      dbg(result)
       assert result.state.round == 2
       assert result.state.current_word != nil
       assert result.state.current_word_display != ""
@@ -236,8 +236,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       # This is testing the private function indirectly through init
       # The actual function is private, so we test its effects
       params = %{room_id: "test-room-id"}
-      result = GamePage.init(params, component, nil)
-
+      result = GamePage.init(params, component, %{session: nil})
+      dbg(result)
       # Should have 3 mock players
       assert length(result.state.players) == 3
       assert result.state.can_start_game == true
