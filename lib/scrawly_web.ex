@@ -27,6 +27,7 @@ defmodule ScrawlyWeb do
       import Plug.Conn
       import Phoenix.Controller
       import Phoenix.LiveView.Router
+      import AshAuthentication.Plug.Helpers
     end
   end
 

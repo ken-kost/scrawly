@@ -41,8 +41,12 @@ defmodule Scrawly.Accounts.User do
     defaults [:read]
 
     create :create do
-      accept [:email, :username, :score, :player_state, :current_room_id]
+      accept [:email]
+      change Scrawly.Accounts.Changes.GenerateUsernameFromEmail
       primary? true
+      upsert? true
+      upsert_identity :unique_email
+      upsert_fields [:email]
     end
 
     read :get_by_subject do
@@ -77,6 +81,8 @@ defmodule Scrawly.Accounts.User do
 
       # Uses the information from the token to create or sign in the user
       change AshAuthentication.Strategy.MagicLink.SignInChange
+      # Generate username from email for new users
+      change Scrawly.Accounts.Changes.GenerateUsernameFromEmail
 
       metadata :token, :string do
         allow_nil? false

@@ -8,7 +8,20 @@ defmodule ScrawlyWeb.PageController do
   end
 
   def show(conn, params) do
-    # Let Hologram handle the page routing
-    Controller.handle_initial_page_request(conn, params)
+    dbg(conn)
+    dbg(params)
+
+    case conn.private.plug_session["user_token"] do
+      nil ->
+        # Store the return path and redirect to register
+        conn
+        |> put_session(:return_to, conn.request_path)
+        |> redirect(to: "/register")
+
+      user_token ->
+        dbg(user_token)
+        # User is authenticated, let Hologram handle the page routing
+        Controller.handle_initial_page_request(conn, params)
+    end
   end
 end
