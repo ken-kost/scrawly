@@ -12,7 +12,7 @@
 - Search for similar features in the codebase using grep/glob
 - Check for existing patterns to follow
 - Use `project_eval` to explore modules if available
-- Review any applicable existing usage rules for packages you'll be working with
+- Review any applicable existing usage rules for ash packages you'll be working with
 
 ### Step 1.2: Requirements Analysis
 **REQUIRED ACTIONS**:

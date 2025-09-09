@@ -124,6 +124,15 @@ This phase establishes the fundamental game mechanics including basic room manag
   - [x] Test score calculation logic
   - [x] Test game end conditions
 
+### 6.5 Integrate FE Hologram with BE Ash for home page and related game page
+- [x] Investigate how to integrate Ash Authentication with Hologram
+- [x] Use ash_authentication_live_session :authenticated_routes in router.ex to enable auth for home and game page, requring user to register in order to able to play
+  - [x] Use :request_magic_link in user.ex action to enable registration with email
+  - [x] Integrate game page with home page and integrate anything else necessary
+
+- [x] Unit Tests:
+  - [x] Test users in a room
+
 ### 7. Word and Guessing System
 
 - [ ] Implement Word resource
