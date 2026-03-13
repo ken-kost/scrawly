@@ -4,6 +4,7 @@ defmodule ScrawlyWeb.Components.ChatBox do
   prop :messages, :list, default: []
   prop :current_message, :string, default: ""
   prop :current_user_id, :string, default: nil
+  prop :current_user_name, :string, default: nil
   prop :disabled, :boolean, default: false
 
   def template do
@@ -15,14 +16,28 @@ defmodule ScrawlyWeb.Components.ChatBox do
       </div>
 
       <!-- Messages Area -->
-      <div class="flex-1 overflow-y-auto p-4 space-y-3" id="chat-messages">
+      <div class="flex-1 overflow-y-auto p-4 space-y-2" id="chat-messages">
         <div $show={length(@messages) == 0} class="text-center py-8 text-gray-500">
           <p>No messages yet. Start the conversation!</p>
         </div>
 
-                <div class="text-center py-4 text-gray-600">
-          <p>{length(@messages)} message(s)</p>
-         </div>
+        {%for msg <- @messages}
+          <div class={[
+            "p-2 rounded-lg",
+            if(msg.type == "system", do: "bg-gray-100 text-gray-600 text-center text-sm italic",
+            else: if(msg.is_correct_guess, do: "bg-green-100 border border-green-300",
+            else: if(msg.user_id == @current_user_id, do: "bg-blue-100 ml-8",
+            else: "bg-gray-100 mr-8")))
+          ]}>
+            {%if msg.type != "system"}
+              <span class="font-semibold text-sm">{msg.username}:</span>
+            {/if}
+            <span class={if(msg.is_correct_guess, do: "font-bold text-green-700", else: "")}>{msg.message}</span>
+            {%if msg.is_correct_guess}
+              <span class="text-green-600 text-xs ml-2">✓ +{msg.points} pts</span>
+            {/if}
+          </div>
+        {/for}
       </div>
 
       <!-- Message Input -->
@@ -30,7 +45,7 @@ defmodule ScrawlyWeb.Components.ChatBox do
         <div class="flex gap-2">
           <input
             type="text"
-                          placeholder="Type a message..."
+            placeholder="Type your guess..."
             class="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
             value={@current_message}
             disabled={@disabled}
@@ -49,12 +64,26 @@ defmodule ScrawlyWeb.Components.ChatBox do
   end
 
   def action(:message_change, %{event: %{value: message}}, component) do
-    # For now, just update local state - in a real app this would communicate with parent
     put_state(component, :temp_message, message)
   end
 
   def action(:send_message, _params, component) do
-    # For now, just clear the message - in a real app this would send to parent/server
+    message = component.state.temp_message || ""
+    put_state(component, :temp_message, message)
+  end
+
+  def action(
+        :send_message,
+        _params,
+        %{props: %{send_message_to_parent: send_to_parent}} = component
+      )
+      when is_function(send_to_parent) do
+    message = component.state.temp_message || ""
+    send_to_parent.(message)
+    put_state(component, :temp_message, "")
+  end
+
+  def action(:send_message, _params, component) do
     put_state(component, :temp_message, "")
   end
 
@@ -65,29 +94,4 @@ defmodule ScrawlyWeb.Components.ChatBox do
   def action(:handle_keydown, _params, component) do
     component
   end
-
-  # Helper function to format timestamp
-  # defp format_time(timestamp) when is_binary(timestamp) do
-  #   case DateTime.from_iso8601(timestamp) do
-  #     {:ok, dt, _offset} ->
-  #       dt
-  #       |> DateTime.to_time()
-  #       |> Time.to_string()
-  #       # HH:MM
-  #       |> String.slice(0, 5)
-
-  #     _ ->
-  #       "now"
-  #   end
-  # end
-
-  # defp format_time(timestamp) when is_struct(timestamp, DateTime) do
-  #   timestamp
-  #   |> DateTime.to_time()
-  #   |> Time.to_string()
-  #   # HH:MM
-  #   |> String.slice(0, 5)
-  # end
-
-  # defp format_time(_), do: "now"
 end
