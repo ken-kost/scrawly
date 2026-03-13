@@ -11,13 +11,13 @@ defmodule Scrawly.Games.GameFlowTest do
 
       # Create test players
       {:ok, player1} =
-        Ash.create(User, %{username: "player1", email: "p1@test.com"}, authorize?: false)
+        Ash.create(User, %{email: "p1@test.com"}, authorize?: false)
 
       {:ok, player2} =
-        Ash.create(User, %{username: "player2", email: "p2@test.com"}, authorize?: false)
+        Ash.create(User, %{email: "p2@test.com"}, authorize?: false)
 
       {:ok, player3} =
-        Ash.create(User, %{username: "player3", email: "p3@test.com"}, authorize?: false)
+        Ash.create(User, %{email: "p3@test.com"}, authorize?: false)
 
       # Join players to room
       {:ok, _} =

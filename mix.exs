@@ -12,7 +12,8 @@ defmodule Scrawly.MixProject do
       deps: deps(),
       compilers: [:phoenix_live_view, :hologram] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader],
-      consolidate_protocols: Mix.env() != :dev
+      consolidate_protocols: Mix.env() != :dev,
+          usage_rules: usage_rules()
     ]
   end
 
@@ -103,4 +104,28 @@ defmodule Scrawly.MixProject do
       precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
     ]
   end
+
+  defp usage_rules do
+  # Example for those using claude.
+  [
+    file: "CLAUDE.md",
+    # rules to include directly in CLAUDE.md
+    # use a regex to match multiple deps, or atoms/strings for specific ones
+    # If your CLAUDE.md is getting too big, link instead of inlining:
+    usage_rules: [:ash, {~r/^ash_/, link: :markdown}],
+    # or use skills
+    skills: [
+      location: ".claude/skills",
+      # build skills that combine multiple usage rules
+      build: [
+        "ash-framework": [
+          # The description tells people how to use this skill.
+          description: "Use this skill working with Ash Framework or any of its extensions. Always consult this when making any domain changes, features or fixes.",
+          # Include all Ash dependencies
+          usage_rules: [:ash, ~r/^ash_/]
+        ]
+      ]
+    ]
+  ]
+end
 end
