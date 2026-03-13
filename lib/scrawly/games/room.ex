@@ -2,7 +2,8 @@ defmodule Scrawly.Games.Room do
   use Ash.Resource,
     otp_app: :scrawly,
     domain: Scrawly.Games,
-    data_layer: AshPostgres.DataLayer
+    data_layer: AshPostgres.DataLayer,
+    notifiers: [Ash.Notifier.PubSub]
 
   postgres do
     table "rooms"
@@ -141,6 +142,16 @@ defmodule Scrawly.Games.Room do
         end
       end
     end
+  end
+
+  pub_sub do
+    module Scrawly.PubSub
+    prefix "room"
+
+    publish :join_room, ["player_joined", :id]
+    publish :start_game, ["game_started", :id]
+    publish :end_game, ["game_ended", :id]
+    publish_all :update, ["room_updated", :id]
   end
 
   preparations do

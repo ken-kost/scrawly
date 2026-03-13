@@ -15,18 +15,24 @@ defmodule ScrawlyWeb.Components.ScoreBoard do
       <div class="mb-4">
         <div class="flex items-center justify-between">
           <h3 class="text-lg font-semibold text-black">Game Status</h3>
-          <div $show={@game_status == :playing} class="flex items-center gap-2">
+          {%if @game_status == :playing}
+          <div  class="flex items-center gap-2">
             <div class="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
             <span class="text-sm text-green-600 font-medium">Playing</span>
           </div>
-          <div $show={@game_status == :lobby} class="flex items-center gap-2">
+          {/if}
+          {%if @game_status == :lobby}
+          <div  class="flex items-center gap-2">
             <div class="w-3 h-3 bg-yellow-400 rounded-full"></div>
             <span class="text-sm text-yellow-600 font-medium">Lobby</span>
           </div>
-          <div $show={@game_status == :ended} class="flex items-center gap-2">
+          {/if}
+          {%if @game_status == :ended}
+          <div  class="flex items-center gap-2">
             <div class="w-3 h-3 bg-red-400 rounded-full"></div>
             <span class="text-sm text-red-600 font-medium">Ended</span>
           </div>
+          {/if}
         </div>
 
         <!-- Round Info -->

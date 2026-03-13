@@ -7,7 +7,7 @@ defmodule Scrawly.Games.GameFlowTest do
   describe "game flow management" do
     setup do
       # Create a room
-      {:ok, room} = Games.create_room(%{max_players: 4})
+      {:ok, room} = Games.create_room(%{max_players: 4, name: "Test Room"})
 
       # Create test players
       {:ok, player1} =

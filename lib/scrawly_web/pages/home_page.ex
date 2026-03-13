@@ -7,7 +7,14 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   alias ScrawlyWeb.Components.RoomList
 
-  def init(_params, component, _server) do
+  def init(_params, component, server) do
+    {user, authenticated} =
+      case get_session(server, "user_id") do
+        nil -> {nil, false}
+        user_id -> {Ash.get!(Scrawly.Accounts.User, user_id), true}
+      end
+
+    dbg(server)
     # Always initialize the component with default state first to prevent template errors
     # component =
     component
@@ -17,21 +24,8 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_state(:show_join_room, false)
     |> put_state(:join_room_email, "")
     |> put_state(:join_room_id, nil)
-    |> put_state(:authenticated, false)
-
-    # case HologramAuth.require_authentication(component, server) do
-    #   {:ok, component, user} ->
-    #     IO.puts("User authenticated: #{inspect(user)}")
-    #     # User is authenticated, update component with user state
-    #     component
-    #     |> HologramAuth.put_user_state(user)
-    #     |> put_state(:new_room_name, "Test Room")
-
-    #   {:redirect, redirect_component} ->
-    #     IO.puts("User NOT authenticated, redirecting...")
-    #     # User is not authenticated, redirect to sign-in
-    #     redirect_component
-    # end
+    |> put_state(:authenticated, authenticated)
+    |> put_state(:current_user, user)
   end
 
   def template do
@@ -110,11 +104,18 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_state(:show_create_room, false)
   end
 
-  def action(:show_join_room, %{room_id: room_id}, component) do
-    component
-    |> put_state(:show_join_room, true)
-    |> put_state(:join_room_id, room_id)
-  end
+  # def action(:show_join_room, %{room_id: room_id}, component) do
+  #   case component.state.current_user do
+  #     nil ->
+  #       component
+  #       |> put_state(:show_join_room, true)
+  #       |> put_state(:join_room_id, room_id)
+
+  #     user_id ->
+  #       component
+  #       |> put_action(:join_room_with_user, room_id: room_id)
+  #   end
+  # end
 
   def action(:hide_join_room, _params, component) do
     component
@@ -148,10 +149,18 @@ defmodule ScrawlyWeb.Pages.HomePage do
   end
 
   def action(:join_room, %{room_id: room_id}, component) do
-    # Show the join room modal instead of direct navigation
-    component
-    |> put_state(:show_join_room, true)
-    |> put_state(:join_room_id, room_id)
+    case component.state.current_user do
+      nil ->
+        component
+        |> put_state(:show_join_room, true)
+        |> put_state(:join_room_id, room_id)
+
+      user ->
+        IO.inspect(user)
+
+        component
+        |> put_action(:join_room_with_user, room_id: room_id)
+    end
   end
 
   def action(:join_room_with_user, %{room_id: room_id}, component) do
@@ -163,23 +172,23 @@ defmodule ScrawlyWeb.Pages.HomePage do
     put_page(component, ScrawlyWeb.Pages.GamePage, room_id: room_id)
   end
 
-  def command(:create_room, params, component) do
+  def command(:create_room, params, server) do
     case Scrawly.Games.create_room(params) do
-      {:ok, _room} -> put_action(component, :home)
-      {:error, _} -> component
+      {:ok, _room} -> put_action(server, :home)
+      {:error, _} -> server
     end
   end
 
-  def command(:create_user, %{email: email, room_id: room_id}, component) do
+  def command(:create_user, %{email: email, room_id: room_id}, server) do
     with {:ok, user} <- Scrawly.Accounts.create_user(email),
          {:ok, _player} <- Scrawly.Accounts.join_room(user, room_id) do
-      component
+      server
       |> put_session(:user_id, user.id)
       |> put_action(:join_room_with_user, room_id: room_id)
     else
       {:error, _reason} ->
         # TODO: Show error message to user
-        component
+        server
     end
   end
 end

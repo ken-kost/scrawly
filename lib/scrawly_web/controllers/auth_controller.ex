@@ -3,7 +3,7 @@ defmodule ScrawlyWeb.AuthController do
   use AshAuthentication.Phoenix.Controller
 
   def success(conn, activity, user, _token) do
-    return_to = get_session(conn, :return_to)
+    return_to = get_session(conn, :return_to) || ~p"/"
 
     message =
       case activity do
@@ -15,7 +15,7 @@ defmodule ScrawlyWeb.AuthController do
     conn
     |> delete_session(:return_to)
     |> store_in_session(user)
-    # If your resource has a different name, update the assign name here (i.e :current_admin)
+    |> put_session(:user_id, user.id)
     |> assign(:current_user, user)
     |> put_flash(:info, message)
     |> redirect(to: return_to)
@@ -45,7 +45,7 @@ defmodule ScrawlyWeb.AuthController do
   end
 
   def sign_out(conn, _params) do
-    return_to = get_session(conn, :return_to)
+    return_to = get_session(conn, :return_to) || ~p"/"
 
     conn
     |> clear_session(:scrawly)

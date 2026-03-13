@@ -17,31 +17,52 @@ defmodule ScrawlyWeb.Pages.GamePage do
       {:ok, room} ->
         user_id = get_session(server, :user_id)
 
-        component
-        |> put_state(:watching?, user_id == "Watcher")
-        |> put_state(:room_id, room_id)
-        |> put_state(:room_code, room.code)
-        |> put_state(:room_name, "Room #{room.name}")
-        |> put_state(:room_status, room.status)
-        |> put_state(:game_id, "")
-        |> put_state(:players, room.players)
-        |> put_state(:current_drawer, @watcher)
-        |> put_state(:current_word, "")
-        |> put_state(:current_word_display, "")
-        |> put_state(:time_left, 0)
-        |> put_state(:round, 1)
-        |> put_state(:total_rounds, 5)
-        |> put_state(:chat_messages, [])
-        |> put_state(:new_message, "")
-        |> put_state(:is_drawer, false)
-        |> put_state(:game_started, room.status == :playing)
-        |> put_state(:can_start_game, false)
-        |> put_state(:current_user_username, "")
-        |> put_state(:current_user_id, user_id)
-        |> put_state(:current_user, @watcher)
-        |> load_user_data(user_id)
-        |> put_state(:can_start_game, length(room.players) >= 2)
-        |> check_game_status()
+        # Subscribe to room PubSub events
+        Phoenix.PubSub.subscribe(Scrawly.PubSub, "room:player_joined:#{room_id}")
+        Phoenix.PubSub.subscribe(Scrawly.PubSub, "room:player_left:#{room_id}")
+        Phoenix.PubSub.subscribe(Scrawly.PubSub, "room:game_started:#{room_id}")
+        Phoenix.PubSub.subscribe(Scrawly.PubSub, "room:game_ended:#{room_id}")
+        Phoenix.PubSub.subscribe(Scrawly.PubSub, "room:room_updated:#{room_id}")
+
+        component =
+          component
+          |> put_state(:watching?, user_id == "Watcher")
+          |> put_state(:room_id, room_id)
+          |> put_state(:room_code, room.code)
+          |> put_state(:room_name, "Room #{room.name}")
+          |> put_state(:room_status, room.status)
+          |> put_state(:game_id, "")
+          |> put_state(:players, room.players)
+          |> put_state(:current_drawer, @watcher)
+          |> put_state(:current_word, "")
+          |> put_state(:current_word_display, "")
+          |> put_state(:time_left, 0)
+          |> put_state(:round, 1)
+          |> put_state(:total_rounds, 5)
+          |> put_state(:chat_messages, [])
+          |> put_state(:new_message, "")
+          |> put_state(:is_drawer, false)
+          |> put_state(:game_started, room.status == :playing)
+          |> put_state(:can_start_game, false)
+          |> put_state(:current_user_username, "")
+          |> put_state(:current_user_id, user_id)
+          |> put_state(:current_user, @watcher)
+          |> load_user_data(user_id)
+          |> put_state(:can_start_game, length(room.players) >= 2)
+          |> check_game_status()
+
+        # Auto-join room if user is not watching and not already in the room
+        if user_id != "Watcher" do
+          user_already_in_room = Enum.any?(room.players, &(&1.id == user_id))
+
+          if not user_already_in_room and room.status == :lobby do
+            put_command(component, :join_room, room_id: room_id, user_id: user_id)
+          else
+            component
+          end
+        else
+          component
+        end
 
       {:error, _} ->
         # Room not found, redirect to home
@@ -112,10 +133,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
     put_state(component, :new_message, message)
   end
 
-  def action(:leave_room, _params, component) do
-    put_page(component, ScrawlyWeb.Pages.HomePage)
-  end
-
   def action(:start_game, params, component) do
     component
     |> put_state(:game_started, true)
@@ -165,6 +182,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def action(:round_timeout, _params, component) do
     # Handle when timer runs out - just set time to 0, next round will be triggered by UI
     put_state(component, :time_left, 0)
+  end
+
+  def action(:go_home, _params, component) do
+    put_page(component, ScrawlyWeb.Pages.HomePage)
   end
 
   def command(:start_game, %{room_id: room_id, players: players}, server) do
@@ -224,6 +245,30 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
+  def command(:join_room, %{room_id: room_id, user_id: user_id}, server) do
+    with {:ok, _user} <- Scrawly.Accounts.join_room(user_id, room_id),
+         {:ok, _room} <- Games.join_room(room_id, user_id) do
+      # The PubSub events will update the UI automatically
+      server
+    else
+      {:error, _reason} ->
+        # Join failed, but don't show error to avoid disrupting the experience
+        server
+    end
+  end
+
+  def command(:leave_room, %{user_id: user_id}, server) do
+    # Leave the room and navigate home
+    with {:ok, user} <- Ash.get(Scrawly.Accounts.User, user_id),
+         {:ok, _user} <- Scrawly.Accounts.leave_room(user) do
+      server |> put_action(:go_home, user_id: user_id)
+    else
+      {:error, _reason} ->
+        # Leave failed, but still navigate home
+        server |> put_action(:go_home, user_id: user_id)
+    end
+  end
+
   defp get_player_name(players, player_id) do
     case Enum.find(players, &(&1.id == player_id)) do
       nil -> "Unknown"
@@ -245,13 +290,75 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   defp generate_word_display(_), do: ""
 
+  # Handle PubSub events
+  def handle_info({:player_joined, %{room_id: room_id}}, component) do
+    # Reload room data to get updated player list
+    case Games.get_room_by_id(room_id) do
+      {:ok, updated_room} ->
+        component
+        |> put_state(:players, updated_room.players)
+        |> put_state(:can_start_game, length(updated_room.players) >= 2)
+
+      {:error, _} ->
+        component
+    end
+  end
+
+  def handle_info({:player_left, %{data: _user}}, component) do
+    # Reload room data to get updated player list
+    room_id = component.state.room_id
+
+    case Games.get_room_by_id(room_id) do
+      {:ok, updated_room} ->
+        component
+        |> put_state(:players, updated_room.players)
+        |> put_state(:can_start_game, length(updated_room.players) >= 2)
+
+      {:error, _} ->
+        component
+    end
+  end
+
+  def handle_info({:game_started, %{data: room}}, component) do
+    component
+    |> put_state(:room_status, room.status)
+    |> put_state(:game_started, true)
+    |> check_game_status()
+  end
+
+  def handle_info({:game_ended, %{data: room}}, component) do
+    component
+    |> put_state(:room_status, room.status)
+    |> put_state(:game_started, false)
+    |> put_state(:game_id, "")
+    |> put_state(:current_drawer, @watcher)
+    |> put_state(:current_word, "")
+    |> put_state(:current_word_display, "")
+    |> put_state(:time_left, 0)
+    |> put_state(:is_drawer, false)
+  end
+
+  def handle_info({:room_updated, %{data: room}}, component) do
+    # Handle general room updates
+    case Games.get_room_by_id(room.id) do
+      {:ok, updated_room} ->
+        component
+        |> put_state(:players, updated_room.players)
+        |> put_state(:room_status, updated_room.status)
+        |> put_state(:can_start_game, length(updated_room.players) >= 2)
+
+      {:error, _} ->
+        component
+    end
+  end
+
   def template do
     ~HOLO"""
     <div class="min-h-screen bg-gray-100 flex flex-col">
       <div class="bg-white shadow-sm border-b p-4">
         <div class="max-w-7xl mx-auto flex items-center justify-between">
           <div class="flex items-center gap-4">
-            <button class="text-black hover:text-gray-700" $click={:leave_room}>← Back</button>
+            <button class="text-black hover:text-gray-700" $click={command: :leave_room, params: %{user_id: @current_user_id}}>← Back</button>
             <h1 class="text-xl font-semibold text-black">{@room_name}</h1>
             <span class="text-sm text-gray-500" $show={@game_started}>Round {@round}/{@total_rounds}</span>
             <span class="text-sm text-yellow-600" $show={!@game_started}>Waiting to start...</span>
@@ -320,7 +427,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
             total_rounds={@total_rounds}
             current_word={@current_word_display}
             time_left={@time_left}
-            game_status={:playing} />
+            game_status={@room_status} />
         </div>
 
         <!-- Center: Drawing Canvas -->

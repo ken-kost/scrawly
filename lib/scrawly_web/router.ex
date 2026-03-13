@@ -24,10 +24,6 @@ defmodule ScrawlyWeb.Router do
   scope "/", ScrawlyWeb do
     pipe_through :browser
 
-    # Hologram routes - authentication handled in PageController
-    # get "/", PageController, :show
-    # get "/game/*path", PageController, :show
-
     auth_routes AuthController, Scrawly.Accounts.User, path: "/auth"
     sign_out_route AuthController
 

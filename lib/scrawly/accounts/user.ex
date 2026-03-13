@@ -38,15 +38,22 @@ defmodule Scrawly.Accounts.User do
   end
 
   actions do
-    defaults [:read]
+    defaults [:read, update: [:username]]
 
     create :create do
       accept [:email]
-      change Scrawly.Accounts.Changes.GenerateUsernameFromEmail
       primary? true
       upsert? true
       upsert_identity :unique_email
       upsert_fields [:email]
+
+      change fn changeset, _context ->
+        Ash.Changeset.after_action(changeset, fn _changeset, user ->
+          user
+          |> Ash.Changeset.for_update(:update, %{username: generate_username(user)})
+          |> Ash.update()
+        end)
+      end
     end
 
     read :get_by_subject do
@@ -81,8 +88,14 @@ defmodule Scrawly.Accounts.User do
 
       # Uses the information from the token to create or sign in the user
       change AshAuthentication.Strategy.MagicLink.SignInChange
-      # Generate username from email for new users
-      change Scrawly.Accounts.Changes.GenerateUsernameFromEmail
+
+      change fn changeset, _context ->
+        Ash.Changeset.after_action(changeset, fn _hangeset, user ->
+          user
+          |> Ash.Changeset.for_update(:update, %{username: generate_username(user)})
+          |> Ash.update()
+        end)
+      end
 
       metadata :token, :string do
         allow_nil? false
@@ -170,5 +183,12 @@ defmodule Scrawly.Accounts.User do
 
   identities do
     identity :unique_email, [:email]
+  end
+
+  defp generate_username(%{email: email}) do
+    email
+    |> to_string()
+    |> String.split("@")
+    |> List.first()
   end
 end
