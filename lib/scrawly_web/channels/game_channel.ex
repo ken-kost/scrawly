@@ -4,6 +4,45 @@ defmodule ScrawlyWeb.GameChannel do
   alias Scrawly.Games
   alias ScrawlyWeb.Presence
 
+  @rate_limit_max_messages 5
+  @rate_limit_window_seconds 3
+
+  defp ensure_rate_limit_table do
+    case :ets.info(:chat_rate_limit) do
+      :undefined ->
+        :ets.new(:chat_rate_limit, [:set, :named_table, :public])
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp check_rate_limit(user_id) do
+    ensure_rate_limit_table()
+    now = System.system_time(:second)
+    key = "chat:#{user_id}"
+
+    case :ets.lookup(:chat_rate_limit, key) do
+      [{^key, count, first_message_time}] ->
+        if now - first_message_time < @rate_limit_window_seconds do
+          if count >= @rate_limit_max_messages do
+            {:error, :rate_limit_exceeded}
+          else
+            :ets.update_counter(:chat_rate_limit, key, {2, 1})
+            {:ok, :continue}
+          end
+        else
+          :ets.insert(:chat_rate_limit, {key, 1, now})
+          {:ok, :continue}
+        end
+
+      [] ->
+        :ets.insert(:chat_rate_limit, {key, 1, now})
+        {:ok, :continue}
+    end
+  end
+
   @impl true
   def join("game:" <> room_code, _payload, socket) do
     with {:ok, room} <- Games.get_room_by_code(room_code),
@@ -71,54 +110,69 @@ defmodule ScrawlyWeb.GameChannel do
   @impl true
   def handle_in("chat_message", %{"message" => message}, socket) when byte_size(message) > 0 do
     user_id = socket.assigns.user_id
-    room_id = socket.assigns.room_id
 
-    case Ash.get(Scrawly.Accounts.User, user_id) do
-      {:ok, user} ->
-        case Games.get_game_by_room(room_id) do
-          {:ok, [game | _]} ->
-            current_word = game.current_word
-            drawer_id = game.current_drawer_id
+    case check_rate_limit(user_id) do
+      {:error, :rate_limit_exceeded} ->
+        {:reply, {:error, %{reason: "rate_limit_exceeded"}}, socket}
 
-            guess_result = check_guess(message, current_word, user_id, drawer_id, game.id)
+      {:ok, :continue} ->
+        room_id = socket.assigns.room_id
 
-            broadcast(socket, "chat_message", %{
-              "message" => message,
-              "username" => user.username || "Anonymous",
-              "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
-              "is_correct_guess" => match?({:correct, _}, guess_result)
-            })
-
-            case guess_result do
-              {:correct, points, drawer_id} ->
-                Games.award_points_to_guesser(user_id, points)
-                Games.award_points_to_drawer(drawer_id, div(points, 2))
-
-                broadcast(socket, "correct_guess", %{
-                  "guesser_id" => user_id,
-                  "guesser_name" => user.username || "Anonymous",
-                  "points" => points,
-                  "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
-                })
-
-              _ ->
-                :ok
-            end
-
-            {:reply, {:ok, %{status: "message_sent"}}, socket}
+        case Ash.get(Scrawly.Accounts.User, user_id) do
+          {:ok, user} ->
+            handle_chat_message(socket, user, room_id, message)
 
           _ ->
-            broadcast(socket, "chat_message", %{
-              "message" => message,
-              "username" => user.username || "Anonymous",
+            {:reply, {:error, %{reason: "user_not_found"}}, socket}
+        end
+    end
+  end
+
+  defp handle_chat_message(socket, user, room_id, message) do
+    user_id = user.id
+
+    case Games.get_game_by_room(room_id) do
+      {:ok, [game | _]} ->
+        current_word = game.current_word
+        drawer_id = game.current_drawer_id
+
+        guess_result = check_guess(message, current_word, user_id, drawer_id, game.id)
+
+        broadcast(socket, "chat_message", %{
+          "message" => message,
+          "username" => user.username || "Anonymous",
+          "user_id" => user_id,
+          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "is_correct_guess" => guess_result != :incorrect
+        })
+
+        case guess_result do
+          {:correct, points, drawer_id} ->
+            Games.award_points_to_guesser(user_id, points)
+            Games.award_points_to_drawer(drawer_id, div(points, 2))
+
+            broadcast(socket, "correct_guess", %{
+              "guesser_id" => user_id,
+              "guesser_name" => user.username || "Anonymous",
+              "points" => points,
               "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
             })
 
-            {:reply, {:ok, %{status: "message_sent"}}, socket}
+          _ ->
+            :ok
         end
 
+        {:reply, {:ok, %{status: "message_sent"}}, socket}
+
       _ ->
-        {:reply, {:error, %{reason: "user_not_found"}}, socket}
+        broadcast(socket, "chat_message", %{
+          "message" => message,
+          "username" => user.username || "Anonymous",
+          "user_id" => user_id,
+          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+        })
+
+        {:reply, {:ok, %{status: "message_sent"}}, socket}
     end
   end
 
@@ -132,10 +186,10 @@ defmodule ScrawlyWeb.GameChannel do
         points = Games.calculate_points(time_remaining)
         {:correct, points, drawer_id}
       else
-        {:incorrect}
+        :incorrect
       end
     else
-      {:incorrect}
+      :incorrect
     end
   end
 

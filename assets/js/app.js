@@ -48,6 +48,68 @@ window.liveSocket = liveSocket
 // expose gameSocket on window for game functionality
 window.gameSocket = gameSocket
 
+// Chat integration - set up callbacks for chat messages
+// This runs on every page load - we'll set up global handlers
+function setupChatIntegration() {
+  // Store the callback that will be called when chat messages arrive
+  window.hologramChatReceiveMessage = function(payload) {
+    // This will be called by the custom event
+    window.dispatchEvent(new CustomEvent('hologram:chat:message', { detail: payload }))
+  }
+
+  window.hologramChatCorrectGuess = function(payload) {
+    window.dispatchEvent(new CustomEvent('hologram:chat:correct_guess', { detail: payload }))
+  }
+}
+
+// Set up chat callbacks when gameSocket is ready
+if (typeof gameSocket !== 'undefined') {
+  setupChatIntegration()
+  
+  // Set up callback for incoming chat messages
+  gameSocket.onChatMessage(function(payload) {
+    console.log('Chat message received:', payload)
+    if (window.hologramChatReceiveMessage) {
+      window.hologramChatReceiveMessage(payload)
+    }
+  })
+
+  // Set up callback for correct guesses
+  gameSocket.onCorrectGuess(function(payload) {
+    console.log('Correct guess:', payload)
+    if (window.hologramChatCorrectGuess) {
+      window.hologramChatCorrectGuess(payload)
+    }
+  })
+}
+
+// Helper function to send chat messages from Hologram components
+window.sendChatMessage = function(message) {
+  if (gameSocket && gameSocket.isInRoom()) {
+    gameSocket.sendChatMessage(message)
+    return true
+  }
+  return false
+}
+
+// Auto-scroll chat to bottom when new messages arrive
+function setupChatAutoScroll() {
+  const chatContainer = document.getElementById('chat-messages')
+  if (chatContainer) {
+    const observer = new MutationObserver(() => {
+      chatContainer.scrollTop = chatContainer.scrollHeight
+    })
+    observer.observe(chatContainer, { childList: true, subtree: true })
+  }
+}
+
+// Run on page load
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', setupChatAutoScroll)
+} else {
+  setupChatAutoScroll()
+}
+
 // The lines below enable quality of life phoenix_live_reload
 // development features:
 //
