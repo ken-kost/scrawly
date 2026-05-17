@@ -6,18 +6,25 @@ defmodule Scrawly.Games.GameFlowTest do
 
   describe "game flow management" do
     setup do
-      # Create a room
-      {:ok, room} = Games.create_room(%{max_players: 4, name: "Test Room"})
-
-      # Create test players
+      # Create test players (create action only accepts :email, username auto-generated)
       {:ok, player1} =
-        Ash.create(User, %{username: "player1", email: "p1@test.com"}, authorize?: false)
+        Ash.create(User, %{email: "p1-#{System.unique_integer([:positive])}@test.com"},
+          authorize?: false
+        )
+
+      # Create a room
+      {:ok, room} =
+        Games.create_room(%{max_players: 4, name: "Test Room", creator_id: player1.id})
 
       {:ok, player2} =
-        Ash.create(User, %{username: "player2", email: "p2@test.com"}, authorize?: false)
+        Ash.create(User, %{email: "p2-#{System.unique_integer([:positive])}@test.com"},
+          authorize?: false
+        )
 
       {:ok, player3} =
-        Ash.create(User, %{username: "player3", email: "p3@test.com"}, authorize?: false)
+        Ash.create(User, %{email: "p3-#{System.unique_integer([:positive])}@test.com"},
+          authorize?: false
+        )
 
       # Join players to room
       {:ok, _} =
@@ -35,7 +42,9 @@ defmodule Scrawly.Games.GameFlowTest do
         |> Ash.Changeset.for_update(:join_room, %{current_room_id: room.id})
         |> Ash.update()
 
-      # Seed words for testing
+      # Clear stale words and re-seed with difficulty data
+      {:ok, existing} = Games.get_all_words()
+      Enum.each(existing, fn w -> Ash.destroy!(w) end)
       Scrawly.Games.Word.seed_words()
 
       %{
@@ -99,7 +108,10 @@ defmodule Scrawly.Games.GameFlowTest do
       assert updated_game.current_round == 3
     end
 
-    test "complete_round clears current word and drawer", %{room: room, players: [player1 | _]} do
+    test "complete_round clears current word but preserves drawer", %{
+      room: room,
+      players: [player1 | _]
+    } do
       {:ok, game} = Games.create_game(room.id, 3)
       {:ok, game} = Games.start_round(game.id, player1.id)
 
@@ -110,7 +122,7 @@ defmodule Scrawly.Games.GameFlowTest do
       # Complete round
       {:ok, updated_game} = Games.complete_round(game.id)
       assert updated_game.current_word == nil
-      assert updated_game.current_drawer_id == nil
+      assert updated_game.current_drawer_id == player1.id
     end
 
     test "end_game sets status to completed", %{room: room} do
@@ -136,7 +148,6 @@ defmodule Scrawly.Games.GameFlowTest do
       # Complete round 1
       {:ok, game} = Games.complete_round(game.id)
       assert game.current_word == nil
-      assert game.current_drawer_id == nil
 
       # Start round 2 with next drawer
       {:ok, game} = Games.next_round(game.id)

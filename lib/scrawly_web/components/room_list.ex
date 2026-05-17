@@ -6,52 +6,46 @@ defmodule ScrawlyWeb.Components.RoomList do
 
   def template do
     ~HOLO"""
-    <div class="bg-white rounded-lg shadow-md">
-      <div class="p-4 border-b border-gray-200">
-        <h2 class="text-xl font-semibold text-black">Available Rooms</h2>
-      </div>
-
-      <div class="p-4">
-        <!-- Loading State -->
-        <div class={if(@loading, do: "text-center py-8", else: "hidden")}>
-          <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-          <p class="mt-2 text-gray-600">Loading rooms...</p>
+    <div class="room-list">
+      {%if length(@rooms) == 0}
+        <div style="padding: 56px 16px; text-align: center; color: var(--muted);">
+          <h3 style="color: var(--ink); font-size: 16px; font-weight: 500; margin: 0 0 6px;">no rooms yet</h3>
+          <p style="font-size: 13px;">create one to get started.</p>
         </div>
-
-        <!-- No Rooms State -->
-        <div class={if(!@loading && length(@rooms) == 0, do: "text-center py-8 text-gray-500", else: "hidden")}>
-          <p>No rooms available. Create one to get started!</p>
-        </div>
-
-        <!-- Rooms List -->
-        <div class={if(!@loading && length(@rooms) > 0, do: "grid gap-4", else: "hidden")}>
-          <!-- Room 1 -->
-        {%for room <- @rooms}
-          <div class="bg-gray-50 rounded-lg p-4 border hover:bg-gray-100 transition-colors">
-            <div class="flex justify-between items-center">
-              <div class="flex-1">
-                <h3 class="font-semibold text-lg text-black">{room.name}</h3>
-                <div class="text-sm text-gray-600 mt-1">
-                  <span>{length(room.players)}/{room.max_players} players</span>
-                </div>
-              </div>
-              <div class="flex gap-2">
-                <button
-                  class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                  $click={:join_room, room_id: room.id}>
-                  Join
-                </button>
-                <button
-                  class="bg-gray-300 hover:bg-gray-400 text-black px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                  $click={:watch_room, room_id: room.id}>
-                  Watch
-                </button>
-              </div>
+      {%else}
+        {%for {room, idx} <- Enum.with_index(@rooms)}
+          <div class="room-row" $click={:join_room, room_id: room.room_id}>
+            <span class="room-num mono">{String.pad_leading(Integer.to_string(idx + 1), 2, "0")}</span>
+            <div class="room-title">
+              <span class="name">{room.name}</span>
+              <span class="meta">
+                <span>[{Map.get(room, :code, "") || ""}]</span>
+                <span>[{if((Map.get(room, :word_source, :local) || :local) == :ai, do: "ai", else: "local")}]</span>
+                <span>{Map.get(room, :round_duration, 60) || 60}s × {Map.get(room, :round_multiplier, 1) || 1}r</span>
+              </span>
             </div>
+            <div class="avatar-stack">
+              {%for {p, _i} <- Enum.with_index(Enum.take(room.players, 4))}
+                <span class="avatar" style={"background: " <> Scrawly.Games.PlayerColor.for(p.id) <> "; color: #0a0a0a;"}>{String.upcase(String.slice(p.username || "?", 0..0))}</span>
+              {/for}
+              {%if length(room.players) > 4}
+                <span class="avatar" style="background: transparent; color: var(--muted);">+{length(room.players) - 4}</span>
+              {/if}
+            </div>
+            <span class="mono" style="font-size: 12px; color: var(--muted); min-width: 60px; text-align: right;">
+              {length(room.players)}/{room.max_players}
+            </span>
+            {%if length(room.players) >= room.max_players}
+              <span class="chip chip-strong">full</span>
+            {%else}
+              <span class="chip chip-strong">lobby</span>
+            {/if}
           </div>
         {/for}
+        <div style="padding: 16px 8px; color: var(--muted); font-size: 12px;" class="mono">
+          showing {length(@rooms)} room(s)
         </div>
-      </div>
+      {/if}
     </div>
     """
   end

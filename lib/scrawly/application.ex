@@ -12,12 +12,15 @@ defmodule Scrawly.Application do
       Scrawly.Repo,
       {DNSCluster, query: Application.get_env(:scrawly, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Scrawly.PubSub},
+      # Registry and DynamicSupervisor for RoomServer processes
+      {Registry, keys: :unique, name: Scrawly.RoomRegistry},
+      {DynamicSupervisor, strategy: :one_for_one, name: Scrawly.RoomSupervisor},
       # Presence tracking for game channels
       ScrawlyWeb.Presence,
       # Round timer for game flow management
       Scrawly.Games.RoundTimer,
-      # Start a worker by calling: Scrawly.Worker.start_link(arg)
-      # {Scrawly.Worker, arg},
+      # Shared canvas for the home-page demo board
+      Scrawly.Games.DemoBoardServer,
       # Start to serve requests, typically the last entry
       ScrawlyWeb.Endpoint,
       {AshAuthentication.Supervisor, [otp_app: :scrawly]}

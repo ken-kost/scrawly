@@ -5,6 +5,8 @@ defmodule Scrawly.Games.Room do
     data_layer: AshPostgres.DataLayer,
     notifiers: [Ash.Notifier.PubSub]
 
+  require AshAi.Actions
+
   postgres do
     table "rooms"
     repo Scrawly.Repo
@@ -19,7 +21,18 @@ defmodule Scrawly.Games.Room do
     end
 
     create :create do
-      accept [:name, :max_players]
+      accept [
+        :name,
+        :max_players,
+        :creator_id,
+        :word_count,
+        :word_source,
+        :prompt,
+        :round_duration,
+        :round_multiplier,
+        :ai_tone
+      ]
+
       primary? true
 
       change fn changeset, _context ->
@@ -36,21 +49,6 @@ defmodule Scrawly.Games.Room do
         description "ID of the player joining the room"
       end
 
-      # Validate room capacity
-      validate fn changeset, _context ->
-        room = changeset.data
-
-        # Load current players to count them
-        room_with_players = Ash.load!(room, :players)
-        current_player_count = length(room_with_players.players)
-
-        if current_player_count >= room.max_players do
-          {:error, field: :max_players, message: "Room is at maximum capacity"}
-        else
-          :ok
-        end
-      end
-
       # Validate room is in lobby state
       validate fn changeset, _context ->
         room = changeset.data
@@ -59,6 +57,30 @@ defmodule Scrawly.Games.Room do
           {:error, field: :status, message: "Cannot join room that is not in lobby"}
         else
           :ok
+        end
+      end
+
+      # Validate room capacity and creator presence
+      validate fn changeset, _context ->
+        room = changeset.data
+        room_with_players = Ash.load!(room, :players)
+        current_player_count = length(room_with_players.players)
+        player_id = Ash.Changeset.get_argument(changeset, :player_id)
+
+        cond do
+          current_player_count >= room.max_players ->
+            {:error, field: :max_players, message: "Room is at maximum capacity"}
+
+          # Creator can always join their own room
+          player_id == room.creator_id ->
+            :ok
+
+          # For non-creators, verify creator is present
+          not Enum.any?(room_with_players.players, &(&1.id == room.creator_id)) ->
+            {:error, field: :creator_id, message: "Cannot join room when creator is not present"}
+
+          true ->
+            :ok
         end
       end
     end
@@ -74,11 +96,21 @@ defmodule Scrawly.Games.Room do
       change set_attribute(:status, :ended)
     end
 
+    update :post_game do
+      accept []
+      change set_attribute(:status, :post_game)
+    end
+
+    update :return_to_lobby do
+      accept []
+      change set_attribute(:status, :lobby)
+      change set_attribute(:current_round, 0)
+    end
+
     update :auto_start_if_ready do
       accept []
       require_atomic? false
 
-      # Validate room is in lobby state
       validate fn changeset, _context ->
         room = changeset.data
 
@@ -89,7 +121,6 @@ defmodule Scrawly.Games.Room do
         end
       end
 
-      # Check if we have minimum players and auto-start
       change fn changeset, _context ->
         room = changeset.data
         room_with_players = Ash.load!(room, :players)
@@ -114,33 +145,78 @@ defmodule Scrawly.Games.Room do
         description "ID of the player disconnecting from the room"
       end
 
-      # If room becomes empty or has insufficient players, reset to lobby
       change fn changeset, _context ->
         room = changeset.data
         room_with_players = Ash.load!(room, :players)
-
-        # Filter out the disconnecting player
         player_id = Ash.Changeset.get_argument(changeset, :player_id)
         remaining_players = Enum.reject(room_with_players.players, &(&1.id == player_id))
         remaining_count = length(remaining_players)
 
         cond do
+          player_id == room.creator_id ->
+            changeset
+            |> Ash.Changeset.change_attribute(:status, :ended)
+
           remaining_count == 0 ->
-            # Room is empty, reset to lobby
             changeset
             |> Ash.Changeset.change_attribute(:status, :lobby)
             |> Ash.Changeset.change_attribute(:current_round, 0)
 
           remaining_count == 1 && room.status == :playing ->
-            # Only one player left during game, end the game
             changeset
             |> Ash.Changeset.change_attribute(:status, :ended)
 
           true ->
-            # Sufficient players remain, no state change needed
             changeset
         end
       end
+    end
+
+    # AI word generation — prompt-backed action via ash_ai
+    action :generate_ai_words, {:array, :string} do
+      description """
+      Generates a list of drawing words/phrases based on a theme prompt.
+      Each entry matches the specified word_count constraint (1, 2, or 3 words).
+      Words should be concrete, drawable things suitable for a drawing game.
+      """
+
+      argument :prompt, :string do
+        allow_nil? false
+
+        description "The theme or category for word generation, e.g. 'ocean animals' or 'things in a kitchen'"
+      end
+
+      argument :word_count, :integer do
+        allow_nil? false
+        description "Number of words per entry: 1, 2, or 3"
+      end
+
+      argument :num_words, :integer do
+        allow_nil? false
+        default 20
+        description "How many words/phrases to generate"
+      end
+
+      argument :tone, :string do
+        allow_nil? false
+        default "fun"
+        description "The tone/style of words: fun, creative, or weird"
+      end
+
+      run AshAi.Actions.prompt(
+            LangChain.ChatModels.ChatOpenAI.new!(%{model: "gpt-4o-mini"}),
+            prompt: """
+            Generate exactly <%= @input.arguments.num_words %> unique drawing game words/phrases based on this theme: "<%= @input.arguments.prompt %>".
+
+            RULES:
+            - Each entry MUST be exactly <%= @input.arguments.word_count %> word(s) long.
+            - Words generated based on a prompt.
+            - Keep them <%= @input.arguments.tone %>.
+            - No duplicates. Every single entry must be unique.
+            - Return exactly <%= @input.arguments.num_words %> entries, no more, no less.
+            """,
+            tools: false
+          )
     end
   end
 
@@ -176,7 +252,7 @@ defmodule Scrawly.Games.Room do
       allow_nil? false
       default :lobby
       public? true
-      constraints one_of: [:lobby, :playing, :ended]
+      constraints one_of: [:lobby, :playing, :post_game, :ended]
     end
 
     attribute :max_players, :integer do
@@ -192,11 +268,61 @@ defmodule Scrawly.Games.Room do
       public? true
     end
 
+    attribute :creator_id, :uuid do
+      allow_nil? false
+      public? true
+    end
+
+    attribute :word_count, :integer do
+      allow_nil? false
+      default 1
+      public? true
+      constraints min: 1, max: 3
+    end
+
+    attribute :word_source, :atom do
+      allow_nil? false
+      default :local
+      public? true
+      constraints one_of: [:local, :ai]
+    end
+
+    attribute :prompt, :string do
+      public? true
+    end
+
+    attribute :round_duration, :integer do
+      allow_nil? false
+      default 60
+      public? true
+      constraints min: 60, max: 300
+    end
+
+    attribute :round_multiplier, :integer do
+      allow_nil? false
+      default 1
+      public? true
+      constraints min: 1, max: 5
+    end
+
+    attribute :ai_tone, :atom do
+      allow_nil? false
+      default :fun
+      public? true
+      constraints one_of: [:fun, :creative, :weird]
+    end
+
     create_timestamp :created_at
     update_timestamp :updated_at
   end
 
   relationships do
+    belongs_to :creator, Scrawly.Accounts.User do
+      source_attribute :creator_id
+      destination_attribute :id
+      define_attribute? false
+    end
+
     has_many :players, Scrawly.Accounts.User do
       destination_attribute :current_room_id
     end
@@ -208,7 +334,6 @@ defmodule Scrawly.Games.Room do
     identity :unique_code, [:code]
   end
 
-  # Helper function to generate unique room codes
   defp generate_room_code do
     :crypto.strong_rand_bytes(4)
     |> Base.encode32(case: :upper, padding: false)

@@ -8,7 +8,14 @@ defmodule Scrawly.Games.GameTest do
 
   describe "Game resource" do
     setup do
-      {:ok, room} = Ash.create(Room, %{})
+      {:ok, creator} =
+        Ash.create(
+          Scrawly.Accounts.User,
+          %{email: "game-creator-#{System.unique_integer([:positive])}@test.com"},
+          authorize?: false
+        )
+
+      {:ok, room} = Ash.create(Room, %{name: "Test Room", creator_id: creator.id})
       %{room: room}
     end
 
@@ -66,7 +73,7 @@ defmodule Scrawly.Games.GameTest do
       assert {:error, %Ash.Error.Invalid{}} =
                Ash.create(Game, %{
                  room_id: room.id,
-                 total_rounds: 11
+                 total_rounds: 13
                })
     end
 

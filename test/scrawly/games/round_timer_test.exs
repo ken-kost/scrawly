@@ -105,7 +105,7 @@ defmodule Scrawly.Games.RoundTimerTest do
       assert :ok = RoundTimer.start_timer(game_id)
 
       # Should receive timer_started message
-      assert_receive {:timer_started, %{game_id: ^game_id, duration_seconds: 80}}, 1000
+      assert_receive {:timer_started, %{game_id: ^game_id, duration_seconds: 60}}, 1000
 
       # Stop timer
       assert :ok = RoundTimer.stop_timer(game_id)

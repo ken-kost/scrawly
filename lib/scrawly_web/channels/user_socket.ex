@@ -9,6 +9,8 @@ defmodule ScrawlyWeb.UserSocket do
   ## Channels
 
   channel "game:*", ScrawlyWeb.GameChannel
+  channel "lobby:*", ScrawlyWeb.LobbyChannel
+  channel "demo:board", ScrawlyWeb.DemoBoardChannel
 
   # Socket params are passed from the client and can
   # be used to verify and authenticate a user. After
@@ -25,7 +27,7 @@ defmodule ScrawlyWeb.UserSocket do
   # See `Phoenix.Token` documentation for examples in
   # performing token verification on connect.
   @impl true
-  def connect(%{"token" => token}, socket, _connect_info) do
+  def connect(%{"token" => token} = params, socket, connect_info) do
     case AshAuthentication.Jwt.verify(token, Scrawly.Accounts.User) do
       {:ok, %{"sub" => subject}, _claims} ->
         case Scrawly.Accounts.User
@@ -35,16 +37,25 @@ defmodule ScrawlyWeb.UserSocket do
             {:ok, assign(socket, :user_id, user.id)}
 
           _ ->
-            :error
+            connect(Map.delete(params, "token"), socket, connect_info)
         end
 
       _ ->
-        :error
+        # Token is invalid/expired — fall through so public channels (lobby)
+        # can still join as anonymous.
+        connect(Map.delete(params, "token"), socket, connect_info)
     end
   end
 
-  def connect(_params, _socket, _connect_info) do
-    :error
+  # Allow anonymous connections for lobby channel (room list is public)
+  def connect(%{"lobby" => "true"}, socket, _connect_info) do
+    {:ok, assign(socket, :user_id, nil)}
+  end
+
+  # Permit any other websocket attempt as anonymous; channel authorization
+  # in individual channels still restricts protected actions.
+  def connect(_params, socket, _connect_info) do
+    {:ok, assign(socket, :user_id, nil)}
   end
 
   # Socket IDs are topics that allow you to identify all sockets for a given user:
