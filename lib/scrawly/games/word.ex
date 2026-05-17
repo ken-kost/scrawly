@@ -13,16 +13,28 @@ defmodule Scrawly.Games.Word do
     defaults [:read, :update, :destroy]
 
     create :create do
-      accept [:text]
+      accept [:text, :difficulty]
       primary? true
     end
 
     read :get_random_word do
-      # Simple random selection - will be implemented via domain function
+      argument :difficulty, :atom do
+        allow_nil? true
+        constraints one_of: [:easy, :medium, :hard]
+      end
     end
 
     read :list_all do
       # Get all words for validation/testing
+    end
+
+    read :list_by_difficulty do
+      argument :difficulty, :atom do
+        allow_nil? false
+        constraints one_of: [:easy, :medium, :hard]
+      end
+
+      filter expr(difficulty == ^arg(:difficulty))
     end
   end
 
@@ -35,17 +47,20 @@ defmodule Scrawly.Games.Word do
       constraints min_length: 1, max_length: 20
     end
 
+    attribute :difficulty, :atom do
+      allow_nil? false
+      default :medium
+      public? true
+      constraints one_of: [:easy, :medium, :hard]
+    end
+
     create_timestamp :created_at
     update_timestamp :updated_at
   end
 
-  # Seed data - 100 common words for drawing game
-  @word_list [
+  @easy_words [
     "cat",
     "dog",
-    "house",
-    "car",
-    "tree",
     "sun",
     "moon",
     "star",
@@ -55,13 +70,40 @@ defmodule Scrawly.Games.Word do
     "banana",
     "chair",
     "table",
-    "window",
     "door",
-    "flower",
     "bird",
     "fish",
+    "cake",
+    "pizza",
+    "bread",
+    "cheese",
+    "milk",
+    "water",
+    "tea",
+    "hat",
+    "shoe",
+    "shirt",
+    "dress",
+    "ring",
+    "phone",
+    "bus",
+    "car",
+    "tree",
+    "flower",
+    "cloud",
+    "rain",
+    "snow",
+    "fire",
+    "bee",
+    "ant"
+  ]
+
+  @medium_words [
+    "house",
+    "car",
+    "tree",
+    "window",
     "horse",
-    "mountain",
     "ocean",
     "river",
     "forest",
@@ -69,46 +111,20 @@ defmodule Scrawly.Games.Word do
     "bridge",
     "garden",
     "rainbow",
-    "cloud",
-    "fire",
-    "ice",
-    "snow",
-    "rain",
-    "wind",
-    "thunder",
-    "lightning",
     "butterfly",
     "spider",
-    "ant",
-    "bee",
-    "cake",
-    "pizza",
-    "bread",
-    "cheese",
-    "milk",
-    "water",
     "coffee",
-    "tea",
     "juice",
     "candy",
-    "hat",
-    "shoe",
-    "shirt",
     "pants",
-    "dress",
     "coat",
     "glasses",
     "watch",
-    "ring",
     "necklace",
     "guitar",
     "piano",
     "drum",
-    "violin",
-    "trumpet",
-    "microphone",
     "camera",
-    "phone",
     "computer",
     "television",
     "airplane",
@@ -117,10 +133,8 @@ defmodule Scrawly.Games.Word do
     "bicycle",
     "motorcycle",
     "truck",
-    "bus",
     "helicopter",
     "rocket",
-    "submarine",
     "beach",
     "desert",
     "jungle",
@@ -130,7 +144,17 @@ defmodule Scrawly.Games.Word do
     "waterfall",
     "meadow",
     "valley",
-    "hill",
+    "hill"
+  ]
+
+  @hard_words [
+    "mountain",
+    "thunder",
+    "lightning",
+    "microphone",
+    "violin",
+    "trumpet",
+    "submarine",
     "doctor",
     "teacher",
     "police",
@@ -140,18 +164,36 @@ defmodule Scrawly.Games.Word do
     "musician",
     "dancer",
     "athlete",
-    "scientist"
+    "scientist",
+    "saxophone",
+    "accordion",
+    "trombone",
+    "cellphone",
+    "smartphone",
+    "laptop",
+    "notebook",
+    "backpack",
+    "umbrella",
+    "snowboard",
+    "skateboard",
+    "telescope",
+    "microscope",
+    "stethoscope",
+    "thermometer"
   ]
 
-  def word_list, do: @word_list
+  def word_list, do: @easy_words ++ @medium_words ++ @hard_words
 
   def seed_words do
-    Enum.each(@word_list, fn word_text ->
-      case Ash.create(Scrawly.Games.Word, %{text: word_text}) do
-        {:ok, _word} -> :ok
-        # Word might already exist, ignore error
-        {:error, _} -> :ok
-      end
-    end)
+    Enum.each(@easy_words, &create_word(&1, :easy))
+    Enum.each(@medium_words, &create_word(&1, :medium))
+    Enum.each(@hard_words, &create_word(&1, :hard))
+  end
+
+  defp create_word(word_text, difficulty) do
+    case Ash.create(Scrawly.Games.Word, %{text: word_text, difficulty: difficulty}) do
+      {:ok, _word} -> :ok
+      {:error, _} -> :ok
+    end
   end
 end

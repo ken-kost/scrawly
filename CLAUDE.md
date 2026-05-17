@@ -1,4 +1,5 @@
 <!-- usage-rules-start -->
+<<<<<<< HEAD
 <!-- hologram-start -->
 ## hologram usage
 
@@ -26,6 +27,8 @@ Hologram is a full-stack Elixir web framework that compiles Elixir to JavaScript
 - [JavaScript Interop](./usage-rules/javascript-interop.md)
 
 <!-- hologram-end -->
+=======
+>>>>>>> master
 <!-- ash-start -->
 ## ash usage
 _A declarative, extensible framework for building Elixir applications._

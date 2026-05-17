@@ -14,7 +14,6 @@ defmodule ScrawlyWeb.Pages.HomePage do
         user_id -> {Ash.get!(Scrawly.Accounts.User, user_id), true}
       end
 
-    dbg(server)
     # Always initialize the component with default state first to prevent template errors
     # component =
     component

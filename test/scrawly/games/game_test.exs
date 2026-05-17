@@ -8,7 +8,7 @@ defmodule Scrawly.Games.GameTest do
 
   describe "Game resource" do
     setup do
-      {:ok, room} = Ash.create(Room, %{})
+      {:ok, room} = Ash.create(Room, %{name: "Test Room"})
       %{room: room}
     end
 

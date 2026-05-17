@@ -12,6 +12,7 @@ defmodule Scrawly.Accounts do
       define :create_user, action: :create, args: [:email]
       define :join_room, action: :join_room, args: [:current_room_id]
       define :leave_room, action: :leave_room
+      define :update_score, action: :update_score
     end
   end
 end

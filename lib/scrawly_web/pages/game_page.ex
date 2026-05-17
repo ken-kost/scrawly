@@ -109,14 +109,18 @@ defmodule ScrawlyWeb.Pages.GamePage do
     message = component.state.new_message
 
     if String.trim(message) != "" do
-      player_name = Map.get(component.state, :current_user_username, "You")
+      # Add message locally for immediate feedback
+      username = component.state.current_user_username || "You"
+      user_id = component.state.current_user_id
 
       new_chat_message = %{
         id: :rand.uniform(10000),
-        player_name: player_name,
+        username: username,
+        user_id: user_id,
         message: message,
         timestamp: DateTime.utc_now(),
-        is_guess: true
+        is_correct_guess: false,
+        points: 0
       }
 
       updated_messages = [new_chat_message | component.state.chat_messages] |> Enum.take(50)
@@ -131,6 +135,49 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   def action(:update_message, %{event: %{value: message}}, component) do
     put_state(component, :new_message, message)
+  end
+
+  def action(
+        :receive_chat_message,
+        %{
+          message: message,
+          username: username,
+          user_id: user_id,
+          is_correct_guess: is_correct_guess,
+          points: points
+        },
+        component
+      ) do
+    new_chat_message = %{
+      id: :rand.uniform(10000),
+      username: username,
+      user_id: user_id,
+      message: message,
+      timestamp: DateTime.utc_now(),
+      is_correct_guess: is_correct_guess || false,
+      points: points || 0
+    }
+
+    updated_messages = [new_chat_message | component.state.chat_messages] |> Enum.take(50)
+
+    put_state(component, :chat_messages, updated_messages)
+  end
+
+  def action(:receive_system_message, %{message: message}, component) do
+    new_chat_message = %{
+      id: :rand.uniform(10000),
+      username: "System",
+      user_id: nil,
+      message: message,
+      timestamp: DateTime.utc_now(),
+      type: "system",
+      is_correct_guess: false,
+      points: 0
+    }
+
+    updated_messages = [new_chat_message | component.state.chat_messages] |> Enum.take(50)
+
+    put_state(component, :chat_messages, updated_messages)
   end
 
   def action(:start_game, params, component) do
@@ -467,6 +514,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
             messages={@chat_messages}
             current_message={@new_message}
             current_user_id={@current_user_id}
+            current_user_name={@current_user_username}
             disabled={!@game_started}
           />
         </div>
