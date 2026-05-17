@@ -1,0 +1,458 @@
+{
+  "AshAi.DevTools.Tools": {
+    "attributes": [],
+    "line": 5,
+    "file": "deps/ash_ai/lib/ash_ai/dev_tools/tools.ex",
+    "relationships": []
+  },
+  "AshPhoenix.Form.WrappedValue": {
+    "attributes": [
+      {
+        "line": 11,
+        "name": "value",
+        "type": "Ash.Type.Term",
+        "primaryKey": false
+      }
+    ],
+    "line": 5,
+    "file": "deps/ash_phoenix/lib/ash_phoenix/form/wrapped_value.ex",
+    "relationships": []
+  },
+  "Cinder.Filter.Debug.DummyResource": {
+    "attributes": [
+      {
+        "line": 0,
+        "name": "id",
+        "type": "Ash.Type.Integer",
+        "primaryKey": true
+      },
+      {
+        "line": 0,
+        "name": "name",
+        "type": "Ash.Type.String",
+        "primaryKey": false
+      },
+      {
+        "line": 0,
+        "name": "value",
+        "type": "Ash.Type.Integer",
+        "primaryKey": false
+      },
+      {
+        "line": 0,
+        "name": "active",
+        "type": "Ash.Type.Boolean",
+        "primaryKey": false
+      }
+    ],
+    "line": 1,
+    "file": "deps/cinder/lib/cinder/filter/debug.ex",
+    "relationships": []
+  },
+  "Scrawly.Accounts.Token": {
+    "attributes": [
+      {
+        "line": 90,
+        "name": "jti",
+        "type": "Ash.Type.String",
+        "primaryKey": true
+      },
+      {
+        "line": 97,
+        "name": "subject",
+        "type": "Ash.Type.String",
+        "primaryKey": false
+      },
+      {
+        "line": 102,
+        "name": "expires_at",
+        "type": "Ash.Type.UtcDatetime",
+        "primaryKey": false
+      },
+      {
+        "line": 107,
+        "name": "purpose",
+        "type": "Ash.Type.String",
+        "primaryKey": false
+      },
+      {
+        "line": 112,
+        "name": "extra_data",
+        "type": "Ash.Type.Map",
+        "primaryKey": false
+      },
+      {
+        "line": 0,
+        "name": "created_at",
+        "type": "Ash.Type.UtcDatetimeUsec",
+        "primaryKey": false
+      },
+      {
+        "line": 0,
+        "name": "updated_at",
+        "type": "Ash.Type.UtcDatetimeUsec",
+        "primaryKey": false
+      }
+    ],
+    "line": 1,
+    "file": "lib/scrawly/accounts/token.ex",
+    "relationships": []
+  },
+  "Scrawly.Accounts.User": {
+    "attributes": [
+      {
+        "line": 0,
+        "name": "id",
+        "type": "Ash.Type.UUID",
+        "primaryKey": true
+      },
+      {
+        "line": 148,
+        "name": "email",
+        "type": "Ash.Type.CiString",
+        "primaryKey": false
+      },
+      {
+        "line": 154,
+        "name": "username",
+        "type": "Ash.Type.String",
+        "primaryKey": false
+      },
+      {
+        "line": 159,
+        "name": "score",
+        "type": "Ash.Type.Integer",
+        "primaryKey": false
+      },
+      {
+        "line": 166,
+        "name": "player_state",
+        "type": "Ash.Type.Atom",
+        "primaryKey": false
+      },
+      {
+        "line": 172,
+        "name": "current_room_id",
+        "type": "Ash.Type.UUID",
+        "primaryKey": false
+      }
+    ],
+    "line": 1,
+    "file": "lib/scrawly/accounts/user.ex",
+    "relationships": [
+      {
+        "line": 178,
+        "name": "current_room",
+        "type": "belongs_to",
+        "destination": "Scrawly.Games.Room"
+      }
+    ]
+  },
+  "Scrawly.Games.Game": {
+    "attributes": [
+      {
+        "line": 0,
+        "name": "id",
+        "type": "Ash.Type.UUID",
+        "primaryKey": true
+      },
+      {
+        "line": 126,
+        "name": "status",
+        "type": "Ash.Type.Atom",
+        "primaryKey": false
+      },
+      {
+        "line": 133,
+        "name": "current_round",
+        "type": "Ash.Type.Integer",
+        "primaryKey": false
+      },
+      {
+        "line": 140,
+        "name": "total_rounds",
+        "type": "Ash.Type.Integer",
+        "primaryKey": false
+      },
+      {
+        "line": 147,
+        "name": "current_word",
+        "type": "Ash.Type.String",
+        "primaryKey": false
+      },
+      {
+        "line": 151,
+        "name": "current_drawer_id",
+        "type": "Ash.Type.UUID",
+        "primaryKey": false
+      },
+      {
+        "line": 155,
+        "name": "round_details",
+        "type": "{:array, Ash.Type.Map}",
+        "primaryKey": false
+      },
+      {
+        "line": 0,
+        "name": "created_at",
+        "type": "Ash.Type.UtcDatetimeUsec",
+        "primaryKey": false
+      },
+      {
+        "line": 0,
+        "name": "updated_at",
+        "type": "Ash.Type.UtcDatetimeUsec",
+        "primaryKey": false
+      },
+      {
+        "line": 0,
+        "name": "room_id",
+        "type": "Ash.Type.UUID",
+        "primaryKey": false
+      }
+    ],
+    "line": 1,
+    "file": "lib/scrawly/games/game.ex",
+    "relationships": [
+      {
+        "line": 165,
+        "name": "room",
+        "type": "belongs_to",
+        "destination": "Scrawly.Games.Room"
+      },
+      {
+        "line": 170,
+        "name": "current_drawer",
+        "type": "belongs_to",
+        "destination": "Scrawly.Accounts.User"
+      }
+    ]
+  },
+  "Scrawly.Games.GameResult": {
+    "attributes": [
+      {
+        "line": 0,
+        "name": "id",
+        "type": "Ash.Type.UUID",
+        "primaryKey": true
+      },
+      {
+        "line": 36,
+        "name": "player_id",
+        "type": "Ash.Type.UUID",
+        "primaryKey": false
+      },
+      {
+        "line": 41,
+        "name": "game_id",
+        "type": "Ash.Type.UUID",
+        "primaryKey": false
+      },
+      {
+        "line": 46,
+        "name": "room_id",
+        "type": "Ash.Type.UUID",
+        "primaryKey": false
+      },
+      {
+        "line": 51,
+        "name": "score",
+        "type": "Ash.Type.Integer",
+        "primaryKey": false
+      },
+      {
+        "line": 57,
+        "name": "player_username",
+        "type": "Ash.Type.String",
+        "primaryKey": false
+      },
+      {
+        "line": 0,
+        "name": "created_at",
+        "type": "Ash.Type.UtcDatetimeUsec",
+        "primaryKey": false
+      }
+    ],
+    "line": 1,
+    "file": "lib/scrawly/games/game_result.ex",
+    "relationships": [
+      {
+        "line": 65,
+        "name": "player",
+        "type": "belongs_to",
+        "destination": "Scrawly.Accounts.User"
+      },
+      {
+        "line": 71,
+        "name": "game",
+        "type": "belongs_to",
+        "destination": "Scrawly.Games.Game"
+      },
+      {
+        "line": 77,
+        "name": "room",
+        "type": "belongs_to",
+        "destination": "Scrawly.Games.Room"
+      }
+    ]
+  },
+  "Scrawly.Games.Room": {
+    "attributes": [
+      {
+        "line": 0,
+        "name": "id",
+        "type": "Ash.Type.UUID",
+        "primaryKey": true
+      },
+      {
+        "line": 229,
+        "name": "name",
+        "type": "Ash.Type.String",
+        "primaryKey": false
+      },
+      {
+        "line": 234,
+        "name": "code",
+        "type": "Ash.Type.String",
+        "primaryKey": false
+      },
+      {
+        "line": 240,
+        "name": "status",
+        "type": "Ash.Type.Atom",
+        "primaryKey": false
+      },
+      {
+        "line": 247,
+        "name": "max_players",
+        "type": "Ash.Type.Integer",
+        "primaryKey": false
+      },
+      {
+        "line": 254,
+        "name": "current_round",
+        "type": "Ash.Type.Integer",
+        "primaryKey": false
+      },
+      {
+        "line": 260,
+        "name": "creator_id",
+        "type": "Ash.Type.UUID",
+        "primaryKey": false
+      },
+      {
+        "line": 265,
+        "name": "word_count",
+        "type": "Ash.Type.Integer",
+        "primaryKey": false
+      },
+      {
+        "line": 272,
+        "name": "word_source",
+        "type": "Ash.Type.Atom",
+        "primaryKey": false
+      },
+      {
+        "line": 279,
+        "name": "prompt",
+        "type": "Ash.Type.String",
+        "primaryKey": false
+      },
+      {
+        "line": 283,
+        "name": "round_duration",
+        "type": "Ash.Type.Integer",
+        "primaryKey": false
+      },
+      {
+        "line": 290,
+        "name": "round_multiplier",
+        "type": "Ash.Type.Integer",
+        "primaryKey": false
+      },
+      {
+        "line": 297,
+        "name": "ai_tone",
+        "type": "Ash.Type.Atom",
+        "primaryKey": false
+      },
+      {
+        "line": 0,
+        "name": "created_at",
+        "type": "Ash.Type.UtcDatetimeUsec",
+        "primaryKey": false
+      },
+      {
+        "line": 0,
+        "name": "updated_at",
+        "type": "Ash.Type.UtcDatetimeUsec",
+        "primaryKey": false
+      }
+    ],
+    "line": 1,
+    "file": "lib/scrawly/games/room.ex",
+    "relationships": [
+      {
+        "line": 309,
+        "name": "creator",
+        "type": "belongs_to",
+        "destination": "Scrawly.Accounts.User"
+      },
+      {
+        "line": 315,
+        "name": "players",
+        "type": "has_many",
+        "destination": "Scrawly.Accounts.User"
+      },
+      {
+        "line": 319,
+        "name": "games",
+        "type": "has_many",
+        "destination": "Scrawly.Games.Game"
+      }
+    ]
+  },
+  "Scrawly.Games.Word": {
+    "attributes": [
+      {
+        "line": 0,
+        "name": "id",
+        "type": "Ash.Type.UUID",
+        "primaryKey": true
+      },
+      {
+        "line": 50,
+        "name": "text",
+        "type": "Ash.Type.String",
+        "primaryKey": false
+      },
+      {
+        "line": 56,
+        "name": "difficulty",
+        "type": "Ash.Type.Atom",
+        "primaryKey": false
+      },
+      {
+        "line": 63,
+        "name": "word_count",
+        "type": "Ash.Type.Integer",
+        "primaryKey": false
+      },
+      {
+        "line": 0,
+        "name": "created_at",
+        "type": "Ash.Type.UtcDatetimeUsec",
+        "primaryKey": false
+      },
+      {
+        "line": 0,
+        "name": "updated_at",
+        "type": "Ash.Type.UtcDatetimeUsec",
+        "primaryKey": false
+      }
+    ],
+    "line": 1,
+    "file": "lib/scrawly/games/word.ex",
+    "relationships": []
+  }
+}

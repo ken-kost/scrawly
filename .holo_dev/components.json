@@ -1,0 +1,273 @@
+{
+  "Hologram.UI.Link": {
+    "functions": [],
+    "line": 1,
+    "file": "deps/hologram/lib/hologram/ui/link.ex",
+    "commands": [],
+    "actions": [],
+    "props": [
+      {
+        "name": "class",
+        "type": ":string",
+        "required": false
+      },
+      {
+        "name": "rel",
+        "type": ":string",
+        "required": false
+      },
+      {
+        "name": "style",
+        "type": ":string",
+        "required": false
+      },
+      {
+        "name": "to",
+        "type": "[:module, :string, :tuple]",
+        "required": true
+      }
+    ],
+    "templateComponents": [],
+    "templateStructure": {},
+    "templateLine": 10
+  },
+  "Hologram.UI.Runtime": {
+    "functions": [],
+    "line": 1,
+    "file": "deps/hologram/lib/hologram/ui/runtime.ex",
+    "commands": [],
+    "actions": [],
+    "props": [
+      {
+        "name": "csrf_token",
+        "type": ":string",
+        "required": true
+      },
+      {
+        "name": "initial_page?",
+        "type": ":boolean",
+        "required": true
+      },
+      {
+        "name": "page_digest",
+        "type": ":string",
+        "required": true
+      },
+      {
+        "name": "page_mounted?",
+        "type": ":boolean",
+        "required": true
+      }
+    ],
+    "templateComponents": [],
+    "templateStructure": {},
+    "templateLine": 11
+  },
+  "ScrawlyWeb.Components.ChatBox": {
+    "functions": [],
+    "line": 1,
+    "file": "lib/scrawly_web/components/chat_box.ex",
+    "commands": [],
+    "actions": [],
+    "props": [
+      {
+        "name": "messages",
+        "type": ":list",
+        "required": false
+      },
+      {
+        "name": "current_message",
+        "type": ":string",
+        "required": false
+      },
+      {
+        "name": "current_user_id",
+        "type": ":string",
+        "required": false
+      },
+      {
+        "name": "disabled",
+        "type": ":boolean",
+        "required": false
+      },
+      {
+        "name": "is_drawer",
+        "type": ":boolean",
+        "required": false
+      },
+      {
+        "name": "rate_limited",
+        "type": ":boolean",
+        "required": false
+      }
+    ],
+    "templateComponents": [],
+    "templateStructure": {},
+    "templateLine": 14
+  },
+  "ScrawlyWeb.Components.DrawingCanvas": {
+    "functions": [],
+    "line": 1,
+    "file": "lib/scrawly_web/components/drawing_canvas.ex",
+    "commands": [],
+    "actions": [],
+    "props": [
+      {
+        "name": "room_id",
+        "type": ":string",
+        "required": false
+      },
+      {
+        "name": "is_drawer",
+        "type": ":boolean",
+        "required": false
+      },
+      {
+        "name": "disabled",
+        "type": ":boolean",
+        "required": false
+      },
+      {
+        "name": "path",
+        "type": ":string",
+        "required": false
+      }
+    ],
+    "templateComponents": [],
+    "templateStructure": {},
+    "templateLine": 10
+  },
+  "ScrawlyWeb.Components.PlayerList": {
+    "functions": [],
+    "line": 1,
+    "file": "lib/scrawly_web/components/player_list.ex",
+    "commands": [],
+    "actions": [],
+    "props": [
+      {
+        "name": "players",
+        "type": ":list",
+        "required": false
+      },
+      {
+        "name": "current_drawer",
+        "type": ":map",
+        "required": false
+      },
+      {
+        "name": "current_user_id",
+        "type": ":string",
+        "required": false
+      }
+    ],
+    "templateComponents": [],
+    "templateStructure": {},
+    "templateLine": 8
+  },
+  "ScrawlyWeb.Components.RoomList": {
+    "functions": [],
+    "line": 1,
+    "file": "lib/scrawly_web/components/room_list.ex",
+    "commands": [],
+    "actions": [],
+    "props": [
+      {
+        "name": "rooms",
+        "type": ":list",
+        "required": false
+      },
+      {
+        "name": "loading",
+        "type": ":boolean",
+        "required": false
+      }
+    ],
+    "templateComponents": [],
+    "templateStructure": {},
+    "templateLine": 7
+  },
+  "ScrawlyWeb.Components.ScoreBoard": {
+    "functions": [],
+    "line": 1,
+    "file": "lib/scrawly_web/components/score_board.ex",
+    "commands": [],
+    "actions": [],
+    "props": [
+      {
+        "name": "players",
+        "type": ":list",
+        "required": false
+      },
+      {
+        "name": "current_round",
+        "type": ":integer",
+        "required": false
+      },
+      {
+        "name": "total_rounds",
+        "type": ":integer",
+        "required": false
+      },
+      {
+        "name": "current_word",
+        "type": ":string",
+        "required": false
+      },
+      {
+        "name": "time_left",
+        "type": ":integer",
+        "required": false
+      },
+      {
+        "name": "game_status",
+        "type": ":atom",
+        "required": false
+      }
+    ],
+    "templateComponents": [],
+    "templateStructure": {},
+    "templateLine": 11
+  },
+  "ScrawlyWeb.Layouts.AppLayout": {
+    "functions": [],
+    "line": 1,
+    "file": "lib/scrawly_web/layouts/app_layout.ex",
+    "commands": [],
+    "actions": [],
+    "props": [],
+    "templateComponents": [
+      "Runtime",
+      "Link"
+    ],
+    "templateStructure": {
+      "Link": [
+        {
+          "loop": null,
+          "bindings": [
+            {
+              "expression": "ScrawlyWeb.Pages.HomePage",
+              "prop": "to"
+            }
+          ]
+        },
+        {
+          "loop": null,
+          "bindings": [
+            {
+              "expression": "ScrawlyWeb.Pages.PastGamesPage",
+              "prop": "to"
+            }
+          ]
+        }
+      ],
+      "Runtime": [
+        {
+          "loop": null,
+          "bindings": []
+        }
+      ]
+    },
+    "templateLine": 31,
+    "initLine": 7
+  }
+}

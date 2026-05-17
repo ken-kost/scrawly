@@ -1,0 +1,411 @@
+{
+  "ScrawlyWeb.Pages.GamePage": {
+    "functions": [],
+    "line": 1,
+    "file": "lib/scrawly_web/pages/game_page.ex",
+    "commands": [],
+    "actions": [],
+    "route": "/game/:room_id",
+    "props": [
+      {
+        "name": "room_id",
+        "type": ":string",
+        "required": true
+      }
+    ],
+    "templateComponents": [
+      "PlayerList",
+      "ScoreBoard",
+      "DrawingCanvas",
+      "ChatBox"
+    ],
+    "templateStructure": {
+      "ChatBox": [
+        {
+          "loop": null,
+          "bindings": [
+            {
+              "expression": "@chat_messages",
+              "prop": "messages"
+            },
+            {
+              "expression": "@new_message",
+              "prop": "current_message"
+            },
+            {
+              "expression": "@current_user_id",
+              "prop": "current_user_id"
+            },
+            {
+              "expression": "@is_drawer",
+              "prop": "is_drawer"
+            },
+            {
+              "expression": "@rate_limited",
+              "prop": "rate_limited"
+            },
+            {
+              "expression": "!@game_started or @is_drawer",
+              "prop": "disabled"
+            }
+          ]
+        }
+      ],
+      "DrawingCanvas": [
+        {
+          "loop": null,
+          "bindings": [
+            {
+              "expression": "@room_id",
+              "prop": "room_id"
+            },
+            {
+              "expression": "@is_drawer",
+              "prop": "is_drawer"
+            },
+            {
+              "expression": "!@game_started or @time_left == 0",
+              "prop": "disabled"
+            },
+            {
+              "expression": "@drawing_path",
+              "prop": "path"
+            }
+          ]
+        }
+      ],
+      "PlayerList": [
+        {
+          "loop": null,
+          "bindings": [
+            {
+              "expression": "@players",
+              "prop": "players"
+            },
+            {
+              "expression": "@current_drawer",
+              "prop": "current_drawer"
+            },
+            {
+              "expression": "@current_user_id",
+              "prop": "current_user_id"
+            }
+          ]
+        }
+      ],
+      "ScoreBoard": [
+        {
+          "loop": null,
+          "bindings": [
+            {
+              "expression": "@players",
+              "prop": "players"
+            },
+            {
+              "expression": "@round",
+              "prop": "current_round"
+            },
+            {
+              "expression": "@total_rounds",
+              "prop": "total_rounds"
+            },
+            {
+              "expression": "@current_word_display",
+              "prop": "current_word"
+            },
+            {
+              "expression": "@time_left",
+              "prop": "time_left"
+            },
+            {
+              "expression": "@room_status",
+              "prop": "game_status"
+            }
+          ]
+        }
+      ]
+    },
+    "templateLine": 645,
+    "initLine": 32,
+    "stateKeys": [
+      "new_message",
+      "rate_limited",
+      "drawing_path",
+      "drawing",
+      "channel_connecting",
+      "id",
+      "username"
+    ],
+    "templatePropBindings": {
+      "ChatBox": [
+        [
+          {
+            "expression": "@chat_messages",
+            "prop": "messages"
+          },
+          {
+            "expression": "@new_message",
+            "prop": "current_message"
+          },
+          {
+            "expression": "@current_user_id",
+            "prop": "current_user_id"
+          },
+          {
+            "expression": "@is_drawer",
+            "prop": "is_drawer"
+          },
+          {
+            "expression": "@rate_limited",
+            "prop": "rate_limited"
+          },
+          {
+            "expression": "!@game_started or @is_drawer",
+            "prop": "disabled"
+          }
+        ]
+      ],
+      "DrawingCanvas": [
+        [
+          {
+            "expression": "@room_id",
+            "prop": "room_id"
+          },
+          {
+            "expression": "@is_drawer",
+            "prop": "is_drawer"
+          },
+          {
+            "expression": "!@game_started or @time_left == 0",
+            "prop": "disabled"
+          },
+          {
+            "expression": "@drawing_path",
+            "prop": "path"
+          }
+        ]
+      ],
+      "PlayerList": [
+        [
+          {
+            "expression": "@players",
+            "prop": "players"
+          },
+          {
+            "expression": "@current_drawer",
+            "prop": "current_drawer"
+          },
+          {
+            "expression": "@current_user_id",
+            "prop": "current_user_id"
+          }
+        ]
+      ],
+      "ScoreBoard": [
+        [
+          {
+            "expression": "@players",
+            "prop": "players"
+          },
+          {
+            "expression": "@round",
+            "prop": "current_round"
+          },
+          {
+            "expression": "@total_rounds",
+            "prop": "total_rounds"
+          },
+          {
+            "expression": "@current_word_display",
+            "prop": "current_word"
+          },
+          {
+            "expression": "@time_left",
+            "prop": "time_left"
+          },
+          {
+            "expression": "@room_status",
+            "prop": "game_status"
+          }
+        ]
+      ]
+    },
+    "layoutModule": "ScrawlyWeb.Layouts.AppLayout"
+  },
+  "ScrawlyWeb.Pages.GameScorePage": {
+    "functions": [],
+    "line": 1,
+    "file": "lib/scrawly_web/pages/game_score_page.ex",
+    "commands": [],
+    "actions": [],
+    "route": "/game-results/:game_id",
+    "props": [
+      {
+        "name": "game_id",
+        "type": ":string",
+        "required": true
+      }
+    ],
+    "templateComponents": [
+      "Link"
+    ],
+    "templateStructure": {
+      "Link": [
+        {
+          "loop": null,
+          "bindings": [
+            {
+              "expression": "ScrawlyWeb.Pages.HomePage",
+              "prop": "to"
+            }
+          ]
+        },
+        {
+          "loop": null,
+          "bindings": [
+            {
+              "expression": "ScrawlyWeb.Pages.GamePage, room_id: @room_id",
+              "prop": "to"
+            }
+          ]
+        }
+      ]
+    },
+    "templateLine": 67,
+    "initLine": 10,
+    "stateKeys": [],
+    "templatePropBindings": {
+      "Link": [
+        [
+          {
+            "expression": "ScrawlyWeb.Pages.HomePage",
+            "prop": "to"
+          }
+        ],
+        [
+          {
+            "expression": "ScrawlyWeb.Pages.GamePage, room_id: @room_id",
+            "prop": "to"
+          }
+        ]
+      ]
+    },
+    "layoutModule": "ScrawlyWeb.Layouts.AppLayout"
+  },
+  "ScrawlyWeb.Pages.HomePage": {
+    "functions": [],
+    "line": 1,
+    "file": "lib/scrawly_web/pages/home_page.ex",
+    "commands": [],
+    "actions": [],
+    "route": "/",
+    "props": [],
+    "templateComponents": [
+      "RoomList"
+    ],
+    "templateStructure": {
+      "RoomList": [
+        {
+          "loop": null,
+          "bindings": [
+            {
+              "expression": "@rooms",
+              "prop": "rooms"
+            },
+            {
+              "expression": "false",
+              "prop": "loading"
+            }
+          ]
+        }
+      ]
+    },
+    "templateLine": 55,
+    "initLine": 14,
+    "stateKeys": [
+      "show_create_room",
+      "new_room_name",
+      "new_max_players",
+      "create_room_email",
+      "join_room_email",
+      "new_word_count",
+      "new_prompt",
+      "new_round_duration",
+      "new_round_multiplier",
+      "new_ai_tone",
+      "rooms"
+    ],
+    "templatePropBindings": {
+      "RoomList": [
+        [
+          {
+            "expression": "@rooms",
+            "prop": "rooms"
+          },
+          {
+            "expression": "false",
+            "prop": "loading"
+          }
+        ]
+      ]
+    },
+    "layoutModule": "ScrawlyWeb.Layouts.AppLayout"
+  },
+  "ScrawlyWeb.Pages.PastGamesPage": {
+    "functions": [],
+    "line": 1,
+    "file": "lib/scrawly_web/pages/past_games_page.ex",
+    "commands": [],
+    "actions": [],
+    "route": "/past-games",
+    "props": [],
+    "templateComponents": [
+      "Link"
+    ],
+    "templateStructure": {
+      "Link": [
+        {
+          "loop": {
+            "iterator": "result",
+            "source": "results"
+          },
+          "bindings": [
+            {
+              "expression": "ScrawlyWeb.Pages.GameScorePage, game_id: result.game_id",
+              "prop": "to"
+            }
+          ]
+        },
+        {
+          "loop": null,
+          "bindings": [
+            {
+              "expression": "ScrawlyWeb.Pages.HomePage",
+              "prop": "to"
+            }
+          ]
+        }
+      ]
+    },
+    "templateLine": 39,
+    "initLine": 9,
+    "stateKeys": [],
+    "templatePropBindings": {
+      "Link": [
+        [
+          {
+            "expression": "ScrawlyWeb.Pages.GameScorePage, game_id: result.game_id",
+            "prop": "to"
+          }
+        ],
+        [
+          {
+            "expression": "ScrawlyWeb.Pages.HomePage",
+            "prop": "to"
+          }
+        ]
+      ]
+    },
+    "layoutModule": "ScrawlyWeb.Layouts.AppLayout"
+  }
+}

@@ -79,7 +79,7 @@ This phase establishes the fundamental game mechanics including basic room manag
   - [x] Test page routing and navigation
   - [x] Test component state management
   - [x] Test component event handling
-  - [ ] Test UI state synchronization
+  - [x] Test UI state synchronization
 
 ### 5. Drawing System Implementation
 
@@ -135,53 +135,53 @@ This phase establishes the fundamental game mechanics including basic room manag
 
 ### 7. Word and Guessing System
 
-- [ ] Implement Word resource
-  - [ ] Create basic word database
-  - [ ] Word difficulty categorization
-  - [ ] Random word selection algorithm
-  - [ ] Word hint generation (underscores)
+- [x] Implement Word resource
+  - [x] Create basic word database
+  - [x] Word difficulty categorization
+  - [x] Random word selection algorithm
+  - [x] Word hint generation (underscores)
 
-- [ ] Create guessing mechanics
-  - [ ] Chat message parsing for guesses
-  - [ ] Exact match validation
-  - [ ] Correct guess handling
-  - [ ] Points calculation based on speed
+- [x] Create guessing mechanics
+  - [x] Chat message parsing for guesses
+  - [x] Exact match validation
+  - [x] Correct guess handling
+  - [x] Points calculation based on speed
 
-- [ ] Unit Tests:
-  - [ ] Test word selection randomness
-  - [ ] Test hint generation accuracy
-  - [ ] Test guess validation logic
-  - [ ] Test points calculation formula
-  - [ ] Test multiple correct guesses handling
+- [x] Unit Tests:
+  - [x] Test word selection randomness
+  - [x] Test hint generation accuracy
+  - [x] Test guess validation logic
+  - [x] Test points calculation formula
+  - [x] Test multiple correct guesses handling
 
 ### 8. Chat System
 
-- [ ] Implement ChatMessage component
-  - [ ] Message input and submission
-  - [ ] Message display with usernames
-  - [ ] Color-coded system messages
-  - [ ] Auto-scroll to latest message
+- [x] Implement ChatMessage component
+  - [x] Message input and submission
+  - [x] Message display with usernames
+  - [x] Color-coded system messages
+  - [x] Auto-scroll to latest message
 
-- [ ] Add chat features
-  - [ ] Spam protection with rate limiting
-  - [ ] System messages for game events
-  - [ ] Guess obfuscation for drawer
-  - [ ] Message history limit
+- [x] Add chat features
+  - [x] Spam protection with rate limiting
+  - [x] System messages for game events
+  - [x] Guess obfuscation for drawer
+  - [x] Message history limit
 
-- [ ] Unit Tests:
-  - [ ] Test message submission flow
-  - [ ] Test spam protection triggers
-  - [ ] Test system message generation
-  - [ ] Test guess obfuscation logic
-  - [ ] Test message history management
+- [x] Unit Tests:
+  - [x] Test message submission flow
+  - [x] Test spam protection triggers
+  - [x] Test system message generation
+  - [x] Test guess obfuscation logic
+  - [x] Test message history management
 
 ### Phase 1 Integration Tests:
-- [ ] Test complete game flow from room creation to game end
-- [ ] Test multiple players joining and playing simultaneously
-- [ ] Test drawing synchronization across multiple clients
-- [ ] Test reconnection handling during active game
-- [ ] Test score persistence and leaderboard accuracy
-- [ ] Test performance with maximum player capacity
+- [x] Test complete game flow from room creation to game end
+- [x] Test multiple players joining and playing simultaneously
+- [x] Test drawing synchronization across multiple clients
+- [x] Test reconnection handling during active game
+- [x] Test score persistence and leaderboard accuracy
+- [x] Test performance with maximum player capacity
 
 ## Phase 2: Enhanced Features
 
@@ -252,66 +252,66 @@ This phase adds depth to the game experience with private rooms, customization o
 
 ### 12. Advanced Drawing Tools
 
-- [ ] Enhance DrawingCanvas with tools
-  - [ ] Color palette implementation
-  - [ ] Brush size adjustment (3 sizes)
-  - [ ] Eraser tool functionality
-  - [ ] Undo/redo capability
+- [x] Enhance DrawingCanvas with tools
+  - [x] Color palette implementation (8 preset colors)
+  - [x] Brush size adjustment (3 sizes: 2px, 5px, 10px)
+  - [x] Eraser tool functionality (white strokes, 20px width)
+  - [x] Undo capability (stroke-level, synced via channel)
 
-- [ ] Create DrawingToolbar component
-  - [ ] Tool selection interface
-  - [ ] Color picker with presets
-  - [ ] Size slider component
-  - [ ] Tool state persistence
+- [x] Create DrawingToolbar component
+  - [x] Tool selection interface (inline toolbar above canvas)
+  - [x] Color picker with presets (8 color buttons)
+  - [x] Size selector (3 size buttons)
+  - [x] Tool state persistence (draw_color, draw_width, draw_eraser in page state)
 
-- [ ] Unit Tests:
-  - [ ] Test color selection and application
-  - [ ] Test brush size rendering
-  - [ ] Test eraser functionality
-  - [ ] Test undo/redo stack management
-  - [ ] Test tool switching behavior
+- [x] Unit Tests:
+  - [x] Test color selection and application
+  - [x] Test brush size rendering
+  - [x] Test eraser functionality
+  - [x] Test undo stack management
+  - [x] Test tool switching behavior
 
 ### 13. Progressive Hint System
 
-- [ ] Implement hint generation logic
-  - [ ] Time-based letter reveals
-  - [ ] Strategic letter selection
-  - [ ] Hint timing configuration
-  - [ ] Multiple hint stages
+- [x] Implement hint generation logic
+  - [x] Time-based letter reveals
+  - [x] Strategic letter selection (vowel priority)
+  - [x] Hint timing configuration (custom schedules)
+  - [x] Multiple hint stages (5 stages: 0-4)
 
-- [ ] Update UI for hint display
+- [x] Update UI for hint display
   - [ ] Animated letter reveals
-  - [ ] Hint progress indicator
-  - [ ] Remaining letters counter
+  - [x] Hint progress indicator (progress bar with stage label)
+  - [x] Remaining letters counter
   - [ ] Visual hint emphasis
 
-- [ ] Unit Tests:
-  - [ ] Test hint timing accuracy
-  - [ ] Test letter selection algorithm
-  - [ ] Test hint progression stages
-  - [ ] Test hint display updates
-  - [ ] Test hint impact on scoring
+- [x] Unit Tests:
+  - [x] Test hint timing accuracy
+  - [x] Test letter selection algorithm (vowel priority, determinism)
+  - [x] Test hint progression stages (monotonically increasing reveals)
+  - [x] Test hint display updates (hint_info metadata)
+  - [x] Test hint impact on scoring (via Scoring module integration)
 
 ### 14. Enhanced Scoring System
 
-- [ ] Implement detailed scoring algorithm
-  - [ ] Time-based point calculation
-  - [ ] Drawer points for successful guesses
-  - [ ] Bonus points for speed
-  - [ ] Penalty for no guesses
+- [x] Implement detailed scoring algorithm
+  - [x] Time-based point calculation (50-500 curve)
+  - [x] Drawer points for successful guesses (+50 per guesser, +100 all-guessed bonus)
+  - [x] Bonus points for speed (speed_bonus = time_left/duration * 450)
+  - [x] Penalty for no guesses (-25 drawer timeout penalty)
 
 - [ ] Create ScoreAnimation component
   - [ ] Point gain animations
   - [ ] Leaderboard position changes
-  - [ ] Round score summary
+  - [x] Round score summary (via round_results in RoomServer)
   - [ ] Final score celebration
 
-- [ ] Unit Tests:
-  - [ ] Test point calculation accuracy
-  - [ ] Test drawer point allocation
-  - [ ] Test speed bonus formula
+- [x] Unit Tests:
+  - [x] Test point calculation accuracy
+  - [x] Test drawer point allocation
+  - [x] Test speed bonus formula
   - [ ] Test score animation triggers
-  - [ ] Test leaderboard sorting
+  - [x] Test leaderboard sorting
 
 ### Phase 2 Integration Tests:
 - [ ] Test private room creation and joining via link
