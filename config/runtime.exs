@@ -72,6 +72,9 @@ if config_env() == :prod do
       System.get_env("TOKEN_SIGNING_SECRET") ||
         raise("Missing environment variable `TOKEN_SIGNING_SECRET`!")
 
+  config :langchain, openai_key: System.get_env("OPENAI_API_KEY")
+
+  config :langchain, openai_org_id: System.get_env("OPENAI_ORG_ID")
   # ## SSL Support
   #
   # To get SSL working, you will need to add the `https` key

@@ -1,6 +1,10 @@
 import Config
 config :ash, policies: [show_policy_breakdowns?: true]
 
+# LangChain / OpenAI configuration for AI word generation
+config :langchain, openai_key: System.get_env("OPENAI_API_KEY")
+config :langchain, openai_org_id: System.get_env("OPENAI_ORG_ID")
+
 # Configure your database
 config :scrawly, Scrawly.Repo,
   username: "postgres",
@@ -20,7 +24,7 @@ config :scrawly, Scrawly.Repo,
 config :scrawly, ScrawlyWeb.Endpoint,
   # Binding to loopback ipv4 address prevents access from other machines.
   # Change to `ip: {0, 0, 0, 0}` to allow access from other machines.
-  http: [ip: {127, 0, 0, 1}, port: String.to_integer(System.get_env("PORT") || "4000")],
+  http: [ip: {127, 0, 0, 1}, port: 4123],
   check_origin: false,
   code_reloader: true,
   debug_errors: true,
