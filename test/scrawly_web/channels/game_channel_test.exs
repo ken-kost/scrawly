@@ -2,10 +2,7 @@ defmodule ScrawlyWeb.GameChannelTest do
   use ScrawlyWeb.ChannelCase, async: false
 
   setup do
-    # Create a room for testing
-    {:ok, room} = Scrawly.Games.create_room(%{name: "Test Room", max_players: 4})
-
-    # Create a user for testing - username is auto-generated
+    # Create a user for testing
     {:ok, user} =
       Ash.create(
         Scrawly.Accounts.User,
@@ -14,6 +11,10 @@ defmodule ScrawlyWeb.GameChannelTest do
         },
         authorize?: false
       )
+
+    # Create a room for testing
+    {:ok, room} =
+      Scrawly.Games.create_room(%{max_players: 4, name: "Test Room", creator_id: user.id})
 
     # Join the room as a player
     {:ok, player} =
@@ -61,6 +62,9 @@ defmodule ScrawlyWeb.GameChannelTest do
 
   describe "drawing events" do
     setup %{room: room, user: user} do
+      # Ensure RoomServer is started for drawing persistence
+      {:ok, _pid} = Scrawly.Games.RoomServer.ensure_started(room.id)
+
       {:ok, _, socket} =
         ScrawlyWeb.UserSocket
         |> socket("user_id", %{user_id: user.id})
@@ -69,28 +73,26 @@ defmodule ScrawlyWeb.GameChannelTest do
       %{socket: socket}
     end
 
-    test "handles drawing_start event", %{socket: socket} do
-      ref = push(socket, "drawing_start", %{"x" => 100, "y" => 150})
-      assert_reply ref, :ok, %{status: "drawing_started"}
+    test "handles drawing_segment event", %{socket: socket} do
+      ref = push(socket, "drawing_segment", %{"segment" => "M 10 20 L 30 40"})
+      assert_reply ref, :ok, %{status: "segment_received"}
 
-      # Should broadcast to other players
-      assert_broadcast "drawing_start", %{"x" => 100, "y" => 150, "player_id" => _}
+      assert_broadcast "drawing_segment", %{"segment" => "M 10 20 L 30 40"}
     end
 
-    test "handles drawing_move event", %{socket: socket} do
-      ref = push(socket, "drawing_move", %{"x" => 120, "y" => 160})
-      assert_reply ref, :ok, %{status: "drawing_moved"}
+    test "handles drawing_clear event", %{socket: socket} do
+      ref = push(socket, "drawing_clear", %{})
+      assert_reply ref, :ok, %{status: "drawing_cleared"}
 
-      # Should broadcast to other players
-      assert_broadcast "drawing_move", %{"x" => 120, "y" => 160, "player_id" => _}
+      assert_broadcast "drawing_clear", %{}
     end
 
-    test "handles drawing_stop event", %{socket: socket} do
-      ref = push(socket, "drawing_stop", %{})
-      assert_reply ref, :ok, %{status: "drawing_stopped"}
+    test "handles get_drawing_path event", %{socket: socket, room: room} do
+      Scrawly.Games.RoomServer.append_drawing(room.id, "M 5 5 L 10 10")
 
-      # Should broadcast to other players
-      assert_broadcast "drawing_stop", %{"player_id" => _}
+      ref = push(socket, "get_drawing_path", %{})
+      assert_reply ref, :ok, %{path: path}
+      assert path =~ "M 5 5 L 10 10"
     end
   end
 

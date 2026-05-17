@@ -2,6 +2,7 @@ defmodule ScrawlyWeb.GameChannel do
   use ScrawlyWeb, :channel
 
   alias Scrawly.Games
+  alias Scrawly.Games.RoomServer
   alias ScrawlyWeb.Presence
 
   @rate_limit_max_messages 5
@@ -54,9 +55,9 @@ defmodule ScrawlyWeb.GameChannel do
         |> assign(:room_id, room.id)
         |> assign(:user_id, user_id)
 
-      # Subscribe to game events for this room
-      # Note: We'll subscribe based on game_id when a game starts
+      # Subscribe to game events (timer) and room state changes
       Phoenix.PubSub.subscribe(Scrawly.PubSub, "game:#{room.id}")
+      Phoenix.PubSub.subscribe(Scrawly.PubSub, "room:#{room.id}")
 
       # Track the user's presence in the room
       send(self(), :after_join)
@@ -74,122 +75,113 @@ defmodule ScrawlyWeb.GameChannel do
     end
   end
 
-  # Drawing events
+  # Drawing events — stroke objects with path, color, and width
   @impl true
-  def handle_in("drawing_start", %{"x" => x, "y" => y}, socket) do
-    broadcast_from(socket, "drawing_start", %{
-      "x" => x,
-      "y" => y,
-      "player_id" => socket.assigns.user_id
-    })
-
-    {:reply, {:ok, %{status: "drawing_started"}}, socket}
+  def handle_in("drawing_segment", %{"segment" => ""}, socket) do
+    {:reply, {:error, %{reason: "empty_segment"}}, socket}
   end
 
   @impl true
-  def handle_in("drawing_move", %{"x" => x, "y" => y}, socket) do
-    broadcast_from(socket, "drawing_move", %{
-      "x" => x,
-      "y" => y,
-      "player_id" => socket.assigns.user_id
-    })
+  def handle_in("drawing_stroke", payload, socket) do
+    segment = payload["segment"] || payload["path"] || ""
+    color = payload["color"] || "#000000"
+    width = payload["width"] || 2
 
-    {:reply, {:ok, %{status: "drawing_moved"}}, socket}
-  end
+    if segment == "" do
+      {:reply, {:error, %{reason: "empty_segment"}}, socket}
+    else
+      room_id = socket.assigns.room_id
+      stroke = %{path: segment, color: color, width: width}
+      RoomServer.append_drawing(room_id, stroke)
 
-  @impl true
-  def handle_in("drawing_stop", _payload, socket) do
-    broadcast_from(socket, "drawing_stop", %{
-      "player_id" => socket.assigns.user_id
-    })
+      broadcast_from(socket, "drawing_stroke", %{
+        "path" => segment,
+        "color" => color,
+        "width" => width
+      })
 
-    {:reply, {:ok, %{status: "drawing_stopped"}}, socket}
-  end
-
-  # Chat events
-  @impl true
-  def handle_in("chat_message", %{"message" => message}, socket) when byte_size(message) > 0 do
-    user_id = socket.assigns.user_id
-
-    case check_rate_limit(user_id) do
-      {:error, :rate_limit_exceeded} ->
-        {:reply, {:error, %{reason: "rate_limit_exceeded"}}, socket}
-
-      {:ok, :continue} ->
-        room_id = socket.assigns.room_id
-
-        case Ash.get(Scrawly.Accounts.User, user_id) do
-          {:ok, user} ->
-            handle_chat_message(socket, user, room_id, message)
-
-          _ ->
-            {:reply, {:error, %{reason: "user_not_found"}}, socket}
-        end
+      {:reply, {:ok, %{status: "stroke_received"}}, socket}
     end
   end
 
-  defp handle_chat_message(socket, user, room_id, message) do
-    user_id = user.id
+  @impl true
+  def handle_in("drawing_segment", %{"segment" => segment}, socket)
+      when is_binary(segment) and byte_size(segment) > 0 do
+    room_id = socket.assigns.room_id
+    stroke = %{path: segment, color: "#000000", width: 2}
+    RoomServer.append_drawing(room_id, stroke)
 
-    case Games.get_game_by_room(room_id) do
-      {:ok, [game | _]} ->
-        current_word = game.current_word
-        drawer_id = game.current_drawer_id
+    broadcast_from(socket, "drawing_stroke", %{
+      "path" => segment,
+      "color" => "#000000",
+      "width" => 2
+    })
 
-        guess_result = check_guess(message, current_word, user_id, drawer_id, game.id)
+    {:reply, {:ok, %{status: "segment_received"}}, socket}
+  end
 
-        broadcast(socket, "chat_message", %{
-          "message" => message,
-          "username" => user.username || "Anonymous",
-          "user_id" => user_id,
-          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
-          "is_correct_guess" => guess_result != :incorrect
-        })
+  @impl true
+  def handle_in("drawing_clear", _payload, socket) do
+    room_id = socket.assigns.room_id
+    RoomServer.clear_drawing(room_id)
+    broadcast_from(socket, "drawing_clear", %{})
+    {:reply, {:ok, %{status: "drawing_cleared"}}, socket}
+  end
 
-        case guess_result do
-          {:correct, points, drawer_id} ->
-            Games.award_points_to_guesser(user_id, points)
-            Games.award_points_to_drawer(drawer_id, div(points, 2))
+  @impl true
+  def handle_in("drawing_undo", _payload, socket) do
+    room_id = socket.assigns.room_id
 
-            broadcast(socket, "correct_guess", %{
-              "guesser_id" => user_id,
-              "guesser_name" => user.username || "Anonymous",
-              "points" => points,
-              "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
-            })
-
-          _ ->
-            :ok
-        end
-
-        {:reply, {:ok, %{status: "message_sent"}}, socket}
+    case RoomServer.undo_drawing(room_id) do
+      {:ok, strokes} ->
+        broadcast_from(socket, "drawing_undo", %{"strokes" => strokes})
+        {:reply, {:ok, %{status: "undo_done", strokes: strokes}}, socket}
 
       _ ->
-        broadcast(socket, "chat_message", %{
-          "message" => message,
-          "username" => user.username || "Anonymous",
-          "user_id" => user_id,
-          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
-        })
-
-        {:reply, {:ok, %{status: "message_sent"}}, socket}
+        {:reply, {:ok, %{status: "undo_noop"}}, socket}
     end
   end
 
-  defp check_guess(message, current_word, user_id, drawer_id, game_id) do
-    if current_word && user_id != drawer_id do
-      normalized_message = String.downcase(String.trim(message))
-      normalized_word = String.downcase(current_word)
+  @impl true
+  def handle_in("get_drawing_path", _payload, socket) do
+    case RoomServer.get_state(socket.assigns.room_id) do
+      {:ok, state} ->
+        {:reply, {:ok, %{strokes: state.drawing_strokes || []}}, socket}
 
-      if normalized_message == normalized_word do
-        time_remaining = Games.get_round_time_remaining(game_id)
-        points = Games.calculate_points(time_remaining)
-        {:correct, points, drawer_id}
-      else
-        :incorrect
-      end
+      {:error, _} ->
+        {:reply, {:ok, %{strokes: []}}, socket}
+    end
+  end
+
+  @chat_max_messages 3
+  @chat_window_ms 5_000
+
+  # Chat events — rate limited to @chat_max_messages per @chat_window_ms on the server
+  @impl true
+  def handle_in("chat_message", %{"message" => message}, socket) when byte_size(message) > 0 do
+    now = System.monotonic_time(:millisecond)
+    timestamps = Map.get(socket.assigns, :chat_timestamps, [])
+    recent = Enum.filter(timestamps, &(now - &1 < @chat_window_ms))
+
+    if length(recent) >= @chat_max_messages do
+      {:reply, {:error, %{reason: "rate_limited"}}, socket}
     else
-      :incorrect
+      user_id = socket.assigns.user_id
+      socket = assign(socket, :chat_timestamps, [now | recent])
+
+      case Ash.get(Scrawly.Accounts.User, user_id) do
+        {:ok, user} ->
+          broadcast(socket, "chat_message", %{
+            "message" => message,
+            "username" => user.username || "Anonymous",
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          })
+
+          {:reply, {:ok, %{status: "message_sent"}}, socket}
+
+        _ ->
+          {:reply, {:error, %{reason: "user_not_found"}}, socket}
+      end
     end
   end
 
@@ -304,12 +296,27 @@ defmodule ScrawlyWeb.GameChannel do
   # Handle presence tracking after join
   @impl true
   def handle_info(:after_join, socket) do
-    with {:ok, user} <- Ash.get(Scrawly.Accounts.User, socket.assigns.user_id) do
+    user_id = socket.assigns.user_id
+    room_id = socket.assigns.room_id
+
+    with {:ok, user} <- Ash.get(Scrawly.Accounts.User, user_id) do
+      rs_state =
+        case RoomServer.get_state(room_id) do
+          {:ok, rs} -> rs
+          _ -> %{current_drawer_id: nil, players: []}
+        end
+
+      is_drawer = rs_state.current_drawer_id == user_id
+      player = Enum.find(rs_state.players, &(&1.id == user_id))
+      score = if player, do: player.score || 0, else: 0
+
       {:ok, _} =
-        Presence.track(socket, to_string(socket.assigns.user_id), %{
+        Presence.track(socket, to_string(user_id), %{
           username: user.username || "Anonymous",
           player_state: user.player_state || :connected,
-          joined_at: inspect(System.system_time(:second))
+          score: score,
+          is_drawer: is_drawer,
+          joined_at: System.system_time(:second)
         })
 
       push(socket, "presence_state", Presence.list(socket))
@@ -359,6 +366,13 @@ defmodule ScrawlyWeb.GameChannel do
       timestamp: DateTime.utc_now() |> DateTime.to_iso8601()
     })
 
+    {:noreply, socket}
+  end
+
+  # Handle room state change broadcasts — notify client to fetch fresh state
+  @impl true
+  def handle_info(:room_state_changed, socket) do
+    push(socket, "room_state_changed", %{})
     {:noreply, socket}
   end
 end

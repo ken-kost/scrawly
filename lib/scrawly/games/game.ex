@@ -42,21 +42,48 @@ defmodule Scrawly.Games.Game do
       change set_attribute(:status, :completed)
     end
 
+    update :save_round_details do
+      accept [:round_details]
+    end
+
     update :start_round do
       accept [:current_drawer_id]
       require_atomic? false
 
-      # Select a random word for this round
-      change fn changeset, _context ->
-        case Scrawly.Games.get_random_word() do
-          {:ok, word} ->
-            Ash.Changeset.change_attribute(changeset, :current_word, word)
+      argument :used_words, {:array, :string} do
+        default []
+        description "Previously used words to exclude from selection"
+      end
 
-          {:error, _reason} ->
-            Ash.Changeset.add_error(changeset,
-              field: :current_word,
-              message: "No words available"
-            )
+      argument :word_count, :integer do
+        default 1
+        description "Number of words per entry (1, 2, or 3)"
+      end
+
+      argument :override_word, :string do
+        description "If provided, use this word instead of selecting from DB (for AI-generated words)"
+      end
+
+      # Select a random word for this round, or use the override word
+      change fn changeset, _context ->
+        override = Ash.Changeset.get_argument(changeset, :override_word)
+
+        if override do
+          Ash.Changeset.change_attribute(changeset, :current_word, override)
+        else
+          used = Ash.Changeset.get_argument(changeset, :used_words) || []
+          word_count = Ash.Changeset.get_argument(changeset, :word_count) || 1
+
+          case Scrawly.Games.get_random_word(exclude: used, word_count: word_count) do
+            {:ok, word} ->
+              Ash.Changeset.change_attribute(changeset, :current_word, word)
+
+            {:error, _reason} ->
+              Ash.Changeset.add_error(changeset,
+                field: :current_word,
+                message: "No words available"
+              )
+          end
         end
       end
     end
@@ -92,12 +119,19 @@ defmodule Scrawly.Games.Game do
       end
     end
 
+    read :for_room do
+      argument :room_id, :uuid, allow_nil?: false
+      filter expr(room_id == ^arg(:room_id) and status == :completed)
+      prepare build(sort: [created_at: :desc], limit: 10)
+    end
+
     update :complete_round do
       accept []
 
-      # Clear current word and drawer for round transition
+      # Clear current word for round transition.
+      # Keep current_drawer_id so select_next_drawer can find the previous
+      # drawer and correctly rotate to the next player.
       change set_attribute(:current_word, nil)
-      change set_attribute(:current_drawer_id, nil)
     end
   end
 
@@ -122,7 +156,7 @@ defmodule Scrawly.Games.Game do
       allow_nil? false
       default 5
       public? true
-      constraints min: 1, max: 10
+      constraints min: 1, max: 12
     end
 
     attribute :current_word, :string do
@@ -131,6 +165,11 @@ defmodule Scrawly.Games.Game do
 
     attribute :current_drawer_id, :uuid do
       public? true
+    end
+
+    attribute :round_details, {:array, :map} do
+      public? true
+      default []
     end
 
     create_timestamp :created_at

@@ -12,6 +12,8 @@ class GameSocket {
       onDrawingStart: [],
       onDrawingMove: [],
       onDrawingStop: [],
+      onDrawingSegment: [],
+      onDrawingClear: [],
       onChatMessage: [],
       onCorrectGuess: [],
       onPresenceUpdate: [],
@@ -108,6 +110,23 @@ class GameSocket {
     this.pushEvent("drawing_stop", {})
   }
 
+  // SVG path segment drawing events (real-time channel)
+  sendDrawingSegment(segment) {
+    this.pushEvent("drawing_segment", { segment })
+  }
+
+  sendDrawingClear() {
+    this.pushEvent("drawing_clear", {})
+  }
+
+  requestDrawingPath() {
+    if (!this.channel) {
+      console.error("Not connected to a room")
+      return null
+    }
+    return this.channel.push("get_drawing_path", {})
+  }
+
   // Chat events
   sendChatMessage(message) {
     this.pushEvent("chat_message", { message })
@@ -145,6 +164,14 @@ class GameSocket {
 
   onDrawingStop(callback) {
     this.callbacks.onDrawingStop.push(callback)
+  }
+
+  onDrawingSegment(callback) {
+    this.callbacks.onDrawingSegment.push(callback)
+  }
+
+  onDrawingClear(callback) {
+    this.callbacks.onDrawingClear.push(callback)
   }
 
   onChatMessage(callback) {
@@ -215,6 +242,14 @@ class GameSocket {
 
     this.channel.on("drawing_stop", (payload) => {
       this.callbacks.onDrawingStop.forEach(cb => cb(payload))
+    })
+
+    this.channel.on("drawing_segment", (payload) => {
+      this.callbacks.onDrawingSegment.forEach(cb => cb(payload))
+    })
+
+    this.channel.on("drawing_clear", (payload) => {
+      this.callbacks.onDrawingClear.forEach(cb => cb(payload))
     })
 
     // Chat events
