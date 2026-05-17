@@ -15,7 +15,6 @@ class GameSocket {
       onDrawingSegment: [],
       onDrawingClear: [],
       onChatMessage: [],
-      onCorrectGuess: [],
       onPresenceUpdate: [],
       onJoinSuccess: [],
       onJoinError: [],
@@ -178,10 +177,6 @@ class GameSocket {
     this.callbacks.onChatMessage.push(callback)
   }
 
-  onCorrectGuess(callback) {
-    this.callbacks.onCorrectGuess.push(callback)
-  }
-
   onPresenceUpdate(callback) {
     this.callbacks.onPresenceUpdate.push(callback)
   }
@@ -255,10 +250,6 @@ class GameSocket {
     // Chat events
     this.channel.on("chat_message", (payload) => {
       this.callbacks.onChatMessage.forEach(cb => cb(payload))
-    })
-
-    this.channel.on("correct_guess", (payload) => {
-      this.callbacks.onCorrectGuess.forEach(cb => cb(payload))
     })
 
     // Game state events

@@ -9,6 +9,7 @@ defmodule Scrawly.Games.RoomManagementTest do
 
   describe "Room management with players" do
     setup do
+      # Create test users
       {:ok, user1} =
         Ash.create(User, %{email: "player1-#{System.unique_integer([:positive])}@test.com"},
           authorize?: false
@@ -58,17 +59,22 @@ defmodule Scrawly.Games.RoomManagementTest do
       # Create room with max 2 players
       {:ok, room} = Games.create_room(%{max_players: 2, name: "Small Room", creator_id: user1.id})
 
+      # First player joins successfully
       {:ok, _user1} =
-        Ash.update(user1, %{current_room_id: room.id}, action: :join_room)
+        Ash.update(user1, %{current_room_id: room.id, username: "Player1"}, action: :join_room)
 
+      # Second player joins successfully
       {:ok, _user2} =
-        Ash.update(user2, %{current_room_id: room.id}, action: :join_room)
+        Ash.update(user2, %{current_room_id: room.id, username: "Player2"}, action: :join_room)
 
+      # Third player should fail due to capacity
       result =
-        Ash.update(user3, %{current_room_id: room.id}, action: :join_room)
+        Ash.update(user3, %{current_room_id: room.id, username: "Player3"}, action: :join_room)
 
+      # The join should succeed at the user level, but room.join_room should validate capacity
       assert {:ok, _} = result
 
+      # Now test room-level join validation
       assert {:error, %Ash.Error.Invalid{}} =
                Games.join_room(room, user3.id)
     end

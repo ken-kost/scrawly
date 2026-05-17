@@ -62,7 +62,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
     end
   end
 
-  describe "action/3 - message handling" do
+  describe "action/3" do
     test "update_message updates the message" do
       component = %Hologram.Component{state: %{new_message: ""}}
       result = GamePage.action(:update_message, %{event: %{value: "Hello"}}, component)

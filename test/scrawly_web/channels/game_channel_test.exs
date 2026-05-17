@@ -21,7 +21,8 @@ defmodule ScrawlyWeb.GameChannelTest do
       Ash.update(
         user,
         %{
-          current_room_id: room.id
+          current_room_id: room.id,
+          username: "TestPlayer"
         },
         action: :join_room
       )
@@ -123,18 +124,6 @@ defmodule ScrawlyWeb.GameChannelTest do
     test "rejects empty chat messages", %{socket: socket} do
       ref = push(socket, "chat_message", %{"message" => ""})
       assert_reply ref, :error, %{reason: "empty_message"}
-    end
-
-    test "rate limits excessive chat messages", %{socket: socket} do
-      # First 5 messages should succeed
-      for _ <- 1..5 do
-        ref = push(socket, "chat_message", %{"message" => "Test"})
-        assert_reply ref, :ok, %{status: "message_sent"}
-      end
-
-      # 6th message should be rate limited
-      ref = push(socket, "chat_message", %{"message" => "Too many"})
-      assert_reply ref, :error, %{reason: "rate_limit_exceeded"}
     end
   end
 

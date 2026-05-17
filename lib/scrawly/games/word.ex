@@ -42,15 +42,6 @@ defmodule Scrawly.Games.Word do
 
       filter expr(difficulty == ^arg(:difficulty) and word_count == ^arg(:word_count))
     end
-
-    read :list_by_difficulty do
-      argument :difficulty, :atom do
-        allow_nil? false
-        constraints one_of: [:easy, :medium, :hard]
-      end
-
-      filter expr(difficulty == ^arg(:difficulty))
-    end
   end
 
   attributes do
@@ -74,13 +65,6 @@ defmodule Scrawly.Games.Word do
       default 1
       public? true
       constraints min: 1, max: 3
-    end
-
-    attribute :difficulty, :atom do
-      allow_nil? false
-      default :medium
-      public? true
-      constraints one_of: [:easy, :medium, :hard]
     end
 
     create_timestamp :created_at
@@ -417,7 +401,7 @@ defmodule Scrawly.Games.Word do
     ]
   }
 
-  def word_list, do: @easy_words ++ @medium_words ++ @hard_words
+  def word_list, do: @word_list
 
   def all_words_flat do
     @word_list

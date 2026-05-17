@@ -107,7 +107,8 @@ defmodule Scrawly.MixProject do
     ]
   end
 
-  defp usage_rules do    # Example for those using claude.
+  defp usage_rules do
+    # Example for those using claude.
     [
       file: "CLAUDE.md",
       # rules to include directly in CLAUDE.md

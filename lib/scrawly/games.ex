@@ -30,7 +30,6 @@ defmodule Scrawly.Games do
       # Game flow code interfaces
       define :create_game, action: :start_game, args: [:room_id, :total_rounds]
       define :get_game_by_id, action: :read, get_by: [:id]
-      define :get_game_by_room, action: :get_by_room, args: [:room_id]
       define :start_round, action: :start_round, args: [:current_drawer_id]
       define :select_next_drawer, action: :select_next_drawer, args: [:player_queue]
       define :next_round, action: :next_round
@@ -122,20 +121,6 @@ defmodule Scrawly.Games do
     end
   end
 
-  def generate_hint(word) when is_binary(word) do
-    word
-    |> String.graphemes()
-    |> Enum.map(fn
-      " " -> "  "
-      _ -> "_"
-    end)
-    |> Enum.join(" ")
-  end
-
-  def obfuscate_word(word, _drawer_id) do
-    generate_hint(word)
-  end
-
   def get_word_count do
     case get_all_words() do
       {:ok, words} -> length(words)
@@ -164,61 +149,5 @@ defmodule Scrawly.Games do
 
   def get_round_time_remaining(game_id) do
     Scrawly.Games.RoundTimer.get_remaining_time(game_id)
-  end
-
-  @round_duration 80
-
-  def get_round_duration, do: @round_duration
-
-  def calculate_points(time_remaining) when time_remaining >= 0 do
-    base_points = 100
-    time_bonus = round(time_remaining / @round_duration * 100)
-    base_points + time_bonus
-  end
-
-  def process_guess(guesser_id, drawer_id, game_id) do
-    case get_game_by_id(game_id) do
-      {:ok, game} ->
-        current_word = game.current_word
-        drawer_id_db = game.current_drawer_id
-
-        cond do
-          guesser_id == drawer_id_db ->
-            {:error, :drawer_cannot_guess}
-
-          current_word == nil ->
-            {:error, :no_active_round}
-
-          true ->
-            {:ok, current_word, drawer_id_db}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  def award_points_to_guesser(guesser_id, points) do
-    case Ash.get(Scrawly.Accounts.User, guesser_id) do
-      {:ok, user} ->
-        new_score = (user.score || 0) + points
-        Scrawly.Accounts.update_score(user, %{score: new_score})
-        {:ok, new_score}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  def award_points_to_drawer(drawer_id, points) do
-    case Ash.get(Scrawly.Accounts.User, drawer_id) do
-      {:ok, user} ->
-        new_score = (user.score || 0) + points
-        Scrawly.Accounts.update_score(user, %{score: new_score})
-        {:ok, new_score}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
   end
 end

@@ -5,45 +5,6 @@ defmodule ScrawlyWeb.GameChannel do
   alias Scrawly.Games.RoomServer
   alias ScrawlyWeb.Presence
 
-  @rate_limit_max_messages 5
-  @rate_limit_window_seconds 3
-
-  defp ensure_rate_limit_table do
-    case :ets.info(:chat_rate_limit) do
-      :undefined ->
-        :ets.new(:chat_rate_limit, [:set, :named_table, :public])
-        :ok
-
-      _ ->
-        :ok
-    end
-  end
-
-  defp check_rate_limit(user_id) do
-    ensure_rate_limit_table()
-    now = System.system_time(:second)
-    key = "chat:#{user_id}"
-
-    case :ets.lookup(:chat_rate_limit, key) do
-      [{^key, count, first_message_time}] ->
-        if now - first_message_time < @rate_limit_window_seconds do
-          if count >= @rate_limit_max_messages do
-            {:error, :rate_limit_exceeded}
-          else
-            :ets.update_counter(:chat_rate_limit, key, {2, 1})
-            {:ok, :continue}
-          end
-        else
-          :ets.insert(:chat_rate_limit, {key, 1, now})
-          {:ok, :continue}
-        end
-
-      [] ->
-        :ets.insert(:chat_rate_limit, {key, 1, now})
-        {:ok, :continue}
-    end
-  end
-
   @impl true
   def join("game:" <> room_code, _payload, socket) do
     with {:ok, room} <- Games.get_room_by_code(room_code),

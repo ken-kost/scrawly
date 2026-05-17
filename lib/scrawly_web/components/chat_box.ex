@@ -7,7 +7,6 @@ defmodule ScrawlyWeb.Components.ChatBox do
   prop :messages, :list, default: []
   prop :current_message, :string, default: ""
   prop :current_user_id, :string, default: nil
-  prop :current_user_name, :string, default: nil
   prop :disabled, :boolean, default: false
   prop :is_drawer, :boolean, default: false
   prop :rate_limited, :boolean, default: false

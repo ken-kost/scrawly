@@ -89,7 +89,6 @@ defmodule ScrawlyWeb.GameChannelDrawingTest do
       assert stroke.path == "M 10 20 L 30 40"
       assert stroke.color == "#000000"
     end
-  end
 
     test "rejects empty segments", %{socket: socket, room: room} do
       {:ok, _, socket} = subscribe_and_join(socket, GameChannel, "game:#{room.code}")
