@@ -1,4 +1,7 @@
 defmodule ScrawlyWeb.Components.ChatBox do
+  @moduledoc """
+  Stateless chat component. All events bubble to the parent GamePage.
+  """
   use Hologram.Component
 
   prop :messages, :list, default: []
@@ -6,92 +9,58 @@ defmodule ScrawlyWeb.Components.ChatBox do
   prop :current_user_id, :string, default: nil
   prop :current_user_name, :string, default: nil
   prop :disabled, :boolean, default: false
+  prop :is_drawer, :boolean, default: false
+  prop :rate_limited, :boolean, default: false
 
   def template do
     ~HOLO"""
-    <div class="bg-white rounded-lg shadow-md flex flex-col h-96">
-      <!-- Chat Header -->
-      <div class="p-4 border-b border-gray-200">
-        <h3 class="text-lg font-semibold text-black">Chat</h3>
-      </div>
-
-      <!-- Messages Area -->
-      <div class="flex-1 overflow-y-auto p-4 space-y-2" id="chat-messages">
-        <div $show={length(@messages) == 0} class="text-center py-8 text-gray-500">
-          <p>No messages yet. Start the conversation!</p>
-        </div>
-
-        {%for msg <- @messages}
-          <div class={[
-            "p-2 rounded-lg",
-            if(msg.type == "system", do: "bg-gray-100 text-gray-600 text-center text-sm italic",
-            else: if(msg.is_correct_guess, do: "bg-green-100 border border-green-300",
-            else: if(msg.user_id == @current_user_id, do: "bg-blue-100 ml-8",
-            else: "bg-gray-100 mr-8")))
-          ]}>
-            {%if msg.type != "system"}
-              <span class="font-semibold text-sm">{msg.username}:</span>
+    <div style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
+      <div class="panel-body" id="chat-messages" style="flex: 1; overflow: auto; padding: 4px 0;">
+        {%if length(@messages) == 0}
+          <div style="text-align: center; padding: 16px; color: var(--muted); font-size: 12px;">no messages yet</div>
+        {/if}
+        {%for msg <- Enum.reverse(@messages)}
+          {%if Map.get(msg, :type) == :system}
+            <div class="msg system">→ {msg.message}</div>
+          {%else}
+            {%if Map.get(msg, :type) == :correct_guess}
+              <div class="msg correct">
+                <span class="who">{Map.get(msg, :player_name, "")}</span>
+                <span>{msg.message}</span>
+              </div>
+            {%else}
+              {%if Map.get(msg, :type) == :close_guess}
+                <div class="msg close">
+                  <span class="who">{Map.get(msg, :player_name, "")}</span>
+                  <span>{msg.message}</span>
+                  <span class="mono" style="margin-left: auto; font-size: 11px; color: var(--muted);">close</span>
+                </div>
+              {%else}
+                {%if Map.get(msg, :type) == :round_complete}
+                  <div class="msg system">→ {msg.message}</div>
+                {%else}
+                  <div class="msg">
+                    <span class={"who " <> if(Map.get(msg, :player_name) == @current_user_id, do: "me", else: "")}>{Map.get(msg, :player_name, "")}</span>
+                    <span>{msg.message}</span>
+                  </div>
+                {/if}
+              {/if}
             {/if}
-            <span class={if(msg.is_correct_guess, do: "font-bold text-green-700", else: "")}>{msg.message}</span>
-            {%if msg.is_correct_guess}
-              <span class="text-green-600 text-xs ml-2">✓ +{msg.points} pts</span>
-            {/if}
-          </div>
+          {/if}
         {/for}
       </div>
-
-      <!-- Message Input -->
-      <div class="p-4 border-t border-gray-200">
-        <div class="flex gap-2">
-          <input
-            type="text"
-            placeholder="Type your guess..."
-            class="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
-            value={@current_message}
-            disabled={@disabled}
-            $input="message_change"
-            $keydown={:handle_keydown}>
-          <button
-            class="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed"
-            disabled={@disabled || String.trim(@current_message) == ""}
-            $click={:send_message}>
-            Send
-          </button>
-        </div>
-      </div>
+      {%if @rate_limited}
+        <div style="padding: 4px 14px; font-size: 11px; color: var(--danger);">slow down</div>
+      {/if}
+      <form class="chat-input" $submit="send_message">
+        <input type="text" name="message"
+               placeholder={if(@is_drawer, do: "you are drawing — chat disabled", else: "type a guess...")}
+               value={@current_message}
+               disabled={@disabled}
+               $input={:update_message} />
+        <button type="submit" class="app-btn app-btn-sm" disabled={@disabled || String.trim(@current_message) == ""}>send</button>
+      </form>
     </div>
     """
-  end
-
-  def action(:message_change, %{event: %{value: message}}, component) do
-    put_state(component, :temp_message, message)
-  end
-
-  def action(:send_message, _params, component) do
-    message = component.state.temp_message || ""
-    put_state(component, :temp_message, message)
-  end
-
-  def action(
-        :send_message,
-        _params,
-        %{props: %{send_message_to_parent: send_to_parent}} = component
-      )
-      when is_function(send_to_parent) do
-    message = component.state.temp_message || ""
-    send_to_parent.(message)
-    put_state(component, :temp_message, "")
-  end
-
-  def action(:send_message, _params, component) do
-    put_state(component, :temp_message, "")
-  end
-
-  def action(:handle_keydown, %{"key" => "Enter"} = params, component) do
-    action(:send_message, params, component)
-  end
-
-  def action(:handle_keydown, _params, component) do
-    component
   end
 end
