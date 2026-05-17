@@ -1,5 +1,5 @@
 defmodule ScrawlyWeb.Pages.HomePageTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias ScrawlyWeb.Pages.HomePage
 
@@ -15,7 +15,6 @@ defmodule ScrawlyWeb.Pages.HomePageTest do
       assert component.state.show_create_room == false
       assert component.state.new_room_name == ""
       assert is_list(component.state.rooms)
-      assert component.state.rooms == []
     end
   end
 

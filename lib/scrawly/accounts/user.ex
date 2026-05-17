@@ -22,12 +22,10 @@ defmodule Scrawly.Accounts.User do
     end
 
     strategies do
-      magic_link do
+      password :password do
         identity_field :email
-        registration_enabled? true
-        require_interaction? true
-
-        sender Scrawly.Accounts.User.Senders.SendMagicLinkEmail
+        hashed_password_field :hashed_password
+        confirmation_required? false
       end
     end
   end
@@ -40,20 +38,38 @@ defmodule Scrawly.Accounts.User do
   actions do
     defaults [:read, update: [:username]]
 
-    create :create do
+    create :register_with_password do
+      argument :password, :string, allow_nil?: false, sensitive?: true
+
       accept [:email]
-      primary? true
+
+      change AshAuthentication.GenerateTokenChange
+      change AshAuthentication.Strategy.Password.HashPasswordChange
+
       upsert? true
       upsert_identity :unique_email
       upsert_fields [:email]
 
       change fn changeset, _context ->
         Ash.Changeset.after_action(changeset, fn _changeset, user ->
-          user
-          |> Ash.Changeset.for_update(:update, %{username: generate_username(user)})
-          |> Ash.update()
+          if is_nil(user.username) do
+            user
+            |> Ash.Changeset.for_update(:update, %{username: generate_username(user)})
+            |> Ash.update()
+          else
+            {:ok, user}
+          end
         end)
       end
+
+      metadata :token, :string do
+        allow_nil? false
+      end
+    end
+
+    create :create do
+      accept [:email, :username]
+      primary? true
     end
 
     read :get_by_subject do
@@ -74,45 +90,9 @@ defmodule Scrawly.Accounts.User do
       filter expr(email == ^arg(:email))
     end
 
-    create :sign_in_with_magic_link do
-      description "Sign in or register a user with magic link."
-
-      argument :token, :string do
-        description "The token from the magic link that was sent to the user"
-        allow_nil? false
-      end
-
-      upsert? true
-      upsert_identity :unique_email
-      upsert_fields [:email]
-
-      # Uses the information from the token to create or sign in the user
-      change AshAuthentication.Strategy.MagicLink.SignInChange
-
-      change fn changeset, _context ->
-        Ash.Changeset.after_action(changeset, fn _hangeset, user ->
-          user
-          |> Ash.Changeset.for_update(:update, %{username: generate_username(user)})
-          |> Ash.update()
-        end)
-      end
-
-      metadata :token, :string do
-        allow_nil? false
-      end
-    end
-
-    action :request_magic_link do
-      argument :email, :ci_string do
-        allow_nil? false
-      end
-
-      run AshAuthentication.Strategy.MagicLink.Request
-    end
-
     # Player-specific actions
     update :join_room do
-      accept [:current_room_id]
+      accept [:current_room_id, :username]
       change set_attribute(:player_state, :connected)
     end
 
@@ -129,6 +109,14 @@ defmodule Scrawly.Accounts.User do
 
     update :set_player_state do
       accept [:player_state]
+    end
+
+    update :update_dark_mode do
+      accept [:dark_mode]
+    end
+
+    update :update_accent_color do
+      accept [:accent_color]
     end
   end
 
@@ -148,6 +136,11 @@ defmodule Scrawly.Accounts.User do
     attribute :email, :ci_string do
       allow_nil? false
       public? true
+    end
+
+    attribute :hashed_password, :string do
+      allow_nil? true
+      sensitive? true
     end
 
     # Player-specific attributes
@@ -171,6 +164,19 @@ defmodule Scrawly.Accounts.User do
 
     attribute :current_room_id, :uuid do
       public? true
+    end
+
+    attribute :dark_mode, :boolean do
+      default false
+      allow_nil? false
+      public? true
+    end
+
+    attribute :accent_color, :atom do
+      default :purple
+      allow_nil? false
+      public? true
+      constraints one_of: [:purple, :yellow, :orange]
     end
   end
 
