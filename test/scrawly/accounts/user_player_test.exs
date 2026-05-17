@@ -9,9 +9,11 @@ defmodule Scrawly.Accounts.UserPlayerTest do
 
   describe "User player functionality" do
     setup do
-      {:ok, room} = Ash.create(Room, %{})
       # Create a simple user for testing player functionality
-      {:ok, user} = Ash.create(User, %{email: "test@example.com"}, authorize?: false)
+      {:ok, user} =
+        Ash.create(User, %{email: "test@example.com", username: "testuser"}, authorize?: false)
+
+      {:ok, room} = Ash.create(Room, %{name: "Test Room", creator_id: user.id})
       %{room: room, user: user}
     end
 
@@ -19,7 +21,7 @@ defmodule Scrawly.Accounts.UserPlayerTest do
       assert user.score == 0
       assert user.player_state == :disconnected
       assert is_nil(user.current_room_id)
-      assert is_nil(user.username)
+      assert is_binary(user.username)
     end
 
     test "join_room action updates player state and room", %{room: room, user: user} do

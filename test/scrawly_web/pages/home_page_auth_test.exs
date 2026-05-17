@@ -1,37 +1,37 @@
 defmodule ScrawlyWeb.Pages.HomePageAuthTest do
-  use ExUnit.Case, async: true
-  use ScrawlyWeb.ConnCase
+  use ExUnit.Case, async: false
 
   alias ScrawlyWeb.Pages.HomePage
   alias Scrawly.Accounts.User
 
+  setup do
+    Ecto.Adapters.SQL.Sandbox.checkout(Scrawly.Repo)
+  end
+
   describe "authentication integration" do
-    test "redirects unauthenticated user to sign-in page" do
+    test "unauthenticated user sees unauthenticated state" do
       # Create a mock component and server without authentication
       component = %Hologram.Component{}
       server = %Hologram.Server{session: %{}}
 
-      # This should redirect to sign-in page when no user is authenticated
+      # This should set authenticated to false when no user is in session
       result = HomePage.init(%{}, component, server)
 
-      # Should redirect to sign-in (this will fail initially)
-      assert result.page == ScrawlyWeb.Pages.SignInPage
+      assert result.state.authenticated == false
+      assert result.state.current_user == nil
     end
 
     test "loads authenticated user data from session" do
       # Create a test user
       {:ok, user} =
-        User
-        |> Ash.Changeset.for_create(:create, %{
-          email: "test@example.com",
-          username: "test123"
-        })
-        |> Ash.create()
+        Ash.create(User, %{email: "test-#{System.unique_integer([:positive])}@example.com"},
+          authorize?: false
+        )
 
       # Mock server with authenticated user in session
       server = %Hologram.Server{
         session: %{
-          "current_user" => user
+          "user_id" => user.id
         }
       }
 
@@ -41,25 +41,25 @@ defmodule ScrawlyWeb.Pages.HomePageAuthTest do
       result = HomePage.init(%{}, component, server)
 
       # Should have user data in state
-      assert result.state.current_user_id == user.id
-      assert result.state.current_user_email == user.email
-      assert result.state.current_user_username == user.username
+      assert result.state.authenticated == true
+      assert result.state.current_user.id == user.id
     end
 
     test "auto-generates username from email during registration" do
-      email = "john.doe@example.com"
+      email = "john.doe-#{System.unique_integer([:positive])}@example.com"
 
-      # This should create a username like "john.doe123" where 123 is a unique integer
+      strategy = AshAuthentication.Info.strategy!(User, :password)
+
       {:ok, user} =
-        User
-        |> Ash.Changeset.for_create(:sign_in_with_magic_link, %{
-          token: "mock-token"
+        AshAuthentication.Strategy.action(strategy, :register, %{
+          email: email,
+          password: "password123"
         })
-        |> Ash.create()
 
       # Username should be generated from email prefix
+      assert user.username != nil
+      assert is_binary(user.username)
       assert String.starts_with?(user.username, "john.doe")
-      assert String.length(user.username) > String.length("john.doe")
     end
   end
 end

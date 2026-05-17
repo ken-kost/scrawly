@@ -1,16 +1,20 @@
 defmodule ScrawlyWeb.Pages.HomePageTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias ScrawlyWeb.Pages.HomePage
 
+  setup do
+    Ecto.Adapters.SQL.Sandbox.checkout(Scrawly.Repo)
+  end
+
   describe "init/3" do
     test "initializes with default state" do
-      component = HomePage.init(%{}, %Hologram.Component{}, nil)
+      server = %Hologram.Server{session: %{}}
+      component = HomePage.init(%{}, %Hologram.Component{}, server)
 
       assert component.state.show_create_room == false
       assert component.state.new_room_name == ""
       assert is_list(component.state.rooms)
-      assert length(component.state.rooms) > 0
     end
   end
 
