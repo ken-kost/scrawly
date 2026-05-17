@@ -1,65 +1,38 @@
 defmodule ScrawlyWeb.Components.DrawingCanvas do
+  @moduledoc "SVG drawing canvas supporting multi-stroke rendering with color and width."
   use Hologram.Component
 
   prop :room_id, :string, default: "test"
   prop :is_drawer, :boolean, default: false
   prop :disabled, :boolean, default: false
-  prop :path, :string, default: ""
-  prop :drawing?, :boolean, default: false
-
-  def init(params, component, _server) do
-    put_state(component, params)
-  end
-
-  def action(:clear_canvas, _params, component) do
-    put_state(component, drawing?: false, path: "")
-  end
-
-  def action(:draw_move, params, %{state: %{drawing?: true}} = component) do
-    new_path = component.state.path <> " L #{params.event.offset_x} #{params.event.offset_y}"
-    put_state(component, :path, new_path)
-  end
-
-  def action(:draw_move, _params, component) do
-    component
-  end
-
-  def action(:start_drawing, params, component) do
-    new_path =
-      if component.state.path == "" do
-        "M #{params.event.offset_x} #{params.event.offset_y}"
-      else
-        component.state.path <> " M #{params.event.offset_x} #{params.event.offset_y}"
-      end
-
-    put_state(component, drawing?: true, path: new_path)
-  end
-
-  def action(:stop_drawing, _params, component) do
-    put_state(component, :drawing?, false)
-  end
+  prop :strokes, :list, default: []
+  prop :active_color, :string, default: "#000000"
+  prop :active_width, :integer, default: 2
 
   def template do
     ~HOLO"""
-    <div class="space-y-4">
-      <div class="flex items-center justify-between">
-        <h3 class="text-lg font-semibold">Drawing Canvas</h3>
-        <button
-          $show={@is_drawer && !@disabled}
-          $click={action: :clear_canvas, target: "drawing_canvas"}
-          class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded disabled:opacity-50">
-          Clear
-        </button>
-      </div>
+    <div class="canvas-frame">
       <svg
-        class="bg-white border border-gray-300 rounded w-full h-96"
+        viewBox="0 0 800 450"
+        preserveAspectRatio="xMidYMid meet"
         style="touch-action: none;"
-      $pointer_down={action: :start_drawing, target: "drawing_canvas"}
-    $pointer_move={action: :draw_move, target: "drawing_canvas"}
-    $pointer_up={action: :stop_drawing, target: "drawing_canvas"}
-    $pointer_cancel={action: :stop_drawing, target: "drawing_canvas"}
+        $pointer_down={:canvas_pointer_down}
+        $pointer_move={:canvas_pointer_move}
+        $pointer_up={:canvas_pointer_up}
+        $pointer_cancel={:canvas_pointer_up}
       >
-        <path d={@path} stroke="#2563eb" stroke-width="2" fill="none" />
+        <defs>
+          <pattern id="canvas-grid" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+            <circle cx="1" cy="1" r="0.5" fill="rgba(0,0,0,0.05)" />
+          </pattern>
+        </defs>
+        <rect width="800" height="450" fill="url(#canvas-grid)" />
+        {%for stroke <- @strokes}
+          <path d={stroke.path} stroke={stroke.color} stroke-width={stroke.width} fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        {/for}
+        {%if @is_drawer}
+          <path id="drawing-path" stroke={@active_color} stroke-width={@active_width} fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        {/if}
       </svg>
     </div>
     """
