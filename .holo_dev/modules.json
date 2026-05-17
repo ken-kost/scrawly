@@ -1,0 +1,222 @@
+{
+  "Inspect.Scrawly.Games.GameResult": {
+    "line": 1,
+    "file": "lib/scrawly/games/game_result.ex"
+  },
+  "Scrawly.Games.WordHints": {
+    "line": 1,
+    "file": "lib/scrawly/games/word_hints.ex"
+  },
+  "ScrawlyWeb.Pages.GameScorePage": {
+    "line": 1,
+    "file": "lib/scrawly_web/pages/game_score_page.ex"
+  },
+  "ScrawlyWeb.Presence": {
+    "line": 1,
+    "file": "lib/scrawly_web/channels/presence.ex"
+  },
+  "ScrawlyWeb.Endpoint": {
+    "line": 1,
+    "file": "lib/scrawly_web/endpoint.ex"
+  },
+  "ScrawlyWeb.LobbyChannel": {
+    "line": 1,
+    "file": "lib/scrawly_web/channels/lobby_channel.ex"
+  },
+  "Scrawly.Secrets": {
+    "line": 1,
+    "file": "lib/scrawly/secrets.ex"
+  },
+  "ScrawlyWeb.UserSocket": {
+    "line": 1,
+    "file": "lib/scrawly_web/channels/user_socket.ex"
+  },
+  "Scrawly.Games.RoomServer": {
+    "line": 1,
+    "file": "lib/scrawly/games/room_server.ex"
+  },
+  "Scrawly.Games.Scoring": {
+    "line": 1,
+    "file": "lib/scrawly/games/scoring.ex"
+  },
+  "ScrawlyWeb.Components.ScoreBoard": {
+    "line": 1,
+    "file": "lib/scrawly_web/components/score_board.ex"
+  },
+  "Inspect.Scrawly.Games.Word": {
+    "line": 1,
+    "file": "lib/scrawly/games/word.ex"
+  },
+  "ScrawlyWeb.Pages.GamePage.Commands": {
+    "line": 1,
+    "file": "lib/scrawly_web/pages/game_page/commands.ex"
+  },
+  "Inspect.Scrawly.Games.Game": {
+    "line": 1,
+    "file": "lib/scrawly/games/game.ex"
+  },
+  "Scrawly.Accounts": {
+    "line": 1,
+    "file": "lib/scrawly/accounts.ex"
+  },
+  "ScrawlyWeb.LiveUserAuth": {
+    "line": 1,
+    "file": "lib/scrawly_web/live_user_auth.ex"
+  },
+  "ScrawlyWeb.AuthOverrides": {
+    "line": 1,
+    "file": "lib/scrawly_web/auth_overrides.ex"
+  },
+  "ScrawlyWeb.PageController": {
+    "line": 1,
+    "file": "lib/scrawly_web/controllers/page_controller.ex"
+  },
+  "Scrawly.Games.GameResult": {
+    "line": 1,
+    "file": "lib/scrawly/games/game_result.ex"
+  },
+  "Scrawly.Games.RoomServer.GameFlow": {
+    "line": 1,
+    "file": "lib/scrawly/games/room_server/game_flow.ex"
+  },
+  "ScrawlyWeb.Components.ChatBox": {
+    "line": 1,
+    "file": "lib/scrawly_web/components/chat_box.ex"
+  },
+  "Scrawly.Games": {
+    "line": 1,
+    "file": "lib/scrawly/games.ex"
+  },
+  "ScrawlyWeb.Gettext": {
+    "line": 1,
+    "file": "lib/scrawly_web/gettext.ex"
+  },
+  "Inspect.Scrawly.Accounts.Token": {
+    "line": 1,
+    "file": "lib/scrawly/accounts/token.ex"
+  },
+  "Inspect.Scrawly.Games.Room": {
+    "line": 1,
+    "file": "lib/scrawly/games/room.ex"
+  },
+  "Scrawly.PubSub": {
+    "line": 1,
+    "file": "lib/scrawly/pubsub.ex"
+  },
+  "Scrawly.Games.Room": {
+    "line": 1,
+    "file": "lib/scrawly/games/room.ex"
+  },
+  "ScrawlyWeb": {
+    "line": 1,
+    "file": "lib/scrawly_web.ex"
+  },
+  "ScrawlyWeb.Components.DrawingCanvas": {
+    "line": 1,
+    "file": "lib/scrawly_web/components/drawing_canvas.ex"
+  },
+  "Scrawly.Accounts.User": {
+    "line": 1,
+    "file": "lib/scrawly/accounts/user.ex"
+  },
+  "Scrawly.Games.Word": {
+    "line": 1,
+    "file": "lib/scrawly/games/word.ex"
+  },
+  "Scrawly.Games.RoundTimer": {
+    "line": 1,
+    "file": "lib/scrawly/games/round_timer.ex"
+  },
+  "ScrawlyWeb.Pages.GamePage": {
+    "line": 1,
+    "file": "lib/scrawly_web/pages/game_page.ex"
+  },
+  "Inspect.Scrawly.Accounts.User": {
+    "line": 1,
+    "file": "lib/scrawly/accounts/user.ex"
+  },
+  "ScrawlyWeb.Components.RoomList": {
+    "line": 1,
+    "file": "lib/scrawly_web/components/room_list.ex"
+  },
+  "Scrawly.Application": {
+    "line": 1,
+    "file": "lib/scrawly/application.ex"
+  },
+  "ScrawlyWeb.PageHTML": {
+    "line": 1,
+    "file": "lib/scrawly_web/controllers/page_html.ex"
+  },
+  "Scrawly": {
+    "line": 1,
+    "file": "lib/scrawly.ex"
+  },
+  "Scrawly.Accounts.Token": {
+    "line": 1,
+    "file": "lib/scrawly/accounts/token.ex"
+  },
+  "Scrawly.Repo": {
+    "line": 1,
+    "file": "lib/scrawly/repo.ex"
+  },
+  "ScrawlyWeb.ErrorJSON": {
+    "line": 1,
+    "file": "lib/scrawly_web/controllers/error_json.ex"
+  },
+  "ScrawlyWeb.GameChannel": {
+    "line": 1,
+    "file": "lib/scrawly_web/channels/game_channel.ex"
+  },
+  "ScrawlyWeb.Telemetry": {
+    "line": 1,
+    "file": "lib/scrawly_web/telemetry.ex"
+  },
+  "ScrawlyWeb.Router": {
+    "line": 1,
+    "file": "lib/scrawly_web/router.ex"
+  },
+  "Scrawly.Games.Game": {
+    "line": 1,
+    "file": "lib/scrawly/games/game.ex"
+  },
+  "ScrawlyWeb.CoreComponents": {
+    "line": 1,
+    "file": "lib/scrawly_web/components/core_components.ex"
+  },
+  "ScrawlyWeb.Layouts.AppLayout": {
+    "line": 1,
+    "file": "lib/scrawly_web/layouts/app_layout.ex"
+  },
+  "ScrawlyWeb.Pages.PastGamesPage": {
+    "line": 1,
+    "file": "lib/scrawly_web/pages/past_games_page.ex"
+  },
+  "Scrawly.Mailer": {
+    "line": 1,
+    "file": "lib/scrawly/mailer.ex"
+  },
+  "Scrawly.Accounts.User.Senders.SendMagicLinkEmail": {
+    "line": 1,
+    "file": "lib/scrawly/accounts/user/senders/send_magic_link_email.ex"
+  },
+  "ScrawlyWeb.Layouts": {
+    "line": 1,
+    "file": "lib/scrawly_web/components/layouts.ex"
+  },
+  "ScrawlyWeb.Components.PlayerList": {
+    "line": 1,
+    "file": "lib/scrawly_web/components/player_list.ex"
+  },
+  "ScrawlyWeb.ErrorHTML": {
+    "line": 1,
+    "file": "lib/scrawly_web/controllers/error_html.ex"
+  },
+  "ScrawlyWeb.Pages.HomePage": {
+    "line": 1,
+    "file": "lib/scrawly_web/pages/home_page.ex"
+  },
+  "ScrawlyWeb.AuthController": {
+    "line": 1,
+    "file": "lib/scrawly_web/controllers/auth_controller.ex"
+  }
+}

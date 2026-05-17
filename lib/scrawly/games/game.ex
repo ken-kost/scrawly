@@ -17,6 +17,15 @@ defmodule Scrawly.Games.Game do
       primary? true
     end
 
+    read :get_by_room do
+      argument :room_id, :uuid do
+        allow_nil? false
+      end
+
+      filter expr(room_id == ^arg(:room_id))
+      prepare build(sort: [inserted_at: :desc], limit: 1)
+    end
+
     create :start_game do
       accept [:room_id, :total_rounds]
       change set_attribute(:status, :in_progress)
