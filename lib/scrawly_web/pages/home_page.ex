@@ -44,9 +44,21 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
     token = get_session(server, :user_token) || ""
 
+    lobby_chat_messages =
+      Scrawly.Games.LobbyChatServer.list_messages()
+      |> Enum.map(fn m ->
+        %{
+          username: m["username"],
+          message: m["message"],
+          is_guest: m["is_guest"],
+          timestamp: m["timestamp"]
+        }
+      end)
+      |> Enum.reverse()
+
     component
     |> put_state(:rooms, lobby_rooms)
-    |> put_state(:lobby_chat_messages, [])
+    |> put_state(:lobby_chat_messages, lobby_chat_messages)
     |> put_state(:lobby_chat_input, "")
     |> put_state(:show_create_room, false)
     |> put_state(:new_room_name, "")
@@ -424,6 +436,26 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
     messages = [msg | component.state.lobby_chat_messages] |> Enum.take(100)
     put_state(component, :lobby_chat_messages, messages)
+  end
+
+  def action(:lobby_chat_history_loaded, %{messages: messages}, component) do
+    history =
+      messages
+      |> Enum.map(fn m ->
+        %{
+          username: Map.get(m, :username) || Map.get(m, "username"),
+          message: Map.get(m, :message) || Map.get(m, "message"),
+          is_guest: Map.get(m, :is_guest) || Map.get(m, "is_guest"),
+          timestamp: Map.get(m, :timestamp) || Map.get(m, "timestamp")
+        }
+      end)
+      |> Enum.reverse()
+
+    put_state(component, :lobby_chat_messages, history)
+  end
+
+  def action(:lobby_chat_cleared, _params, component) do
+    put_state(component, :lobby_chat_messages, [])
   end
 
   # ── Commands ─────────────────────────────────────────────────────────

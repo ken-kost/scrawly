@@ -23,7 +23,9 @@ defmodule Scrawly.Application do
       Scrawly.Games.DemoBoardServer,
       # Start to serve requests, typically the last entry
       ScrawlyWeb.Endpoint,
-      {AshAuthentication.Supervisor, [otp_app: :scrawly]}
+      {AshAuthentication.Supervisor, [otp_app: :scrawly]},
+      # Weekly cleanup of persisted lobby chat (relies on Endpoint to broadcast)
+      Scrawly.Games.LobbyChatServer
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

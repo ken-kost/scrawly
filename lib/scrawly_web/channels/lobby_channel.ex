@@ -17,6 +17,7 @@ defmodule ScrawlyWeb.LobbyChannel do
   @impl true
   def join("lobby:rooms", payload, socket) do
     send(self(), :after_join)
+    send(self(), :push_chat_history)
     Phoenix.PubSub.subscribe(Scrawly.PubSub, "lobby:rooms")
 
     username = resolve_username(socket.assigns[:user_id], payload)
@@ -24,6 +25,11 @@ defmodule ScrawlyWeb.LobbyChannel do
   end
 
   @impl true
+  def handle_info(:push_chat_history, socket) do
+    push(socket, "chat_history", %{"messages" => Scrawly.Games.LobbyChatServer.list_messages()})
+    {:noreply, socket}
+  end
+
   def handle_info(:after_join, socket) do
     user_id = socket.assigns[:user_id]
 
@@ -69,12 +75,15 @@ defmodule ScrawlyWeb.LobbyChannel do
       else
         socket = assign(socket, :chat_timestamps, [now | recent])
 
-        broadcast(socket, "chat_message", %{
+        payload = %{
           "username" => socket.assigns.chat_username,
           "message" => trimmed,
           "is_guest" => is_nil(socket.assigns[:user_id]),
           "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
-        })
+        }
+
+        Scrawly.Games.LobbyChatServer.add_message(payload)
+        broadcast(socket, "chat_message", payload)
 
         {:reply, {:ok, %{status: "sent"}}, socket}
       end
