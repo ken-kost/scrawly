@@ -3,6 +3,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
 
   alias Hologram.UI.Runtime
   alias Hologram.UI.Link
+  alias ScrawlyWeb.Components.{Avatar, AvatarDefs}
 
   @accents [:purple, :yellow, :orange]
 
@@ -17,6 +18,8 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
         |> put_state(:authenticated, false)
         |> put_state(:username, nil)
         |> put_state(:user_id, nil)
+        |> put_state(:avatar_id, AvatarDefs.default_id())
+        |> put_state(:avatar_color, AvatarDefs.default_color())
         |> put_state(:dark_mode, session_dark)
         |> put_state(:accent, session_accent)
         |> put_auth_defaults()
@@ -36,6 +39,8 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
             |> put_state(:authenticated, true)
             |> put_state(:username, user.username)
             |> put_state(:user_id, id)
+            |> put_state(:avatar_id, user.avatar_id || AvatarDefs.default_id())
+            |> put_state(:avatar_color, user.avatar_color || AvatarDefs.default_color())
             |> put_state(:dark_mode, user.dark_mode || session_dark)
             |> put_state(:accent, user_accent)
             |> put_auth_defaults()
@@ -47,6 +52,8 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
             |> put_state(:authenticated, false)
             |> put_state(:username, nil)
             |> put_state(:user_id, nil)
+            |> put_state(:avatar_id, AvatarDefs.default_id())
+            |> put_state(:avatar_color, AvatarDefs.default_color())
             |> put_state(:dark_mode, session_dark)
             |> put_state(:accent, session_accent)
             |> put_auth_defaults()
@@ -105,6 +112,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
         <Runtime />
       </head>
       <body>
+        <AvatarDefs />
         <header class="app-header">
           <div class="nav-glow" aria-hidden="true">
             <span class="blob"></span>
@@ -163,10 +171,12 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
               </button>
 
               {%if @authenticated}
-                <div class="user-chip">
-                  <span class="avatar">{String.upcase(String.slice(@username || "?", 0..0))}</span>
-                  <span>{@username}</span>
-                </div>
+                <Link to={ScrawlyWeb.Pages.ProfilePage}>
+                  <span class="user-chip" title="Edit profile">
+                    <Avatar avatar_id={@avatar_id} color={@avatar_color} size="xs" />
+                    <span>{@username}</span>
+                  </span>
+                </Link>
                 <a href="/sign-out" class="header-link" title="Sign out">sign out</a>
               {%else}
                 <button class="app-btn app-btn-ghost app-btn-sm" $click={action: :show_login, target: "layout"}>log in</button>
@@ -454,10 +464,12 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     })
   end
 
-  def action(:auth_success, %{username: username}, component) do
+  def action(:auth_success, %{username: username} = params, component) do
     component
     |> put_state(:authenticated, true)
     |> put_state(:username, username)
+    |> put_state(:avatar_id, Map.get(params, :avatar_id) || AvatarDefs.default_id())
+    |> put_state(:avatar_color, Map.get(params, :avatar_color) || AvatarDefs.default_color())
     |> put_state(:show_login_modal, false)
     |> put_state(:show_register_modal, false)
     |> put_state(:login_email, "")
@@ -470,6 +482,15 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
 
   def action(:auth_error, %{message: message}, component) do
     put_state(component, :auth_error, message)
+  end
+
+  # Receives live updates from the profile page so the navbar reflects
+  # the new handle / avatar without a full page reload.
+  def action(:profile_updated, params, component) do
+    component
+    |> put_state(:username, Map.get(params, :username) || component.state.username)
+    |> put_state(:avatar_id, Map.get(params, :avatar_id) || component.state.avatar_id)
+    |> put_state(:avatar_color, Map.get(params, :avatar_color) || component.state.avatar_color)
   end
 
   # ── Commands ─────────────────────────────────────────────────────
@@ -519,7 +540,11 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
         |> put_session(:user_token, user.__metadata__.token)
         |> put_session(:dark_mode, user.dark_mode)
         |> put_session(:accent_color, to_string(user.accent_color || :purple))
-        |> put_action(:auth_success, username: user.username)
+        |> put_action(:auth_success,
+          username: user.username,
+          avatar_id: user.avatar_id,
+          avatar_color: user.avatar_color
+        )
 
       {:error, _} ->
         put_action(server, :auth_error, message: "Incorrect email or password")
@@ -537,7 +562,11 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
         server
         |> put_session(:user_id, user.id)
         |> put_session(:user_token, user.__metadata__.token)
-        |> put_action(:auth_success, username: user.username)
+        |> put_action(:auth_success,
+          username: user.username,
+          avatar_id: user.avatar_id,
+          avatar_color: user.avatar_color
+        )
 
       {:error, _} ->
         put_action(server, :auth_error,

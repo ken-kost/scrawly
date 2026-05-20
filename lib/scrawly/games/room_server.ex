@@ -47,6 +47,12 @@ defmodule Scrawly.Games.RoomServer do
     round_active: false,
     correct_guessers: [],
     last_game_id: nil,
+    # Word-choice phase (skribbl.io-style)
+    phase: :idle,
+    word_choices: [],
+    choice_deadline: nil,
+    # Per-round guesser points (used to compute drawer mean at round end)
+    round_guesser_points: [],
     # Round results tracking
     round_results: [],
     round_start_scores: %{},
@@ -139,6 +145,12 @@ defmodule Scrawly.Games.RoomServer do
 
   def record_guess(room_id, player_id) do
     GenServer.call(via(room_id), {:record_guess, player_id})
+  catch
+    :exit, _ -> {:error, :not_found}
+  end
+
+  def choose_word(room_id, player_id, word) do
+    GenServer.call(via(room_id), {:choose_word, player_id, word})
   catch
     :exit, _ -> {:error, :not_found}
   end
@@ -356,28 +368,32 @@ defmodule Scrawly.Games.RoomServer do
     drawer_name = get_player_name(state.players, params.drawer_id)
     reset_players = Enum.map(state.players, fn p -> %{p | score: 0} end)
 
+    base_state = %{
+      state
+      | players: reset_players,
+        status: :playing,
+        last_game_id: nil,
+        game_id: params.game_id,
+        current_round: params.round,
+        total_rounds: params.total_rounds,
+        current_drawer_id: params.drawer_id,
+        current_word: nil,
+        time_left: state.round_duration,
+        round_active: false,
+        correct_guessers: [],
+        drawing_strokes: [],
+        chat_messages: [],
+        round_results: [],
+        used_words: [],
+        round_guesser_points: [],
+        round_start_scores:
+          Enum.reduce(reset_players, %{}, fn p, acc -> Map.put(acc, p.id, 0) end)
+    }
+
     new_state =
-      %{
-        state
-        | players: reset_players,
-          status: :playing,
-          last_game_id: nil,
-          game_id: params.game_id,
-          current_round: params.round,
-          total_rounds: params.total_rounds,
-          current_drawer_id: params.drawer_id,
-          current_word: params.current_word,
-          time_left: state.round_duration,
-          round_active: true,
-          correct_guessers: [],
-          drawing_strokes: [],
-          chat_messages: [],
-          round_results: [],
-          used_words: if(params.current_word, do: [params.current_word], else: []),
-          round_start_scores:
-            Enum.reduce(reset_players, %{}, fn p, acc -> Map.put(acc, p.id, 0) end)
-      }
-      |> add_sys_msg("Game started! Round #{params.round} \u2014 #{drawer_name} is drawing")
+      base_state
+      |> add_sys_msg("Game started! #{drawer_name} is choosing a word \u2026")
+      |> GameFlow.enter_word_choice(params.word_choices || [], &schedule_word_choice_timeout/2)
       |> bump_version()
       |> notify_waiters()
 
@@ -385,48 +401,98 @@ defmodule Scrawly.Games.RoomServer do
     {:reply, {:ok, to_public(new_state)}, new_state}
   end
 
+  def handle_call({:choose_word, player_id, word}, _from, state) do
+    cond do
+      state.phase != :choosing ->
+        {:reply, {:error, :not_choosing}, state}
+
+      player_id != state.current_drawer_id ->
+        {:reply, {:error, :not_drawer}, state}
+
+      word not in state.word_choices ->
+        {:reply, {:error, :invalid_word}, state}
+
+      true ->
+        case GameFlow.commit_word_choice(state, word) do
+          {:ok, new_state} ->
+            new_state =
+              new_state
+              |> bump_version()
+              |> notify_waiters()
+
+            {:reply, {:ok, to_public(new_state)}, new_state}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
+    end
+  end
+
   def handle_call({:record_guess, player_id}, _from, state) do
-    new_guessers = [player_id | state.correct_guessers]
+    cond do
+      state.phase != :drawing ->
+        {:reply, {:error, :round_not_active}, state}
 
-    guesser_ids =
-      state.players
-      |> Enum.reject(&(&1.id == state.current_drawer_id))
-      |> Enum.map(& &1.id)
+      player_id in state.correct_guessers ->
+        {:reply, {:ok, to_public(state), 0}, state}
 
-    all_guessed = length(guesser_ids) > 0 and Enum.all?(guesser_ids, &(&1 in new_guessers))
+      true ->
+        order = length(state.correct_guessers) + 1
+        guess_pts = Scoring.guesser_points(state.time_left, state.round_duration, order: order)
+        new_guessers = [player_id | state.correct_guessers]
+        new_round_points = state.round_guesser_points ++ [guess_pts]
 
-    new_state =
-      if all_guessed do
-        Games.stop_round_timer(state.game_id)
-        Process.send_after(self(), :auto_advance_round, 3_000)
+        guesser_ids =
+          state.players
+          |> Enum.reject(&(&1.id == state.current_drawer_id))
+          |> Enum.map(& &1.id)
 
-        total_guessers = length(guesser_ids)
-        drawer_pts = Scoring.drawer_points(length(new_guessers), total_guessers)
-        drawer_name = get_player_name(state.players, state.current_drawer_id)
+        all_guessed = length(guesser_ids) > 0 and Enum.all?(guesser_ids, &(&1 in new_guessers))
 
         updated_players =
           Enum.map(state.players, fn p ->
-            if p.id == state.current_drawer_id,
-              do: %{p | score: (p.score || 0) + drawer_pts},
-              else: p
+            if p.id == player_id, do: %{p | score: (p.score || 0) + guess_pts}, else: p
           end)
 
-        %{
+        intermediate = %{
           state
           | players: updated_players,
             correct_guessers: new_guessers,
-            round_active: false,
-            time_left: 0
+            round_guesser_points: new_round_points
         }
-        |> capture_round_result(drawer_pts)
-        |> add_sys_msg("Everyone guessed! #{drawer_name} earns #{drawer_pts} pts!")
-      else
-        %{state | correct_guessers: new_guessers}
-      end
-      |> bump_version()
-      |> notify_waiters()
 
-    {:reply, {:ok, to_public(new_state)}, new_state}
+        new_state =
+          if all_guessed do
+            Games.stop_round_timer(state.game_id)
+            Process.send_after(self(), :auto_advance_round, 3_000)
+
+            drawer_pts = Scoring.drawer_round_points(new_round_points)
+            drawer_name = get_player_name(state.players, state.current_drawer_id)
+
+            updated_players_with_drawer =
+              Enum.map(intermediate.players, fn p ->
+                if p.id == state.current_drawer_id,
+                  do: %{p | score: (p.score || 0) + drawer_pts},
+                  else: p
+              end)
+
+            %{
+              intermediate
+              | players: updated_players_with_drawer,
+                round_active: false,
+                phase: :round_end,
+                time_left: 0
+            }
+            |> capture_round_result(drawer_pts)
+            |> add_sys_msg("Everyone guessed! #{drawer_name} earns #{drawer_pts} pts!")
+          else
+            intermediate
+          end
+          |> bump_version()
+          |> notify_waiters()
+
+        {:reply, {:ok, to_public(new_state), guess_pts}, new_state}
+    end
   end
 
   def handle_call(:end_game, _from, state) do
@@ -449,6 +515,10 @@ defmodule Scrawly.Games.RoomServer do
           current_word: nil,
           time_left: 0,
           round_active: false,
+          phase: :idle,
+          word_choices: [],
+          choice_deadline: nil,
+          round_guesser_points: [],
           correct_guessers: [],
           drawing_strokes: [],
           round_results: [],
@@ -583,9 +653,8 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   def handle_info({:round_ended, %{reason: :time_up}}, state) do
-    total_guessers = length(state.players) - 1
     correct_count = length(state.correct_guessers)
-    drawer_pts = Scoring.drawer_points(correct_count, total_guessers, time_up: true)
+    drawer_pts = Scoring.drawer_round_points(state.round_guesser_points)
     drawer_name = get_player_name(state.players, state.current_drawer_id)
 
     updated_players =
@@ -599,11 +668,11 @@ defmodule Scrawly.Games.RoomServer do
       if correct_count > 0 do
         "Time's up! The word was: #{state.current_word}. #{drawer_name} earned #{drawer_pts} pts (#{correct_count} guessed)"
       else
-        "Time's up! The word was: #{state.current_word}. #{drawer_name} gets #{drawer_pts} pts"
+        "Time's up! The word was: #{state.current_word}. Nobody guessed."
       end
 
     new_state =
-      %{state | players: updated_players, time_left: 0, round_active: false}
+      %{state | players: updated_players, time_left: 0, round_active: false, phase: :round_end}
       |> capture_round_result(drawer_pts)
       |> add_sys_msg(msg)
       |> bump_version()
@@ -614,7 +683,7 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   def handle_info(:auto_advance_round, state) do
-    if state.game_id && not state.round_active do
+    if state.game_id && not state.round_active && state.phase != :choosing do
       if state.current_round >= state.total_rounds do
         {:noreply, auto_end_game(state)}
       else
@@ -622,6 +691,39 @@ defmodule Scrawly.Games.RoomServer do
       end
     else
       {:noreply, state}
+    end
+  end
+
+  def handle_info({:word_choice_timeout, game_id, round}, state) do
+    cond do
+      state.game_id != game_id ->
+        {:noreply, state}
+
+      state.current_round != round ->
+        {:noreply, state}
+
+      state.phase != :choosing ->
+        {:noreply, state}
+
+      state.word_choices == [] ->
+        {:noreply, state}
+
+      true ->
+        chosen = Enum.random(state.word_choices)
+
+        case GameFlow.commit_word_choice(state, chosen) do
+          {:ok, new_state} ->
+            new_state =
+              new_state
+              |> add_sys_msg("Word auto-selected for the drawer")
+              |> bump_version()
+              |> notify_waiters()
+
+            {:noreply, new_state}
+
+          {:error, _} ->
+            {:noreply, state}
+        end
     end
   end
 
@@ -652,7 +754,8 @@ defmodule Scrawly.Games.RoomServer do
     # Skip refill if no prompt is set or game ended
     if state.prompt && state.prompt != "" && state.game_id do
       tone_str = to_string(ai_tone || :fun)
-      num_words = max(total_rounds, 5)
+      # 3 choices per round; cap at 60 to limit prompt size.
+      num_words = min(max(total_rounds * 3, 9), 60)
 
       case Games.generate_ai_words(state.prompt, word_count, %{
              num_words: num_words,
@@ -676,13 +779,23 @@ defmodule Scrawly.Games.RoomServer do
   ## Private — Auto advance
 
   defp auto_next_round(state) do
-    GameFlow.auto_next_round(state, &bump_version/1, &notify_waiters/1)
+    GameFlow.start_word_choice(
+      state,
+      &bump_version/1,
+      &notify_waiters/1,
+      &schedule_word_choice_timeout/2
+    )
   end
 
   defp auto_end_game(state) do
     notify_lobby()
     Process.send_after(self(), :return_to_lobby, 30_000)
     GameFlow.auto_end_game(state, &bump_version/1, &notify_waiters/1)
+  end
+
+  # Sends a self-addressed timeout message after the word-choice timer expires.
+  defp schedule_word_choice_timeout(game_id, round) do
+    Process.send_after(self(), {:word_choice_timeout, game_id, round}, 15_000)
   end
 
   ## Private — Helpers
@@ -733,11 +846,22 @@ defmodule Scrawly.Games.RoomServer do
       :round_duration,
       :round_multiplier,
       :ai_tone,
-      :past_games
+      :past_games,
+      :phase,
+      :word_choices,
+      :choice_deadline
     ])
   end
 
-  defp to_player_map(user), do: %{id: user.id, username: user.username, score: user.score || 0}
+  defp to_player_map(user) do
+    %{
+      id: user.id,
+      username: user.username,
+      score: user.score || 0,
+      avatar_id: Map.get(user, :avatar_id) || "a-mushroom",
+      avatar_color: Map.get(user, :avatar_color) || "3"
+    }
+  end
 
   defp capture_round_result(state, drawer_points),
     do: GameFlow.capture_round_result(state, drawer_points)

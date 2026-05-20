@@ -38,6 +38,25 @@ defmodule Scrawly.Accounts.User do
   actions do
     defaults [:read, update: [:username]]
 
+    update :update_profile do
+      accept [:username, :avatar_id, :avatar_color]
+    end
+
+    update :change_password do
+      require_atomic? false
+      accept []
+      argument :current_password, :string, sensitive?: true, allow_nil?: false
+      argument :password, :string, sensitive?: true, allow_nil?: false, constraints: [min_length: 8]
+      argument :password_confirmation, :string, sensitive?: true, allow_nil?: false
+
+      validate confirm(:password, :password_confirmation)
+
+      validate {AshAuthentication.Strategy.Password.PasswordValidation,
+                strategy_name: :password, password_argument: :current_password}
+
+      change {AshAuthentication.Strategy.Password.HashPasswordChange, strategy_name: :password}
+    end
+
     create :register_with_password do
       argument :password, :string, allow_nil?: false, sensitive?: true
 
@@ -177,6 +196,19 @@ defmodule Scrawly.Accounts.User do
       allow_nil? false
       public? true
       constraints one_of: [:purple, :yellow, :orange]
+    end
+
+    attribute :avatar_id, :string do
+      default "a-mushroom"
+      allow_nil? false
+      public? true
+    end
+
+    attribute :avatar_color, :string do
+      default "3"
+      allow_nil? false
+      public? true
+      constraints match: ~r/^([1-9]|1[0-9]|2[0-4])$/
     end
   end
 

@@ -15,6 +15,8 @@ defmodule Scrawly.Accounts do
       define :leave_room, action: :leave_room
       define :update_dark_mode, action: :update_dark_mode, args: [:dark_mode]
       define :update_accent_color, action: :update_accent_color, args: [:accent_color]
+      define :update_profile, action: :update_profile
+      define :change_password, action: :change_password
     end
   end
 end

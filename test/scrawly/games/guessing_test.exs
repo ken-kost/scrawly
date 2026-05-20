@@ -34,16 +34,17 @@ defmodule Scrawly.Games.GuessingTest do
       assert late >= 50
     end
 
-    test "drawer earns per-guesser points" do
-      assert Scoring.drawer_points(2, 4) == 100
+    test "drawer earns mean of guesser points" do
+      assert Scoring.drawer_round_points([300, 200]) == 250
     end
 
-    test "drawer gets bonus when all guess" do
-      assert Scoring.drawer_points(3, 3) == 250
+    test "drawer mean reflects skribbl.io behavior" do
+      # Three guessers at mixed times → drawer gets floor(mean)
+      assert Scoring.drawer_round_points([400, 350, 300]) == 350
     end
 
-    test "drawer penalized on timeout with no guesses" do
-      assert Scoring.drawer_points(0, 3, time_up: true) == -25
+    test "drawer gets zero on timeout with no guesses" do
+      assert Scoring.drawer_round_points([]) == 0
     end
   end
 

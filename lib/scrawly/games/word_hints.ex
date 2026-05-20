@@ -1,57 +1,49 @@
 defmodule Scrawly.Games.WordHints do
   @moduledoc """
-  Generates progressive hints for word guessing.
-  Reveals letters based on elapsed time in the round.
+  Generates progressive hints for word guessing, modeled on skribbl.io.
 
-  ## Hint Stages
+  Reveals happen in **discrete batches** at fixed points in the round timeline.
+  All reveal positions are picked once per word (deterministic via `:erlang.phash2/1`)
+  so every client sees the same letters at the same time.
 
-  The hint system uses 5 progressive stages, each triggered at a percentage
-  of the round duration elapsed:
+  ## Default schedule
 
-  | Stage | Time Elapsed | Revealed                                        |
-  |-------|-------------|--------------------------------------------------|
-  | 0     | 0% - 25%    | All underscores (no hints)                       |
-  | 1     | 25% - 50%   | First letter                                     |
-  | 2     | 50% - 65%   | First + last letter                              |
-  | 3     | 65% - 80%   | First + last + ~25% of middle letters (vowels)   |
-  | 4     | 80% - 100%  | First + last + ~50% of middle letters             |
+  - Total letters to reveal: `floor(letter_count * 0.35)` (≈ 35% of letters)
+  - Batches: 2 (split as evenly as possible)
+  - Stage 0 (0%–37.5% elapsed): all underscores
+  - Stage 1 (37.5%–68.75% elapsed): batch 1 revealed
+  - Stage 2 (68.75%–100% elapsed): both batches revealed
 
-  ## Configurable Schedule
-
-  Pass a custom `hint_schedule` option to change when stages trigger:
-
-      WordHints.generate_hint("butterfly", 30, 60, hint_schedule: [0.25, 0.40, 0.55, 0.70])
-
-  ## Hint Metadata
-
-  Use `hint_info/3` to get structured metadata for UI display:
-
-      %{stage: 3, revealed_count: 5, total_letters: 9, remaining_count: 4, progress_pct: 56}
+  Spaces and hyphens are always rendered literally (never masked).
   """
 
-  @default_schedule [0.25, 0.50, 0.65, 0.80]
+  @default_schedule [0.375, 0.6875]
+  @default_reveal_fraction 0.35
+
+  # Characters that are always rendered literally (never masked).
+  @always_visible [" ", "-"]
 
   @doc """
   Generate a hint display for a word. Returns a string with revealed letters and underscores.
 
   ## Options
 
-  - `hint_schedule` - list of 4 floats representing the % of round elapsed when each
-    stage triggers. Default: `[0.25, 0.50, 0.65, 0.80]`.
+  - `:hint_schedule` - list of floats; elapsed percentages where each batch becomes
+    visible. Defaults to `[0.375, 0.6875]`.
+  - `:reveal_fraction` - share of maskable letters to reveal across all batches.
+    Defaults to `0.35`.
   """
   def generate_hint(word, time_left, round_duration \\ 60, opts \\ [])
-
   def generate_hint(nil, _, _, _), do: ""
   def generate_hint("", _, _, _), do: ""
 
-  def generate_hint(word, time_left, round_duration, opts)
-      when is_binary(word) and is_integer(time_left) do
+  def generate_hint(word, time_left, round_duration, opts) when is_binary(word) do
     revealed = revealed_indices(word, time_left, round_duration, opts)
     render_hint(word, revealed)
   end
 
   @doc """
-  Generate a fully hidden display (all underscores). Used for initial display.
+  Generate a fully hidden display (all underscores). Used for the initial display.
   """
   def hidden_display(word, round_duration \\ 60)
   def hidden_display(nil, _), do: ""
@@ -64,14 +56,13 @@ defmodule Scrawly.Games.WordHints do
   @doc """
   Returns structured metadata about the current hint state.
 
-  Useful for UI elements like hint progress indicators and remaining letter counters.
-
-  Returns:
-  - `stage` - current hint stage (0-4)
-  - `revealed_count` - number of letters currently revealed
-  - `total_letters` - total number of letters in the word (excluding spaces)
-  - `remaining_count` - letters still hidden
-  - `progress_pct` - percentage of letters revealed (0-100)
+  Map shape (stable for UI consumers):
+  - `:stage` — 0, 1, ... up to number of batches (was named "stage" historically;
+    now corresponds to the batch index that has been fully revealed)
+  - `:revealed_count` — letters currently revealed
+  - `:total_letters` — total maskable letters (spaces / hyphens excluded)
+  - `:remaining_count` — letters still hidden
+  - `:progress_pct` — percent of letters revealed (0..100)
   """
   def hint_info(word, time_left, round_duration \\ 60, opts \\ [])
 
@@ -97,30 +88,26 @@ defmodule Scrawly.Games.WordHints do
   end
 
   @doc """
-  Returns the current hint stage (0-4) based on time remaining.
+  Returns the current hint stage (0..N) where N is the number of batches in the schedule.
+
+  Stage 0 = nothing revealed. Stage N = all batches revealed.
   """
   def current_stage(time_left, round_duration, opts \\ []) do
     schedule = Keyword.get(opts, :hint_schedule, @default_schedule)
     elapsed_pct = 1.0 - time_left / max(round_duration, 1)
 
-    [t1, t2, t3, t4] = schedule
-
-    cond do
-      elapsed_pct < t1 -> 0
-      elapsed_pct < t2 -> 1
-      elapsed_pct < t3 -> 2
-      elapsed_pct < t4 -> 3
-      true -> 4
-    end
+    Enum.reduce(schedule, 0, fn threshold, acc ->
+      if elapsed_pct >= threshold, do: acc + 1, else: acc
+    end)
   end
 
   @doc """
-  Returns the number of letters in the word (excluding spaces).
+  Returns the number of letters in the word (excluding spaces and hyphens — always-visible chars).
   """
   def word_length_hint(word) when is_binary(word) do
     word
     |> String.graphemes()
-    |> Enum.count(&(&1 != " "))
+    |> Enum.count(&(&1 not in @always_visible))
   end
 
   def word_length_hint(_), do: 0
@@ -129,100 +116,91 @@ defmodule Scrawly.Games.WordHints do
 
   defp render_hint(word, revealed) do
     word
-    |> String.split(" ")
+    |> String.graphemes()
     |> Enum.with_index()
-    |> Enum.map(fn {sub_word, word_idx} ->
-      offset =
-        word |> String.split(" ") |> Enum.take(word_idx) |> Enum.join(" ") |> String.length()
-
-      offset = if word_idx > 0, do: offset + 1, else: offset
-
-      sub_word
-      |> String.graphemes()
-      |> Enum.with_index()
-      |> Enum.map(fn {char, i} ->
-        if MapSet.member?(revealed, offset + i), do: char, else: "_"
-      end)
-      |> Enum.join(" ")
+    |> Enum.map(fn {char, idx} ->
+      cond do
+        char in @always_visible -> char
+        MapSet.member?(revealed, idx) -> char
+        true -> "_"
+      end
     end)
-    |> Enum.join("  /  ")
+    |> Enum.join(" ")
   end
 
-  # Determine which character indices should be revealed based on time_left.
+  # Indices revealed so far based on time elapsed and the configured schedule.
   defp revealed_indices(word, time_left, round_duration, opts) do
-    graphemes = String.graphemes(word)
-    letter_indices = letter_indices(graphemes)
+    schedule = Keyword.get(opts, :hint_schedule, @default_schedule)
+    fraction = Keyword.get(opts, :reveal_fraction, @default_reveal_fraction)
     stage = current_stage(time_left, round_duration, opts)
 
-    case stage do
-      0 ->
-        MapSet.new()
+    if stage == 0 do
+      MapSet.new()
+    else
+      batches = build_batches(word, length(schedule), fraction)
 
-      1 ->
-        first_letter_set(letter_indices)
-
-      2 ->
-        MapSet.union(first_letter_set(letter_indices), last_letter_set(letter_indices))
-
-      3 ->
-        first_last =
-          MapSet.union(first_letter_set(letter_indices), last_letter_set(letter_indices))
-
-        middle = select_middle_letters(word, letter_indices, first_last, 0.25)
-        MapSet.union(first_last, middle)
-
-      4 ->
-        first_last =
-          MapSet.union(first_letter_set(letter_indices), last_letter_set(letter_indices))
-
-        middle = select_middle_letters(word, letter_indices, first_last, 0.50)
-        MapSet.union(first_last, middle)
+      batches
+      |> Enum.take(stage)
+      |> Enum.reduce(MapSet.new(), fn batch, acc -> MapSet.union(acc, batch) end)
     end
   end
 
-  # Returns indices of all non-space characters.
-  defp letter_indices(graphemes) do
-    graphemes
-    |> Enum.with_index()
-    |> Enum.filter(fn {char, _idx} -> char != " " end)
-    |> Enum.map(fn {_char, idx} -> idx end)
+  # Splits the chosen reveal indices into N batches (deterministic per word).
+  defp build_batches(word, batch_count, fraction) when batch_count > 0 do
+    target = reveal_target(word, fraction)
+    indices = pick_reveal_indices(word, target)
+
+    if indices == [] do
+      List.duplicate(MapSet.new(), batch_count)
+    else
+      indices
+      |> chunk_into(batch_count)
+      |> Enum.map(&MapSet.new/1)
+    end
   end
 
-  defp first_letter_set([]), do: MapSet.new()
-  defp first_letter_set(letter_indices), do: MapSet.new([List.first(letter_indices)])
+  defp reveal_target(word, fraction) do
+    total = word_length_hint(word)
+    target = floor(total * fraction)
 
-  defp last_letter_set([]), do: MapSet.new()
-  defp last_letter_set(letter_indices), do: MapSet.new([List.last(letter_indices)])
+    # Edge case: words with at least one maskable letter should reveal something
+    # by the final batch.
+    if total > 0 and target == 0, do: 1, else: target
+  end
 
-  # Select a fraction of middle letters, prioritizing vowels.
-  # Uses the word itself for deterministic ordering so hints stay consistent.
-  defp select_middle_letters(word, letter_indices, already_revealed, fraction) do
-    graphemes = String.graphemes(word)
+  # Deterministic shuffle of maskable indices using the word as seed, then take the
+  # first `target` indices as our reveal set.
+  defp pick_reveal_indices(word, target) when target > 0 do
+    maskable =
+      word
+      |> String.graphemes()
+      |> Enum.with_index()
+      |> Enum.reject(fn {char, _idx} -> char in @always_visible end)
+      |> Enum.map(fn {_char, idx} -> idx end)
 
-    middle_indices =
-      Enum.reject(letter_indices, fn idx -> MapSet.member?(already_revealed, idx) end)
+    seed = :erlang.phash2(word)
 
-    count = max(1, round(length(middle_indices) * fraction))
+    maskable
+    |> Enum.sort_by(fn idx -> :erlang.phash2({seed, idx}) end)
+    |> Enum.take(target)
+  end
 
-    # Prioritize vowels — they're more helpful for guessing
-    {vowel_indices, consonant_indices} =
-      Enum.split_with(middle_indices, fn idx ->
-        char = Enum.at(graphemes, idx)
-        char && String.downcase(char) in ~w(a e i o u)
+  defp pick_reveal_indices(_word, _target), do: []
+
+  # Splits a list into `n` chunks as evenly as possible. The earlier chunks absorb
+  # any remainder so batch 1 has >= batch 2.
+  defp chunk_into(list, n) when n > 0 do
+    len = length(list)
+    base_size = div(len, n)
+    extra = rem(len, n)
+
+    {chunks, _} =
+      Enum.reduce(0..(n - 1), {[], list}, fn i, {acc, remaining} ->
+        size = base_size + if(i < extra, do: 1, else: 0)
+        {chunk, rest} = Enum.split(remaining, size)
+        {[chunk | acc], rest}
       end)
 
-    # Deterministic shuffle using word hash
-    seed = :erlang.phash2(word)
-    sorted_vowels = deterministic_sort(vowel_indices, seed)
-    sorted_consonants = deterministic_sort(consonant_indices, seed + 1)
-
-    # Take vowels first, then consonants up to count
-    candidates = sorted_vowels ++ sorted_consonants
-    MapSet.new(Enum.take(candidates, count))
-  end
-
-  # Produces a deterministic ordering of indices based on a seed.
-  defp deterministic_sort(indices, seed) do
-    Enum.sort_by(indices, fn idx -> :erlang.phash2({seed, idx}) end)
+    Enum.reverse(chunks)
   end
 end

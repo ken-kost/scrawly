@@ -9,7 +9,8 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   import Hologram.Component, only: [put_action: 2, put_action: 3]
 
   alias Scrawly.Games
-  alias Scrawly.Games.{WordHints, Scoring, RoomServer}
+  alias Scrawly.Games.{WordHints, RoomServer}
+  alias Scrawly.Games.RoomServer.GameFlow
 
   def poll_room_state(%{room_id: room_id, user_id: user_id}, server) do
     poll_and_enrich(server, room_id, user_id)
@@ -17,7 +18,13 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
   def join_room(%{room_id: room_id, user_id: user_id}, server) do
     with {:ok, user} <- Ash.get(Scrawly.Accounts.User, user_id) do
-      player = %{id: user.id, username: user.username, score: user.score || 0}
+      player = %{
+        id: user.id,
+        username: user.username,
+        score: user.score || 0,
+        avatar_id: user.avatar_id || "a-mushroom",
+        avatar_color: user.avatar_color || "3"
+      }
 
       case RoomServer.join(room_id, player) do
         {:ok, _state} ->
@@ -67,32 +74,23 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     {word_count, _word_source, ai_words, round_duration, total_rounds, ai_status} =
       fetch_room_game_settings(room_id, players)
 
-    {first_word, remaining_ai_words} =
-      case ai_words do
-        [w | rest] -> {w, rest}
-        _ -> {nil, []}
-      end
+    # Build 3 word choices for the first drawer (AI pool first, fall back to local).
+    {choices, remaining_ai, _used_from_ai} =
+      GameFlow.pick_word_choices(ai_words, [], word_count, 3)
 
-    if remaining_ai_words != [] do
-      RoomServer.set_ai_words(room_id, remaining_ai_words)
+    if remaining_ai != [] do
+      RoomServer.set_ai_words(room_id, remaining_ai)
     end
 
-    start_round_opts =
-      %{word_count: word_count}
-      |> then(fn opts ->
-        if first_word, do: Map.put(opts, :override_word, first_word), else: opts
-      end)
-
     with {:ok, _room} <- Games.start_game(room_id),
-         {:ok, game} <- Games.create_game(room_id, total_rounds),
-         {:ok, updated_game} <- Games.start_round(game.id, first_drawer_id, start_round_opts),
-         :ok <- Games.start_round_timer(game.id, round_duration) do
+         {:ok, game} <- Games.create_game(room_id, total_rounds) do
       RoomServer.start_game(room_id, %{
         game_id: game.id,
-        round: updated_game.current_round,
+        round: 1,
         total_rounds: total_rounds,
         drawer_id: first_drawer_id,
-        current_word: updated_game.current_word
+        word_choices: choices,
+        round_duration: round_duration
       })
 
       if ai_status do
@@ -109,8 +107,24 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
 
     case RoomServer.get_state(room_id) do
-      {:ok, state} -> put_action(server, :room_refreshed, state)
+      {:ok, state} -> put_action(server, :room_refreshed, enrich_state(state, get_user_id(server)))
       _ -> server
+    end
+  end
+
+  def choose_word(%{room_id: room_id, player_id: player_id, word: word}, server) do
+    case RoomServer.choose_word(room_id, player_id, word) do
+      {:ok, _state} ->
+        case RoomServer.get_state(room_id) do
+          {:ok, state} ->
+            put_action(server, :room_refreshed, enrich_state(state, player_id))
+
+          _ ->
+            server
+        end
+
+      {:error, _} ->
+        server
     end
   end
 
@@ -150,37 +164,33 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   end
 
   def record_correct_guess(
-        %{room_id: room_id, player_id: player_id, player_name: player_name} = params,
+        %{room_id: room_id, player_id: player_id, player_name: player_name} = _params,
         server
       ) do
-    # Calculate points server-side using actual RoomServer state (ignore client-sent points)
-    points =
-      case RoomServer.get_state(room_id) do
-        {:ok, rs} ->
-          word = rs.current_word || ""
-          Scoring.guesser_points_with_hints(rs.time_left, rs.round_duration || 60, word)
+    # RoomServer.record_guess is the source of truth — it computes points using
+    # the authoritative scoring formula and updates the in-game player score.
+    case RoomServer.record_guess(room_id, player_id) do
+      {:ok, _state, points} when points > 0 ->
+        # Persist score to user profile (cross-game total)
+        with {:ok, user} <- Ash.get(Scrawly.Accounts.User, player_id) do
+          new_score = (user.score || 0) + points
+          user |> Ash.Changeset.for_update(:update_score, %{score: new_score}) |> Ash.update()
+        end
 
-        _ ->
-          # Fallback to client-sent points if RoomServer unavailable
-          Map.get(params, :points, 50)
-      end
+        sys_msg = %{
+          id: :rand.uniform(100_000),
+          player_name: "System",
+          message: "#{player_name} guessed the word! (+#{points} points)",
+          timestamp: DateTime.utc_now(),
+          type: :correct_guess
+        }
 
-    with {:ok, user} <- Ash.get(Scrawly.Accounts.User, player_id) do
-      new_score = (user.score || 0) + points
-      user |> Ash.Changeset.for_update(:update_score, %{score: new_score}) |> Ash.update()
+        RoomServer.send_chat_message(room_id, sys_msg)
+
+      _ ->
+        :ok
     end
 
-    sys_msg = %{
-      id: :rand.uniform(100_000),
-      player_name: "System",
-      message: "#{player_name} guessed the word! (+#{points} points)",
-      timestamp: DateTime.utc_now(),
-      type: :correct_guess
-    }
-
-    RoomServer.update_player_score(room_id, player_id, points)
-    RoomServer.send_chat_message(room_id, sys_msg)
-    RoomServer.record_guess(room_id, player_id)
     server
   end
 
@@ -217,52 +227,87 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   defp poll_and_enrich(server, room_id, user_id) do
     case RoomServer.get_state(room_id) do
       {:ok, state} ->
-        is_drawer = state.current_drawer_id == user_id
-        game_active = state.game_id != nil
-        word = state.current_word || ""
-
-        word_display =
-          cond do
-            not game_active ->
-              ""
-
-            is_drawer ->
-              word
-
-            state.time_left > 0 ->
-              WordHints.generate_hint(word, state.time_left, state.round_duration || 60)
-
-            true ->
-              WordHints.hidden_display(word, state.round_duration || 60)
-          end
-
-        drawer_name =
-          case Enum.find(state.players, &(&1.id == state.current_drawer_id)) do
-            nil -> "Unknown"
-            p -> p.username
-          end
-
-        hint_info =
-          if game_active and not is_drawer do
-            WordHints.hint_info(word, state.time_left, state.round_duration || 60)
-          else
-            %{stage: 0, revealed_count: 0, total_letters: 0, remaining_count: 0, progress_pct: 0}
-          end
-
-        enriched =
-          state
-          |> Map.merge(%{
-            is_drawer: is_drawer,
-            current_word_display: word_display,
-            drawer_name: drawer_name,
-            hint_info: hint_info
-          })
-          |> Map.put(:drawing_strokes, [])
-
-        put_action(server, :room_refreshed, enriched)
+        put_action(server, :room_refreshed, enrich_state(state, user_id))
 
       {:error, :not_found} ->
         put_action(server, :room_dissolved)
+    end
+  end
+
+  # Enriches public RoomServer state with per-user fields:
+  #   - is_drawer
+  #   - current_word_display (masked for non-drawers)
+  #   - drawer_name
+  #   - hint_info
+  #   - word_choices (only for the drawer; empty list for others)
+  #   - choice_time_left (seconds remaining in choice phase)
+  defp enrich_state(state, user_id) do
+    is_drawer = state.current_drawer_id == user_id
+    game_active = state.game_id != nil
+    word = state.current_word || ""
+    phase = Map.get(state, :phase, :idle)
+
+    word_display =
+      cond do
+        not game_active ->
+          ""
+
+        phase == :choosing ->
+          ""
+
+        is_drawer ->
+          word
+
+        state.time_left > 0 ->
+          WordHints.generate_hint(word, state.time_left, state.round_duration || 60)
+
+        true ->
+          WordHints.hidden_display(word, state.round_duration || 60)
+      end
+
+    drawer_name =
+      case Enum.find(state.players, &(&1.id == state.current_drawer_id)) do
+        nil -> "Unknown"
+        p -> p.username
+      end
+
+    hint_info =
+      if game_active and not is_drawer and phase == :drawing do
+        WordHints.hint_info(word, state.time_left, state.round_duration || 60)
+      else
+        %{stage: 0, revealed_count: 0, total_letters: 0, remaining_count: 0, progress_pct: 0}
+      end
+
+    # Only the drawer sees the actual word choices; everyone else gets empty.
+    word_choices = if is_drawer, do: Map.get(state, :word_choices, []), else: []
+
+    choice_time_left =
+      case Map.get(state, :choice_deadline) do
+        nil ->
+          0
+
+        deadline when is_integer(deadline) ->
+          now = System.monotonic_time(:millisecond)
+          max(0, div(deadline - now + 999, 1000))
+      end
+
+    state
+    |> Map.merge(%{
+      is_drawer: is_drawer,
+      current_word_display: word_display,
+      drawer_name: drawer_name,
+      hint_info: hint_info,
+      word_choices: word_choices,
+      choice_time_left: choice_time_left,
+      phase: phase
+    })
+    |> Map.put(:drawing_strokes, [])
+  end
+
+  defp get_user_id(server) do
+    case server do
+      %{session: %{user_id: id}} -> id
+      _ -> nil
     end
   end
 
@@ -276,13 +321,15 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
         rm = rs.round_multiplier || 1
         tone = rs.ai_tone || :fun
         tr = length(players) * rm
+        # 3 choices per round; cap at 60 to limit prompt size.
+        ai_num_words = min(max(tr * 3, 9), 60)
 
         {generated, status} =
           if ws == :ai and p != nil and p != "" do
-            case Games.generate_ai_words(p, wc, %{num_words: tr, tone: to_string(tone)}) do
+            case Games.generate_ai_words(p, wc, %{num_words: ai_num_words, tone: to_string(tone)}) do
               {:ok, words} when is_list(words) ->
                 unique_words = Enum.uniq(words)
-                {unique_words, "AI generated #{length(unique_words)}/#{tr} words"}
+                {unique_words, "AI generated #{length(unique_words)}/#{ai_num_words} words"}
 
               {:error, reason} ->
                 {[], "AI failed: #{inspect(reason)} — falling back to local words"}

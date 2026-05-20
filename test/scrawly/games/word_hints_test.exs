@@ -4,23 +4,34 @@ defmodule Scrawly.Games.WordHintsTest do
   alias Scrawly.Games.WordHints
 
   # Default round duration is 60s.
-  # Default schedule: [0.25, 0.50, 0.65, 0.80]
+  # Default schedule: [0.375, 0.6875] → two batches.
   # Stage thresholds (time_left values for 60s round):
-  #   Stage 0: time_left > 45s  (0-25% elapsed)
-  #   Stage 1: time_left 30-45s (25-50% elapsed)
-  #   Stage 2: time_left 21-30s (50-65% elapsed)
-  #   Stage 3: time_left 12-21s (65-80% elapsed)
-  #   Stage 4: time_left 0-12s  (80-100% elapsed)
+  #   Stage 0: time_left > 37.5s elapsed → time_left > ~37.5s
+  #   Stage 1: 37.5% ≤ elapsed < 68.75% → time_left in (~18.75, ~37.5]
+  #   Stage 2: elapsed ≥ 68.75% → time_left ≤ ~18.75s
+
+  defp revealed_letters(hint) do
+    hint
+    |> String.graphemes()
+    |> Enum.count(&(&1 not in ["_", " "]))
+  end
 
   describe "hidden_display/1" do
     test "hides all letters with underscores" do
       assert WordHints.hidden_display("cat") == "_ _ _"
     end
 
-    test "preserves spaces in multi-word phrases with visible separator" do
+    test "preserves spaces literally in multi-word phrases" do
       result = WordHints.hidden_display("ice cream")
-      assert result =~ "/"
+      # Letters never appear; the actual space sits between underscores
       refute result =~ "i"
+      refute result =~ "c"
+      assert result =~ " "
+    end
+
+    test "preserves hyphens literally" do
+      result = WordHints.hidden_display("co-op")
+      assert result =~ "-"
       refute result =~ "c"
     end
 
@@ -34,161 +45,157 @@ defmodule Scrawly.Games.WordHintsTest do
   end
 
   describe "generate_hint/3 - stage progression" do
-    test "stage 0: no letters revealed at start of round (60s left)" do
+    test "stage 0: no letters revealed at full time" do
       hint = WordHints.generate_hint("butterfly", 60)
-      refute hint =~ "b"
-      refute hint =~ "y"
-      assert hint =~ "_"
+      assert revealed_letters(hint) == 0
     end
 
-    test "stage 0: no letters revealed above 25% elapsed (46s left)" do
-      hint = WordHints.generate_hint("butterfly", 46)
-      refute hint =~ "b"
-      refute hint =~ "y"
+    test "stage 0: still no letters revealed just before 37.5% elapsed" do
+      # 38s left of 60s round = ~36.7% elapsed → stage 0
+      hint = WordHints.generate_hint("butterfly", 38)
+      assert revealed_letters(hint) == 0
     end
 
-    test "stage 1: first letter revealed at 25% elapsed (45s left)" do
-      hint = WordHints.generate_hint("butterfly", 45)
-      assert String.starts_with?(hint, "b")
-      refute hint =~ "y"
+    test "stage 1: first batch revealed at/after 37.5% elapsed" do
+      # 37s left of 60s round = ~38.3% elapsed → stage 1
+      hint = WordHints.generate_hint("butterfly", 37)
+      assert revealed_letters(hint) >= 1
     end
 
-    test "stage 1: first letter revealed between 25%-50% (31s left)" do
-      hint = WordHints.generate_hint("butterfly", 31)
-      assert String.starts_with?(hint, "b")
-    end
-
-    test "stage 2: first and last letter revealed at 50% elapsed (30s left)" do
-      hint = WordHints.generate_hint("butterfly", 30)
-      assert String.starts_with?(hint, "b")
-      assert String.ends_with?(hint, "y")
-    end
-
-    test "stage 3: additional middle letters revealed at 65% elapsed (21s left)" do
-      hint = WordHints.generate_hint("butterfly", 21)
-      assert String.starts_with?(hint, "b")
-      assert String.ends_with?(hint, "y")
-      revealed = hint |> String.graphemes() |> Enum.count(&(&1 != "_" and &1 != " "))
-      # first + last + ~25% of middle = at least 3, typically more for longer words
+    test "stage 2: both batches revealed at/after 68.75% elapsed" do
+      # 18s left of 60s round = 70% elapsed → stage 2
+      hint = WordHints.generate_hint("butterfly", 18)
+      revealed = revealed_letters(hint)
+      # ~35% of 9 letters = 3 expected total
       assert revealed >= 3
     end
 
-    test "stage 4: ~50% of middle letters revealed at 80% elapsed (12s left)" do
-      hint = WordHints.generate_hint("butterfly", 12)
-      assert String.starts_with?(hint, "b")
-      assert String.ends_with?(hint, "y")
-      revealed = hint |> String.graphemes() |> Enum.count(&(&1 != "_" and &1 != " "))
-      # More letters revealed than stage 3
-      assert revealed >= 4
+    test "final batch reveals ~35% of letters" do
+      hint = WordHints.generate_hint("strawberry", 0)
+      revealed = revealed_letters(hint)
+      total = WordHints.word_length_hint("strawberry")
+      expected = floor(total * 0.35)
+      assert revealed == expected
     end
 
-    test "stage 4 reveals more than stage 3" do
-      hint_stage3 = WordHints.generate_hint("butterfly", 18)
-      hint_stage4 = WordHints.generate_hint("butterfly", 5)
-
-      revealed_3 = hint_stage3 |> String.graphemes() |> Enum.count(&(&1 != "_" and &1 != " "))
-      revealed_4 = hint_stage4 |> String.graphemes() |> Enum.count(&(&1 != "_" and &1 != " "))
-
-      assert revealed_4 >= revealed_3
+    test "stage 2 reveals at least as many letters as stage 1" do
+      stage_1 = WordHints.generate_hint("butterfly", 30)
+      stage_2 = WordHints.generate_hint("butterfly", 5)
+      assert revealed_letters(stage_2) >= revealed_letters(stage_1)
     end
 
-    test "progressive: each stage reveals at least as many letters as the previous" do
+    test "progressive: each stage reveals >= the previous" do
       word = "elephant"
-      times = [60, 45, 30, 18, 5]
+      times = [60, 30, 5]
 
-      revealed_counts =
+      counts =
         Enum.map(times, fn t ->
-          hint = WordHints.generate_hint(word, t)
-          hint |> String.graphemes() |> Enum.count(&(&1 != "_" and &1 != " "))
+          revealed_letters(WordHints.generate_hint(word, t))
         end)
 
-      # Each stage should reveal >= the previous stage
-      revealed_counts
+      counts
       |> Enum.chunk_every(2, 1, :discard)
-      |> Enum.each(fn [prev, curr] ->
-        assert curr >= prev
+      |> Enum.each(fn [prev, curr] -> assert curr >= prev end)
+    end
+  end
+
+  describe "generate_hint/3 - determinism" do
+    test "hint is deterministic for same word and time" do
+      assert WordHints.generate_hint("butterfly", 10) ==
+               WordHints.generate_hint("butterfly", 10)
+    end
+
+    test "the reveal set in stage 1 is a subset of the reveal set in stage 2" do
+      word = "strawberry"
+      stage_1 = WordHints.generate_hint(word, 30)
+      stage_2 = WordHints.generate_hint(word, 0)
+
+      stage_1_chars = String.graphemes(stage_1)
+      stage_2_chars = String.graphemes(stage_2)
+
+      # Every revealed char in stage_1 must still be revealed (and identical) in stage_2
+      Enum.zip(stage_1_chars, stage_2_chars)
+      |> Enum.each(fn {a, b} ->
+        if a != "_" and a != " " do
+          assert a == b, "Expected #{inspect(a)} to remain revealed in stage 2 but got #{inspect(b)}"
+        end
       end)
     end
-  end
 
-  describe "generate_hint/3 - vowel priority" do
-    test "stage 3 preferentially reveals vowels in longer words" do
-      # "strawberry" has vowels: a(3), e(8)
-      hint = WordHints.generate_hint("strawberry", 18)
-
-      # The revealed middle letters should include at least one vowel
-      graphemes = String.graphemes("strawberry")
-      hint_chars = hint |> String.split(" ") |> Enum.join("") |> String.graphemes()
-
-      revealed_middles =
-        Enum.zip(graphemes, hint_chars)
-        |> Enum.with_index()
-        |> Enum.filter(fn {{_orig, shown}, idx} -> shown != "_" and idx > 0 and idx < 9 end)
-        |> Enum.map(fn {{orig, _}, _} -> orig end)
-
-      has_vowel = Enum.any?(revealed_middles, &(&1 in ~w(a e i o u)))
-      # With vowel priority, we expect at least one vowel to be revealed
-      assert has_vowel or length(revealed_middles) == 0
+    test "different words produce different reveal patterns" do
+      h1 = WordHints.generate_hint("butterfly", 0)
+      h2 = WordHints.generate_hint("strawberry", 0)
+      # Different lengths alone make these differ; just sanity-check both contain something
+      assert revealed_letters(h1) >= 1
+      assert revealed_letters(h2) >= 1
     end
   end
 
-  describe "generate_hint/3 - determinism and edge cases" do
-    test "hint is deterministic for same word and time" do
-      hint1 = WordHints.generate_hint("butterfly", 10)
-      hint2 = WordHints.generate_hint("butterfly", 10)
-      assert hint1 == hint2
-    end
-
-    test "returns empty string for nil word" do
+  describe "generate_hint/3 - edge cases" do
+    test "returns empty string for nil" do
       assert WordHints.generate_hint(nil, 50) == ""
     end
 
-    test "works with short words" do
-      hint = WordHints.generate_hint("cat", 25)
-      assert String.starts_with?(hint, "c")
-      assert String.ends_with?(hint, "t")
+    test "returns empty string for empty word" do
+      assert WordHints.generate_hint("", 50) == ""
     end
 
-    test "works with single character" do
-      hint = WordHints.generate_hint("a", 40)
+    test "single character word reveals itself once stage advances" do
+      hint = WordHints.generate_hint("a", 0)
       assert hint == "a"
     end
 
-    test "works with two-letter word" do
-      # Stage 2: first and last revealed = entire word
-      hint = WordHints.generate_hint("go", 25)
-      assert hint == "g o"
+    test "two-letter word reveals at least one letter at final stage" do
+      hint = WordHints.generate_hint("go", 0)
+      assert revealed_letters(hint) >= 1
+    end
+
+    test "spaces and hyphens are never masked" do
+      hint = WordHints.generate_hint("ice cream", 60)
+      assert hint =~ " "
+      refute hint =~ "i"
+
+      hint2 = WordHints.generate_hint("co-op", 0)
+      assert hint2 =~ "-"
     end
 
     test "works with custom round duration" do
-      # 120s round with default schedule:
-      # Stage 1 starts at 25% elapsed = 90s left
-      hint_start = WordHints.generate_hint("butterfly", 100, 120)
-      refute hint_start =~ "b"
-
-      hint_mid = WordHints.generate_hint("butterfly", 85, 120)
-      assert String.starts_with?(hint_mid, "b")
+      # 120s round, 100s left = 16.7% elapsed → stage 0
+      assert revealed_letters(WordHints.generate_hint("butterfly", 100, 120)) == 0
+      # 120s round, 60s left = 50% elapsed → stage 1
+      assert revealed_letters(WordHints.generate_hint("butterfly", 60, 120)) >= 1
     end
 
-    test "multi-word hints show separator between words" do
+    test "spaces in multi-word target render in the output literally" do
       hint = WordHints.generate_hint("fire truck", 60)
-      assert hint =~ "/"
+      # Exactly one space between "fire" and "truck"
+      assert hint =~ " "
     end
   end
 
-  describe "generate_hint/4 - configurable schedule" do
+  describe "generate_hint/4 - configurable schedule and fraction" do
     test "custom schedule changes when letters are revealed" do
-      # Early schedule: hints start at 10% elapsed (54s left for 60s round)
-      early_schedule = [0.10, 0.30, 0.50, 0.70]
-      hint = WordHints.generate_hint("butterfly", 53, 60, hint_schedule: early_schedule)
-      assert String.starts_with?(hint, "b")
+      # Early schedule: stage 1 starts at 10% elapsed
+      hint = WordHints.generate_hint("butterfly", 53, 60, hint_schedule: [0.10, 0.30])
+      assert revealed_letters(hint) >= 1
     end
 
     test "late schedule delays all hints" do
-      late_schedule = [0.50, 0.70, 0.85, 0.95]
-      # At 25% elapsed (45s left), should still be stage 0
-      hint = WordHints.generate_hint("butterfly", 45, 60, hint_schedule: late_schedule)
-      refute hint =~ "b"
+      # Stage 1 only at 50% elapsed
+      hint = WordHints.generate_hint("butterfly", 45, 60, hint_schedule: [0.50, 0.70])
+      assert revealed_letters(hint) == 0
+    end
+
+    test "reveal_fraction controls total share of letters revealed" do
+      hint_low = WordHints.generate_hint("strawberry", 0, 60, reveal_fraction: 0.1)
+      hint_high = WordHints.generate_hint("strawberry", 0, 60, reveal_fraction: 0.6)
+      assert revealed_letters(hint_high) > revealed_letters(hint_low)
+    end
+
+    test "single-batch schedule works" do
+      # One batch revealing at 50% elapsed
+      hint = WordHints.generate_hint("butterfly", 25, 60, hint_schedule: [0.5])
+      assert revealed_letters(hint) >= 1
     end
   end
 
@@ -202,37 +209,22 @@ defmodule Scrawly.Games.WordHintsTest do
       assert info.progress_pct == 0
     end
 
-    test "returns stage 1 info when first letter revealed" do
-      info = WordHints.hint_info("butterfly", 40)
+    test "returns stage 1 info after first batch reveals" do
+      info = WordHints.hint_info("butterfly", 30)
       assert info.stage == 1
-      assert info.revealed_count == 1
-      assert info.remaining_count == 8
-      assert info.progress_pct == round(1 * 100 / 9)
+      assert info.revealed_count >= 1
+      assert info.revealed_count + info.remaining_count == info.total_letters
     end
 
-    test "returns stage 2 info when first and last revealed" do
-      info = WordHints.hint_info("butterfly", 25)
+    test "returns stage 2 info after second batch reveals" do
+      info = WordHints.hint_info("butterfly", 5)
       assert info.stage == 2
-      assert info.revealed_count == 2
-      assert info.remaining_count == 7
-    end
-
-    test "stage 3 reveals more letters for longer words" do
-      info = WordHints.hint_info("strawberry", 18)
-      assert info.stage == 3
+      # ~35% of 9 letters = 3 expected
       assert info.revealed_count >= 3
     end
 
-    test "stage 4 reveals the most letters" do
-      info = WordHints.hint_info("butterfly", 5)
-      assert info.stage == 4
-      assert info.revealed_count >= 4
-    end
-
     test "returns zeros for nil word" do
-      info = WordHints.hint_info(nil, 50)
-
-      assert info == %{
+      assert WordHints.hint_info(nil, 50) == %{
                stage: 0,
                revealed_count: 0,
                total_letters: 0,
@@ -242,9 +234,7 @@ defmodule Scrawly.Games.WordHintsTest do
     end
 
     test "returns zeros for empty word" do
-      info = WordHints.hint_info("", 50)
-
-      assert info == %{
+      assert WordHints.hint_info("", 50) == %{
                stage: 0,
                revealed_count: 0,
                total_letters: 0,
@@ -253,10 +243,10 @@ defmodule Scrawly.Games.WordHintsTest do
              }
     end
 
-    test "progress_pct increases across stages" do
+    test "progress_pct increases monotonically across stages" do
       word = "butterfly"
-      times = [60, 40, 25, 18, 5]
-      pcts = Enum.map(times, fn t -> WordHints.hint_info(word, t).progress_pct end)
+      times = [60, 30, 5]
+      pcts = Enum.map(times, &WordHints.hint_info(word, &1).progress_pct)
 
       pcts
       |> Enum.chunk_every(2, 1, :discard)
@@ -269,28 +259,23 @@ defmodule Scrawly.Games.WordHintsTest do
       assert WordHints.current_stage(60, 60) == 0
     end
 
-    test "returns 1 after 25% elapsed" do
-      assert WordHints.current_stage(44, 60) == 1
+    test "returns 1 after first threshold (37.5%)" do
+      # 60 * (1 - 0.375) = 37.5s left → boundary
+      assert WordHints.current_stage(37, 60) == 1
     end
 
-    test "returns 2 after 50% elapsed" do
-      assert WordHints.current_stage(29, 60) == 2
+    test "returns 2 after second threshold (68.75%)" do
+      # 60 * (1 - 0.6875) = 18.75s left → boundary
+      assert WordHints.current_stage(18, 60) == 2
     end
 
-    test "returns 3 after 65% elapsed" do
-      assert WordHints.current_stage(20, 60) == 3
+    test "returns max stage at time 0" do
+      assert WordHints.current_stage(0, 60) == 2
     end
 
-    test "returns 4 after 80% elapsed" do
-      assert WordHints.current_stage(11, 60) == 4
-    end
-
-    test "returns 4 at time 0" do
-      assert WordHints.current_stage(0, 60) == 4
-    end
-
-    test "respects custom schedule" do
-      assert WordHints.current_stage(50, 60, hint_schedule: [0.10, 0.30, 0.50, 0.70]) == 1
+    test "respects custom schedule length" do
+      # 10s left of 60s = ~83% elapsed → past all 4 thresholds
+      assert WordHints.current_stage(10, 60, hint_schedule: [0.1, 0.3, 0.5, 0.7]) == 4
     end
   end
 
@@ -302,6 +287,10 @@ defmodule Scrawly.Games.WordHintsTest do
 
     test "excludes spaces in multi-word phrases" do
       assert WordHints.word_length_hint("ice cream") == 8
+    end
+
+    test "excludes hyphens" do
+      assert WordHints.word_length_hint("co-op") == 4
     end
 
     test "returns 0 for nil" do

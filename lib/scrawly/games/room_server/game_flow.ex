@@ -2,69 +2,76 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   @moduledoc """
   Pure game-flow helpers for RoomServer.
 
-  All functions take a RoomServer state struct and return a (possibly modified)
-  state struct. Side effects (PubSub, process messages) are kept to the minimum
-  needed — callers remain responsible for `bump_version/notify_waiters`.
+  Functions take a RoomServer state struct and return a (possibly modified) state
+  struct. Side effects (PubSub, process messages, AI calls) are kept minimal —
+  callers remain responsible for `bump_version` / `notify_waiters`.
+
+  The round lifecycle has two phases:
+    1. `:choosing` — drawer is shown 3 word options (15s timer)
+    2. `:drawing`  — round timer runs; guessers submit guesses
+
+  `start_word_choice/4` advances the Game record + drawer rotation and enters
+  `:choosing`. `commit_word_choice/2` is invoked when the drawer picks or the
+  choice timer expires; it calls `Games.start_round` + `Games.start_round_timer`.
   """
 
   alias Scrawly.Games
 
   # Trigger async AI word refill when the pool drops at or below this count.
-  @ai_refill_threshold 2
+  # Each round consumes 3 words (one chosen, two discarded), so this is generous
+  # enough to keep the pool full without paying for unused generation.
+  @ai_refill_threshold 6
 
   @doc """
-  Advances to the next round. Selects the next word and drawer, starts the timer,
-  and returns updated state. Returns unchanged state on any error.
+  Advance to the next round and enter the word-choice phase.
 
-  Tracks used words to prefer fresh words each round (DB source).
-  Triggers async AI word refill (via `notify_fn`) when the AI pool runs low.
+  Picks 3 candidate words (AI pool first, falls back to local), sets `phase:
+  :choosing`, populates `word_choices`, schedules a 15s timeout via the
+  supplied `schedule_timeout_fn.(game_id, round)`. Does NOT start the round
+  timer — that happens in `commit_word_choice/2`.
+
+  Returns unchanged state on any error.
   """
-  def auto_next_round(state, bump_fn, notify_fn) do
+  def start_word_choice(state, bump_fn, notify_fn, schedule_timeout_fn) do
     player_queue = Enum.map(state.players, & &1.id)
-
-    {override_word, remaining_ai_words} =
-      case state.ai_words do
-        [next | rest] -> {next, rest}
-        _ -> {nil, []}
-      end
-
-    start_round_opts =
-      %{word_count: state.word_count, used_words: state.used_words}
-      |> then(fn opts ->
-        if override_word, do: Map.put(opts, :override_word, override_word), else: opts
-      end)
 
     with {:ok, _} <- Games.complete_round(state.game_id),
          {:ok, _} <- Games.next_round(state.game_id),
-         {:ok, game_with_drawer} <- Games.select_next_drawer(state.game_id, player_queue),
-         {:ok, final_game} <-
-           Games.start_round(state.game_id, game_with_drawer.current_drawer_id, start_round_opts),
-         :ok <- Games.start_round_timer(state.game_id, state.round_duration) do
-      drawer_name = get_player_name(state.players, final_game.current_drawer_id)
-      new_word = final_game.current_word
-      new_used = if new_word, do: Enum.uniq([new_word | state.used_words]), else: state.used_words
+         {:ok, game_with_drawer} <- Games.select_next_drawer(state.game_id, player_queue) do
+      {choices, remaining_ai, used_from_ai} =
+        pick_word_choices(state.ai_words, state.used_words, state.word_count, 3)
+
+      drawer_name = get_player_name(state.players, game_with_drawer.current_drawer_id)
 
       new_state =
         %{
           state
-          | current_round: final_game.current_round,
-            current_drawer_id: final_game.current_drawer_id,
-            current_word: new_word,
-            ai_words: remaining_ai_words,
-            used_words: new_used,
+          | current_round: game_with_drawer.current_round,
+            current_drawer_id: game_with_drawer.current_drawer_id,
+            current_word: nil,
+            ai_words: remaining_ai,
             time_left: state.round_duration,
-            round_active: true,
+            round_active: false,
             correct_guessers: [],
             drawing_strokes: [],
+            round_guesser_points: [],
             round_start_scores:
-              Enum.reduce(state.players, %{}, fn p, acc -> Map.put(acc, p.id, p.score || 0) end)
+              Enum.reduce(state.players, %{}, fn p, acc ->
+                Map.put(acc, p.id, p.score || 0)
+              end)
         }
-        |> add_sys_msg("Round #{final_game.current_round} \u2014 #{drawer_name} is drawing")
+        |> enter_word_choice(choices, fn game_id, round ->
+          schedule_timeout_fn.(game_id, round)
+        end)
+        |> add_sys_msg(
+          "Round #{game_with_drawer.current_round} — #{drawer_name} is choosing a word …"
+        )
         |> bump_fn.()
         |> notify_fn.()
 
       # Trigger async AI word refill if pool is running low
-      if state.word_source == :ai and length(remaining_ai_words) <= @ai_refill_threshold do
+      if state.word_source == :ai and used_from_ai > 0 and
+           length(remaining_ai) <= @ai_refill_threshold do
         send(
           self(),
           {:refill_ai_words, state.room_id, state.word_count, state.total_rounds, state.ai_tone}
@@ -74,6 +81,56 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
       new_state
     else
       _ -> state
+    end
+  end
+
+  @doc """
+  Set `phase: :choosing`, populate `word_choices`, set `choice_deadline`, and
+  schedule the 15s timeout. Pure-ish: only side effect is the scheduled message.
+  """
+  def enter_word_choice(state, choices, schedule_timeout_fn) when is_list(choices) do
+    deadline = System.monotonic_time(:millisecond) + 15_000
+    schedule_timeout_fn.(state.game_id, state.current_round)
+
+    %{state | phase: :choosing, word_choices: choices, choice_deadline: deadline}
+  end
+
+  @doc """
+  Commit the chosen word: persist it to the Game, start the round timer, and
+  transition to `:drawing`. Returns `{:ok, state}` or `{:error, reason}`.
+  """
+  def commit_word_choice(state, word) when is_binary(word) do
+    start_round_opts = %{
+      word_count: state.word_count,
+      used_words: state.used_words,
+      override_word: word
+    }
+
+    with {:ok, _updated_game} <-
+           Games.start_round(state.game_id, state.current_drawer_id, start_round_opts),
+         :ok <- Games.start_round_timer(state.game_id, state.round_duration) do
+      drawer_name = get_player_name(state.players, state.current_drawer_id)
+      new_used = Enum.uniq([word | state.used_words])
+
+      new_state =
+        %{
+          state
+          | current_word: word,
+            word_choices: [],
+            choice_deadline: nil,
+            phase: :drawing,
+            round_active: true,
+            time_left: state.round_duration,
+            used_words: new_used,
+            correct_guessers: [],
+            drawing_strokes: [],
+            round_guesser_points: []
+        }
+        |> add_sys_msg("Round #{state.current_round} — #{drawer_name} is drawing")
+
+      {:ok, new_state}
+    else
+      err -> {:error, err}
     end
   end
 
@@ -104,6 +161,10 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
         current_word: nil,
         time_left: 0,
         round_active: false,
+        phase: :idle,
+        word_choices: [],
+        choice_deadline: nil,
+        round_guesser_points: [],
         correct_guessers: [],
         drawing_strokes: [],
         round_results: [],
@@ -185,5 +246,51 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
     }
 
     %{state | chat_messages: [msg | state.chat_messages] |> Enum.take(50)}
+  end
+
+  @doc """
+  Pick `count` candidate words for the drawer, preferring the AI pool, falling
+  back to local DB if the pool is exhausted.
+
+  Returns `{choices, remaining_ai_pool, used_from_ai_count}`.
+  """
+  def pick_word_choices(ai_pool, used_words, word_count, count) do
+    {from_ai, remaining_ai} = pop_n(ai_pool, count)
+    needed = count - length(from_ai)
+
+    local =
+      if needed > 0 do
+        pick_local_words(used_words ++ from_ai, word_count, needed)
+      else
+        []
+      end
+
+    choices = from_ai ++ local
+    {Enum.uniq(choices), remaining_ai, length(from_ai)}
+  end
+
+  defp pop_n(list, n) when n > 0 do
+    {taken, rest} = Enum.split(list, n)
+    {taken, rest}
+  end
+
+  defp pop_n(list, _), do: {[], list}
+
+  defp pick_local_words(exclude, word_count, count) do
+    Enum.reduce_while(1..count, {[], exclude}, fn _, {acc, excl} ->
+      case Games.get_random_word(exclude: excl, word_count: word_count) do
+        {:ok, word} ->
+          if word in acc do
+            {:halt, {acc, excl}}
+          else
+            {:cont, {[word | acc], [word | excl]}}
+          end
+
+        _ ->
+          {:halt, {acc, excl}}
+      end
+    end)
+    |> elem(0)
+    |> Enum.reverse()
   end
 end

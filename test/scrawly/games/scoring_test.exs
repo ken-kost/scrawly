@@ -4,7 +4,8 @@ defmodule Scrawly.Games.ScoringTest do
   alias Scrawly.Games.Scoring
 
   describe "guesser_points/3 - speed curve" do
-    test "maximum points at start of round (full time left)" do
+    test "maximum points (excluding order bonus) at start of round" do
+      # No order opt → default order 3 → 0 order bonus
       points = Scoring.guesser_points(60, 60)
       assert points == 500
     end
@@ -19,130 +20,69 @@ defmodule Scrawly.Games.ScoringTest do
       assert points == 275
     end
 
-    test "points scale linearly with time remaining" do
+    test "points scale with time remaining" do
       p1 = Scoring.guesser_points(45, 60)
       p2 = Scoring.guesser_points(15, 60)
-      # p1 should be proportionally higher
       assert p1 > p2
       assert p1 == 50 + round(450 * 45 / 60)
       assert p2 == 50 + round(450 * 15 / 60)
     end
 
     test "works with different round durations" do
-      # 120s round, full time
       assert Scoring.guesser_points(120, 120) == 500
-      # 120s round, half time
       assert Scoring.guesser_points(60, 120) == 275
-      # 30s round, full time
       assert Scoring.guesser_points(30, 30) == 500
     end
 
     test "never goes below base points" do
       assert Scoring.guesser_points(0, 60) == 50
-      # edge case
       assert Scoring.guesser_points(-1, 60) >= 50
     end
   end
 
-  describe "guesser_points/3 - hint penalty" do
-    test "no penalty at hint stage 0" do
-      points = Scoring.guesser_points(30, 60, hint_stage: 0)
-      assert points == 275
+  describe "guesser_points/3 - order bonus" do
+    test "first guesser receives +50 order bonus" do
+      points = Scoring.guesser_points(30, 60, order: 1)
+      assert points == 275 + 50
     end
 
-    test "10% reduction at hint stage 1" do
-      base = Scoring.guesser_points(30, 60)
-      with_hint = Scoring.guesser_points(30, 60, hint_stage: 1)
-      assert with_hint == round(base * 0.90)
+    test "second guesser receives +25 order bonus" do
+      points = Scoring.guesser_points(30, 60, order: 2)
+      assert points == 275 + 25
     end
 
-    test "20% reduction at hint stage 2" do
-      base = Scoring.guesser_points(30, 60)
-      with_hint = Scoring.guesser_points(30, 60, hint_stage: 2)
-      assert with_hint == round(base * 0.80)
+    test "third and later guessers receive no order bonus" do
+      assert Scoring.guesser_points(30, 60, order: 3) == 275
+      assert Scoring.guesser_points(30, 60, order: 7) == 275
     end
 
-    test "30% reduction at hint stage 3" do
-      base = Scoring.guesser_points(30, 60)
-      with_hint = Scoring.guesser_points(30, 60, hint_stage: 3)
-      assert with_hint == round(base * 0.70)
+    test "default order yields no order bonus" do
+      assert Scoring.guesser_points(30, 60) == Scoring.guesser_points(30, 60, order: 3)
     end
 
-    test "40% reduction at hint stage 4" do
-      base = Scoring.guesser_points(30, 60)
-      with_hint = Scoring.guesser_points(30, 60, hint_stage: 4)
-      assert with_hint == round(base * 0.60)
-    end
-
-    test "hint penalty never reduces below base points" do
-      # Even with max hint penalty at 0 time left, floor is 50
-      points = Scoring.guesser_points(0, 60, hint_stage: 4)
-      assert points == 50
-    end
-
-    test "hint penalty applies proportionally" do
-      # At full time with stage 4: 500 * 0.60 = 300
-      points = Scoring.guesser_points(60, 60, hint_stage: 4)
-      assert points == 300
+    test "order bonus stacks with speed bonus at full time" do
+      assert Scoring.guesser_points(60, 60, order: 1) == 550
+      assert Scoring.guesser_points(60, 60, order: 2) == 525
     end
   end
 
-  describe "drawer_points/3" do
-    test "no penalty when time hasn't expired and no guesses" do
-      assert Scoring.drawer_points(0, 3) == 0
+  describe "drawer_round_points/1" do
+    test "empty list returns 0" do
+      assert Scoring.drawer_round_points([]) == 0
     end
 
-    test "penalty when time expires and no guesses" do
-      assert Scoring.drawer_points(0, 3, time_up: true) == -25
+    test "single guess returns that guess's points" do
+      assert Scoring.drawer_round_points([300]) == 300
     end
 
-    test "+50 per correct guesser" do
-      assert Scoring.drawer_points(1, 3) == 50
-      assert Scoring.drawer_points(2, 3) == 100
-      assert Scoring.drawer_points(3, 4) == 150
+    test "returns floor mean of multiple guesses" do
+      assert Scoring.drawer_round_points([100, 200, 300]) == 200
+      assert Scoring.drawer_round_points([100, 150]) == 125
     end
 
-    test "+100 bonus when all guessers guess correctly" do
-      # 3 guessers, all correct: 3*50 + 100 = 250
-      assert Scoring.drawer_points(3, 3) == 250
-    end
-
-    test "all-guessed bonus requires total_guessers > 0" do
-      # Edge case: no guessers at all
-      assert Scoring.drawer_points(0, 0) == 0
-    end
-
-    test "partial guesses on timeout still earn per-guesser points" do
-      # 2 of 4 guessed, time ran out
-      assert Scoring.drawer_points(2, 4, time_up: true) == 100
-    end
-
-    test "all guessed even with time_up flag gives bonus" do
-      # Shouldn't normally happen (timer stops when all guess), but test edge case
-      assert Scoring.drawer_points(3, 3, time_up: true) == 250
-    end
-  end
-
-  describe "guesser_points_with_hints/3" do
-    test "integrates with WordHints to determine hint stage" do
-      # At 40s left in 60s round, hint stage is 1 (25-50% elapsed)
-      points = Scoring.guesser_points_with_hints(40, 60, "butterfly")
-      expected = Scoring.guesser_points(40, 60, hint_stage: 1)
-      assert points == expected
-    end
-
-    test "no hint penalty when no hints revealed" do
-      # At 50s left in 60s round, hint stage is 0
-      points = Scoring.guesser_points_with_hints(50, 60, "butterfly")
-      expected = Scoring.guesser_points(50, 60, hint_stage: 0)
-      assert points == expected
-    end
-
-    test "max hint penalty at end of round" do
-      # At 5s left in 60s round, hint stage is 4
-      points = Scoring.guesser_points_with_hints(5, 60, "butterfly")
-      expected = Scoring.guesser_points(5, 60, hint_stage: 4)
-      assert points == expected
+    test "floors the mean (no rounding up)" do
+      # mean of [100, 101] = 100.5 → floor = 100
+      assert Scoring.drawer_round_points([100, 101]) == 100
     end
   end
 
@@ -151,49 +91,38 @@ defmodule Scrawly.Games.ScoringTest do
       assert Scoring.base_points() == 50
     end
 
-    test "max_points returns 500" do
-      assert Scoring.max_points() == 500
+    test "max_points returns 550 (base + speed + first-order bonus)" do
+      assert Scoring.max_points() == 550
     end
 
-    test "drawer_per_guesser returns 50" do
-      assert Scoring.drawer_per_guesser() == 50
-    end
-
-    test "drawer_timeout_penalty returns -25" do
-      assert Scoring.drawer_timeout_penalty() == -25
+    test "order_bonus returns expected values" do
+      assert Scoring.order_bonus(1) == 50
+      assert Scoring.order_bonus(2) == 25
+      assert Scoring.order_bonus(3) == 0
+      assert Scoring.order_bonus(99) == 0
     end
   end
 
   describe "scoring integration scenarios" do
-    test "early guess with no hints yields maximum points" do
-      # Guess at 55s of 60s round = stage 0, high speed bonus
-      points = Scoring.guesser_points_with_hints(55, 60, "cat")
-      assert points > 400
+    test "first guesser early in round earns top score" do
+      points = Scoring.guesser_points(55, 60, order: 1)
+      assert points > 450
     end
 
-    test "late guess with many hints yields minimum viable points" do
-      # Guess at 3s of 60s round = stage 4, low speed bonus
-      points = Scoring.guesser_points_with_hints(3, 60, "butterfly")
-      assert points >= 50
+    test "last-second third guesser earns near-minimum" do
+      points = Scoring.guesser_points(3, 60, order: 5)
+      assert points == 50 + round(450 * 3 / 60)
       assert points < 100
     end
 
-    test "drawer scores proportionally to how many players guess" do
-      # 1 of 5 guessed
-      assert Scoring.drawer_points(1, 5) == 50
-      # 3 of 5 guessed
-      assert Scoring.drawer_points(3, 5) == 150
-      # 5 of 5 guessed (all + bonus)
-      assert Scoring.drawer_points(5, 5) == 350
-    end
+    test "drawer mirrors strength of guessing field" do
+      # Three quick guessers (order 1, 2, 3) at 50s of 60s round
+      g1 = Scoring.guesser_points(50, 60, order: 1)
+      g2 = Scoring.guesser_points(50, 60, order: 2)
+      g3 = Scoring.guesser_points(50, 60, order: 3)
 
-    test "total round score for perfect round (all guess quickly)" do
-      # 3 guessers all guess at ~50s left
-      guesser_pts = Scoring.guesser_points(50, 60, hint_stage: 0)
-      drawer_pts = Scoring.drawer_points(3, 3)
-
-      total = guesser_pts * 3 + drawer_pts
-      assert total > 1000
+      drawer = Scoring.drawer_round_points([g1, g2, g3])
+      assert drawer == div(g1 + g2 + g3, 3)
     end
   end
 end

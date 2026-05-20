@@ -1,6 +1,8 @@
 defmodule ScrawlyWeb.Components.ScoreBoard do
   use Hologram.Component
 
+  alias ScrawlyWeb.Components.Avatar
+
   prop :players, :list, default: []
   prop :current_round, :integer, default: 1
   prop :total_rounds, :integer, default: 3
@@ -15,7 +17,10 @@ defmodule ScrawlyWeb.Components.ScoreBoard do
         <div class="item">
           <span class="rank">{String.pad_leading(Integer.to_string(i + 1), 2, "0")}</span>
           <span class="nm">
-            <span style={"width: 8px; height: 8px; border-radius: 999px; background: " <> Scrawly.Games.PlayerColor.for(p.id) <> "; display: inline-block;"}></span>
+            <Avatar
+              avatar_id={Map.get(p, :avatar_id) || "a-mushroom"}
+              color={Map.get(p, :avatar_color) || "3"}
+              size="xs" />
             {p.username}
           </span>
           <span class="pts mono">{p.score || 0}</span>

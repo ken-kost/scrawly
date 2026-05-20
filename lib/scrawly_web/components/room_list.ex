@@ -1,6 +1,8 @@
 defmodule ScrawlyWeb.Components.RoomList do
   use Hologram.Component
 
+  alias ScrawlyWeb.Components.Avatar
+
   prop :rooms, :list, default: []
   prop :loading, :boolean, default: false
 
@@ -26,10 +28,15 @@ defmodule ScrawlyWeb.Components.RoomList do
             </div>
             <div class="avatar-stack">
               {%for {p, _i} <- Enum.with_index(Enum.take(room.players, 4))}
-                <span class="avatar" style={"background: " <> Scrawly.Games.PlayerColor.for(p.id) <> "; color: #0a0a0a;"}>{String.upcase(String.slice(p.username || "?", 0..0))}</span>
+                <span class="avatar-stack-cell">
+                  <Avatar
+                    avatar_id={Map.get(p, :avatar_id) || "a-mushroom"}
+                    color={Map.get(p, :avatar_color) || "3"}
+                    size="xs" />
+                </span>
               {/for}
               {%if length(room.players) > 4}
-                <span class="avatar" style="background: transparent; color: var(--muted);">+{length(room.players) - 4}</span>
+                <span class="avatar avatar-more">+{length(room.players) - 4}</span>
               {/if}
             </div>
             <span class="mono" style="font-size: 12px; color: var(--muted); min-width: 60px; text-align: right;">

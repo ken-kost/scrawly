@@ -1,6 +1,8 @@
 defmodule ScrawlyWeb.Components.PlayerList do
   use Hologram.Component
 
+  alias ScrawlyWeb.Components.Avatar
+
   prop :players, :list, default: []
   prop :current_drawer, :map, default: nil
   prop :current_user_id, :string, default: nil
@@ -15,9 +17,10 @@ defmodule ScrawlyWeb.Components.PlayerList do
         <div class="player-list">
           {%for player <- @players}
             <div class="player-row">
-              <span class="av" style={"background: " <> Scrawly.Games.PlayerColor.for(player.id) <> "; color: #0a0a0a;"}>
-                {String.upcase(String.slice(player.username || "?", 0..0))}
-              </span>
+              <Avatar
+                avatar_id={Map.get(player, :avatar_id) || "a-mushroom"}
+                color={Map.get(player, :avatar_color) || "3"}
+                size="sm" />
               <span class="name">{player.username}</span>
               {%if @current_drawer && @current_drawer.id == player.id}
                 <span class="chip chip-strong">drawing</span>

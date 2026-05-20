@@ -89,6 +89,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:is_drawer, is_drawer)
               |> put_state(:correct_guessers, rs.correct_guessers || [])
               |> put_state(:used_words, [])
+              # Word-choice phase state
+              |> put_state(:phase, Map.get(rs, :phase, :idle))
+              |> put_state(
+                :word_choices,
+                if(is_drawer, do: Map.get(rs, :word_choices, []), else: [])
+              )
+              |> put_state(:choice_time_left, 0)
               |> put_state(
                 :can_start_game,
                 is_creator and length(rs.players) >= 2 and rs.game_id == nil
@@ -304,6 +311,18 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   def action(:past_games_loaded, %{games: games}, component) do
     put_state(component, :past_games, games)
+  end
+
+  def action(:choose_word, %{word: word}, component) do
+    if component.state.is_drawer and component.state.phase == :choosing do
+      put_command(component, :choose_word,
+        room_id: component.state.room_id,
+        player_id: component.state.current_user_id,
+        word: word
+      )
+    else
+      component
+    end
   end
 
   # ── Client-side Actions: Chat ────────────────────────────────────────
@@ -527,6 +546,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def command(:record_correct_guess, params, server),
     do: Commands.record_correct_guess(params, server)
 
+  def command(:choose_word, params, server), do: Commands.choose_word(params, server)
+
   def command(:fetch_past_games, params, server),
     do: Commands.fetch_past_games(params, server)
 
@@ -540,15 +561,18 @@ defmodule ScrawlyWeb.Pages.GamePage do
     old_round = component.state.round
     new_round = params.current_round || 0
     new_time = params.time_left || 0
+    new_phase = Map.get(params, :phase, :idle)
 
     # Pre-computed by server
     is_drawer = params.is_drawer || false
     word_display = params.current_word_display || ""
     drawer_name = params.drawer_name || "Unknown"
+    word_choices = Map.get(params, :word_choices, [])
+    choice_time_left = Map.get(params, :choice_time_left, 0)
 
     cond do
-      # Game just started
-      not old_started and new_game_active and (params.round_active || false) ->
+      # Game just started (enters :choosing or :drawing)
+      not old_started and new_game_active ->
         JS.call(:setDrawingPath, [""])
 
         component
@@ -561,6 +585,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
         |> put_state(:current_word_display, word_display)
         |> put_state(:is_drawer, is_drawer)
         |> put_state(:time_left, new_time)
+        |> put_state(:phase, new_phase)
+        |> put_state(:word_choices, word_choices)
+        |> put_state(:choice_time_left, choice_time_left)
         |> put_state(:drawing_strokes, [])
 
       # Game ended
@@ -576,9 +603,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
         |> put_state(:time_left, 0)
         |> put_state(:is_drawer, false)
         |> put_state(:correct_guessers, [])
+        |> put_state(:phase, :idle)
+        |> put_state(:word_choices, [])
+        |> put_state(:choice_time_left, 0)
         |> put_state(:drawing_strokes, [])
 
-      # New round
+      # New round (advances round number — either choosing or drawing)
       old_started and new_round > old_round ->
         JS.call(:setDrawingPath, [""])
 
@@ -589,14 +619,21 @@ defmodule ScrawlyWeb.Pages.GamePage do
         |> put_state(:current_word_display, word_display)
         |> put_state(:is_drawer, is_drawer)
         |> put_state(:time_left, new_time)
+        |> put_state(:phase, new_phase)
+        |> put_state(:word_choices, word_choices)
+        |> put_state(:choice_time_left, choice_time_left)
         |> put_state(:drawing_strokes, [])
 
-      # Timer tick or other update — always sync display from server
+      # Timer tick or phase transition (within same round)
       old_started ->
         component
         |> put_state(:time_left, new_time)
         |> put_state(:current_word_display, word_display)
         |> put_state(:is_drawer, is_drawer)
+        |> put_state(:current_word, params.current_word)
+        |> put_state(:phase, new_phase)
+        |> put_state(:word_choices, word_choices)
+        |> put_state(:choice_time_left, choice_time_left)
 
       true ->
         component
@@ -860,16 +897,23 @@ defmodule ScrawlyWeb.Pages.GamePage do
             <span class="chip chip-live">live</span>
           </div>
           <div class="word-display">
-            <div class="word-letters">
-              {%if @is_drawer && @current_word}
-                {String.upcase(@current_word)}
-              {%else}
-                {%if @current_word_display}{@current_word_display}{%else}_ _ _{/if}
-              {/if}
-            </div>
-            <div class="word-meta">
-              {%if @is_drawer}your word · {String.length(@current_word || "")} letters{%else}round {@round} of {@total_rounds} · {String.length(@current_word || "")} letters{/if}
-            </div>
+            {%if @phase == :choosing}
+              <div class="word-letters" style="opacity: 0.5;">— — —</div>
+              <div class="word-meta">
+                {%if @is_drawer}choose a word to draw{%else}{(@current_drawer && @current_drawer.username) || "drawer"} is choosing …{/if}
+              </div>
+            {%else}
+              <div class="word-letters">
+                {%if @is_drawer && @current_word}
+                  {String.upcase(@current_word)}
+                {%else}
+                  {%if @current_word_display}{@current_word_display}{%else}_ _ _{/if}
+                {/if}
+              </div>
+              <div class="word-meta">
+                {%if @is_drawer}your word · {String.length(@current_word || "")} letters{%else}round {@round} of {@total_rounds} · {String.length(@current_word || "")} letters{/if}
+              </div>
+            {/if}
           </div>
           <div class="right">
             <div>
@@ -880,12 +924,39 @@ defmodule ScrawlyWeb.Pages.GamePage do
               {/if}
             </div>
             <div class="col" style="align-items: center; gap: 4px;">
-              <div class="timer timer-big mono">{@time_left}s</div>
-              <div class="bar accent" style="width: 80px;"><div style={"width: " <> Integer.to_string(min(100, round((@time_left / max(@round_duration, 1)) * 100))) <> "%;"}></div></div>
+              {%if @phase == :choosing}
+                <div class="timer timer-big mono">{@choice_time_left}s</div>
+                <div class="bar accent" style="width: 80px;"><div style={"width: " <> Integer.to_string(min(100, round((@choice_time_left / 15) * 100))) <> "%;"}></div></div>
+              {%else}
+                <div class="timer timer-big mono">{@time_left}s</div>
+                <div class="bar accent" style="width: 80px;"><div style={"width: " <> Integer.to_string(min(100, round((@time_left / max(@round_duration, 1)) * 100))) <> "%;"}></div></div>
+              {/if}
             </div>
           </div>
         </div>
       </div>
+
+      {%if @phase == :choosing}
+        <div class="choice-overlay">
+          <div class="choice-modal">
+            {%if @is_drawer}
+              <div class="choice-title">choose a word to draw</div>
+              <div class="choice-sub mono">{@choice_time_left}s to pick · auto-picks at 0</div>
+              <div class="choice-options">
+                {%for w <- @word_choices}
+                  <button class="choice-btn" $click={:choose_word, word: w}>{w}</button>
+                {/for}
+              </div>
+            {%else}
+              <div class="choice-title">{(@current_drawer && @current_drawer.username) || "drawer"} is choosing a word</div>
+              <div class="choice-sub mono">{@choice_time_left}s remaining</div>
+              <div class="choice-dots">
+                <span></span><span></span><span></span>
+              </div>
+            {/if}
+          </div>
+        </div>
+      {/if}
 
       <div class="game-layout">
         <div class="panel">

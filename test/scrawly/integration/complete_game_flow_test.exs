@@ -268,31 +268,31 @@ defmodule Scrawly.Integration.CompleteGameFlowTest do
       {:ok, game} = Games.start_round(game.id, List.first(players).id)
       word = game.current_word
 
-      # Default round is 60s. Thresholds: 75%=45s, 50%=30s, 25%=15s
+      # Default schedule: [0.375, 0.6875] for 60s round.
+      # 37s left = ~38.3% elapsed → stage 1
+      # 18s left = ~70% elapsed → stage 2
 
       # At 60s (start): all underscores
       hint_60 = WordHints.generate_hint(word, 60)
-      letter_count = word |> String.graphemes() |> Enum.count(&(&1 != " "))
+      letter_count = WordHints.word_length_hint(word)
       underscore_count_60 = hint_60 |> String.graphemes() |> Enum.count(&(&1 == "_"))
       assert underscore_count_60 == letter_count
 
-      # At 40s (below 75%): first letter revealed
-      hint_40 = WordHints.generate_hint(word, 40)
-      underscore_count_40 = hint_40 |> String.graphemes() |> Enum.count(&(&1 == "_"))
-      assert underscore_count_40 < underscore_count_60
+      # After first batch reveals: fewer underscores than at start (skribbl-style randomly
+      # picked letters). Words must be long enough to have at least one letter revealed.
+      hint_30 = WordHints.generate_hint(word, 30)
+      underscore_count_30 = hint_30 |> String.graphemes() |> Enum.count(&(&1 == "_"))
 
-      # At 25s (below 50%): first and last letter revealed
-      hint_25 = WordHints.generate_hint(word, 25)
-      underscore_count_25 = hint_25 |> String.graphemes() |> Enum.count(&(&1 == "_"))
-      assert underscore_count_25 <= underscore_count_40
+      if letter_count >= 3 do
+        assert underscore_count_30 < underscore_count_60
+      else
+        assert underscore_count_30 <= underscore_count_60
+      end
 
-      # At 10s (below 25%): first, last, and middle letter revealed
-      hint_10 = WordHints.generate_hint(word, 10)
-      underscore_count_10 = hint_10 |> String.graphemes() |> Enum.count(&(&1 == "_"))
-      assert underscore_count_10 <= underscore_count_25
-
-      # More letters revealed over time
-      assert underscore_count_60 >= underscore_count_10
+      # After second batch reveals: still fewer (or equal) underscores
+      hint_5 = WordHints.generate_hint(word, 5)
+      underscore_count_5 = hint_5 |> String.graphemes() |> Enum.count(&(&1 == "_"))
+      assert underscore_count_5 <= underscore_count_30
     end
   end
 end
