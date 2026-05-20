@@ -65,6 +65,65 @@ defmodule ScrawlyWeb.GameChannel do
     end
   end
 
+  # Live in-progress chunks — broadcast immediately to peers, no RoomServer
+  # roundtrip so the GenServer hot path stays clear. Persistence happens once
+  # on `drawing_stroke_complete` below.
+  @impl true
+  def handle_in("drawing_stroke_chunk", payload, socket) do
+    stroke_id = payload["stroke_id"]
+    delta = payload["delta"] || ""
+
+    if is_binary(stroke_id) and stroke_id != "" and delta != "" do
+      open = MapSet.put(Map.get(socket.assigns, :open_stroke_ids, MapSet.new()), stroke_id)
+      socket = assign(socket, :open_stroke_ids, open)
+
+      broadcast_from(socket, "drawing_stroke_chunk", %{
+        "stroke_id" => stroke_id,
+        "seq" => payload["seq"] || 0,
+        "delta" => delta,
+        "color" => payload["color"] || "#000000",
+        "width" => payload["width"] || 2
+      })
+
+      {:noreply, socket}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_in("drawing_stroke_complete", payload, socket) do
+    stroke_id = payload["stroke_id"]
+    path = payload["path"] || ""
+    color = payload["color"] || "#000000"
+    width = payload["width"] || 2
+
+    cond do
+      not is_binary(stroke_id) or stroke_id == "" ->
+        {:reply, {:error, %{reason: "missing_stroke_id"}}, socket}
+
+      path == "" ->
+        {:reply, {:error, %{reason: "empty_path"}}, socket}
+
+      true ->
+        room_id = socket.assigns.room_id
+        stroke = %{path: path, color: color, width: width}
+        RoomServer.append_drawing(room_id, stroke)
+
+        open = MapSet.delete(Map.get(socket.assigns, :open_stroke_ids, MapSet.new()), stroke_id)
+        socket = assign(socket, :open_stroke_ids, open)
+
+        broadcast_from(socket, "drawing_stroke_complete", %{
+          "stroke_id" => stroke_id,
+          "path" => path,
+          "color" => color,
+          "width" => width
+        })
+
+        {:reply, {:ok, %{status: "stroke_complete"}}, socket}
+    end
+  end
+
   @impl true
   def handle_in("drawing_segment", %{"segment" => segment}, socket)
       when is_binary(segment) and byte_size(segment) > 0 do
@@ -335,5 +394,19 @@ defmodule ScrawlyWeb.GameChannel do
   def handle_info(:room_state_changed, socket) do
     push(socket, "room_state_changed", %{})
     {:noreply, socket}
+  end
+
+  # If this socket leaves with an in-flight stroke (drawer closed tab,
+  # network drop, etc.), tell remaining peers to GC their overlays so the
+  # stroke doesn't visually freeze on their canvas.
+  @impl true
+  def terminate(_reason, socket) do
+    open = Map.get(socket.assigns, :open_stroke_ids, MapSet.new())
+
+    Enum.each(open, fn stroke_id ->
+      broadcast_from(socket, "drawing_stroke_abandon", %{"stroke_id" => stroke_id})
+    end)
+
+    :ok
   end
 end

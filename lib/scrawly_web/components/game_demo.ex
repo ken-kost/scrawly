@@ -37,7 +37,7 @@ defmodule ScrawlyWeb.Components.GameDemo do
       <div class="demo-canvas" style="aspect-ratio: 16/9; min-height: 220px; position: relative;">
         <svg
           id="demo-board-svg"
-          viewBox="0 0 400 320"
+          viewBox="0 0 400 225"
           preserveAspectRatio="xMidYMid meet"
           style="touch-action: none; width: 100%; height: 100%;"
           $pointer_down={:demo_pointer_down}
@@ -49,7 +49,7 @@ defmodule ScrawlyWeb.Components.GameDemo do
               <circle cx="1" cy="1" r="0.6" fill="rgba(0,0,0,0.06)" />
             </pattern>
           </defs>
-          <rect width="400" height="320" fill="url(#demo-board-dotgrid)" />
+          <rect width="400" height="225" fill="url(#demo-board-dotgrid)" />
           <path id="demo-board-active-path" d="" stroke={@color} stroke-width={@width} fill="none" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </div>

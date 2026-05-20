@@ -42,6 +42,25 @@
       if (channel) channel.push("drawing_stroke", { segment: path, color: color, width: width });
     },
 
+    sendDrawingStrokeChunk: function(strokeId, seq, delta, color, width) {
+      if (channel) channel.push("drawing_stroke_chunk", {
+        stroke_id: strokeId,
+        seq: seq,
+        delta: delta,
+        color: color,
+        width: width
+      });
+    },
+
+    sendDrawingStrokeComplete: function(strokeId, path, color, width) {
+      if (channel) channel.push("drawing_stroke_complete", {
+        stroke_id: strokeId,
+        path: path,
+        color: color,
+        width: width
+      });
+    },
+
     sendDrawingClear: function() {
       if (channel) channel.push("drawing_clear", {});
     },

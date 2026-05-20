@@ -883,6 +883,9 @@ html, body {
 /* ─── Chat ───────────────────────────────────────────────────────── */
 .chat-panel { padding: 0; }
 .chat-panel .panel-body { padding: 4px 0; }
+.chat-panel #chat-messages {
+  max-height: calc(100vh - 240px);
+}
 .msg {
   padding: 6px 14px;
   font-size: 13px;

@@ -101,6 +101,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
         <link phx-track-static rel="stylesheet" href="/assets/css/app.css" />
         <script type="text/javascript" src="/phoenix.min.js"></script>
         <script type="text/javascript" src="/game_socket.js"></script>
+        <script type="text/javascript" src="/chat_scroll.js"></script>
         <Runtime />
       </head>
       <body>

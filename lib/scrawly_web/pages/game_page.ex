@@ -18,6 +18,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :setToolWidth, from: "./drawing_manager.mjs"
   js_import :undoStroke, from: "./drawing_manager.mjs"
   js_import :setStrokes, from: "./drawing_manager.mjs"
+  js_import :removeRemoteOverlay, from: "./drawing_manager.mjs"
 
   route "/game/:room_id"
   layout ScrawlyWeb.Layouts.AppLayout
@@ -372,6 +373,27 @@ defmodule ScrawlyWeb.Pages.GamePage do
       }
 
       strokes = Map.get(component.state, :drawing_strokes, [])
+      put_state(component, :drawing_strokes, strokes ++ [stroke])
+    else
+      component
+    end
+  end
+
+  # Received from channel after `drawing_stroke_complete` is broadcast.
+  # Removes the JS-side overlay and promotes the stroke into Hologram state
+  # in the same action — Hologram batches the JS.call + state update so the
+  # DOM diff applies both in one render cycle (no flicker).
+  def action(:receive_drawing_stroke_complete, params, component) do
+    if not component.state.is_drawer do
+      stroke = %{
+        path: params.path || "",
+        color: params.color || "#000000",
+        width: params.width || 2
+      }
+
+      strokes = Map.get(component.state, :drawing_strokes, [])
+
+      JS.call(:removeRemoteOverlay, [params.stroke_id])
       put_state(component, :drawing_strokes, strokes ++ [stroke])
     else
       component

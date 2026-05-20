@@ -18,7 +18,7 @@ defmodule ScrawlyWeb do
   """
 
   def static_paths,
-    do: ~w(assets fonts images favicon.ico robots.txt phoenix.min.js game_socket.js)
+    do: ~w(assets fonts images favicon.ico robots.txt phoenix.min.js game_socket.js chat_scroll.js)
 
   def router do
     quote do
