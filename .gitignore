@@ -36,3 +36,24 @@ npm-debug.log
 /assets/node_modules/
 
 /priv/static/hologram/
+
+# Mob local config
+mob.exs
+
+# Android build artifacts
+/android/.gradle/
+/android/local.properties
+/android/app/build/
+/android/app/.cxx/
+/android/app/src/main/assets/otp.zip
+/android/app/src/main/jniLibs/
+/android/app/src/main/jni/.zig-cache/
+
+# iOS build artifacts
+/ios/build/
+/ios/.zig-cache/
+/ios/zig-out/
+
+# Built mobile binaries
+*.apk
+*.ipa
