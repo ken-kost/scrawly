@@ -3,6 +3,8 @@ defmodule Scrawly.MixProject do
 
   def project do
     [
+      erlc_options: [:debug_info],
+      erlc_paths: ["src"],
       app: :scrawly,
       version: "0.1.0",
       elixir: "~> 1.15",
@@ -34,14 +36,25 @@ defmodule Scrawly.MixProject do
   end
 
   # Specifies which paths to compile per environment.
-  defp elixirc_paths(:test), do: ["lib", "test/support"]
-  defp elixirc_paths(_), do: ["lib"]
+  #
+  # `lib_mob/` holds the on-device BEAM entry (`Scrawly.MobApp`,
+  # `Scrawly.MobScreen`) plus anything else that references the `Mob`
+  # library. Excluded from `:prod` because the `:mob` dep — and its
+  # Android-only `mob_nif.so` — must not ship in the fly.io release
+  # (the NIF's on_load handler crashes BEAM on Linux startup).
+  defp elixirc_paths(:test), do: ["lib", "lib_mob", "test/support"]
+  defp elixirc_paths(:prod), do: ["lib"]
+  defp elixirc_paths(_), do: ["lib", "lib_mob"]
 
   # Specifies your project dependencies.
   #
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:mob_dev, "~> 0.5", only: :dev, runtime: false},
+      {:mob, "~> 0.5", only: :dev},
+      {:mob_new, path: "/home/ken/mob_new", only: :dev, runtime: false},
+      {:exqlite, "~> 0.36", only: :dev, runtime: false},
       {:usage_rules, "~> 1.2", only: [:dev]},
       {:hologram, "~> 0.8"},
       {:picosat_elixir, "~> 0.2"},

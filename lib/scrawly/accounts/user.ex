@@ -91,6 +91,38 @@ defmodule Scrawly.Accounts.User do
       primary? true
     end
 
+    create :register_with_device_id do
+      description "Find-or-create a guest user by stable per-device UUID (mob auto-login)."
+
+      argument :device_id, :uuid, allow_nil?: false
+
+      upsert? true
+      upsert_identity :unique_device_id
+      upsert_fields [:device_id]
+
+      change set_attribute(:device_id, arg(:device_id))
+
+      change fn changeset, _ctx ->
+        uuid = Ash.Changeset.get_argument(changeset, :device_id)
+        short = uuid |> to_string() |> String.slice(0, 8)
+
+        changeset
+        |> Ash.Changeset.force_change_attribute(:email, "device-#{uuid}@scrawly.local")
+        |> Ash.Changeset.force_change_attribute(:username, "guest-#{short}")
+      end
+
+      change fn changeset, _ctx ->
+        Ash.Changeset.after_action(changeset, fn _changeset, user ->
+          {:ok, token, _claims} = AshAuthentication.Jwt.token_for_user(user)
+          {:ok, Ash.Resource.put_metadata(user, :token, token)}
+        end)
+      end
+
+      metadata :token, :string do
+        allow_nil? false
+      end
+    end
+
     read :get_by_subject do
       description "Get a user by the subject claim in a JWT"
       argument :subject, :string, allow_nil?: false
@@ -153,7 +185,12 @@ defmodule Scrawly.Accounts.User do
     uuid_primary_key :id
 
     attribute :email, :ci_string do
-      allow_nil? false
+      allow_nil? true
+      public? true
+    end
+
+    attribute :device_id, :uuid do
+      allow_nil? true
       public? true
     end
 
@@ -221,6 +258,7 @@ defmodule Scrawly.Accounts.User do
 
   identities do
     identity :unique_email, [:email]
+    identity :unique_device_id, [:device_id]
   end
 
   defp generate_username(%{email: email}) do
