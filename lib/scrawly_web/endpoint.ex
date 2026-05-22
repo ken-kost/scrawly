@@ -58,6 +58,14 @@ defmodule ScrawlyWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
+  plug :prepare_for_device_auto_login
+  plug ScrawlyWeb.Plugs.DeviceAutoLogin
   plug Hologram.Router
   plug ScrawlyWeb.Router
+
+  defp prepare_for_device_auto_login(conn, _opts) do
+    conn
+    |> Plug.Conn.fetch_query_params()
+    |> Plug.Conn.fetch_session()
+  end
 end
