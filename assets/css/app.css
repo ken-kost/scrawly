@@ -625,12 +625,22 @@ html, body {
 
 /* ─── Modal ─────────────────────────────────────────────────────── */
 .scrim {
-  position: fixed; inset: 0;
-  background: color-mix(in oklch, var(--bg) 70%, transparent);
-  backdrop-filter: blur(8px);
-  display: grid; place-items: center;
+  position: fixed;
+  top: 0; right: 0; bottom: 0; left: 0;
+  /* Solid semi-transparent overlay — no backdrop-filter, because some
+     Android WebView builds render its children invisibly when blur is
+     applied to a `position: fixed` parent. Slightly darker than the
+     old blurred scrim to compensate for the loss of background blur. */
+  background: rgba(11, 11, 12, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-items: safe center;
+  justify-content: safe center;
   z-index: 50;
   padding: 24px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .app-modal {
   background: var(--surface);
@@ -638,9 +648,10 @@ html, body {
   border-radius: 12px;
   width: 100%;
   max-width: 520px;
-  max-height: 90vh;
+  max-height: 100%;
   overflow: auto;
   box-shadow: 0 30px 80px -20px rgba(0,0,0,0.25);
+  margin: auto;
 }
 .app-modal-head {
   padding: 18px 20px;
