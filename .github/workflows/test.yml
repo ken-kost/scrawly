@@ -1,0 +1,76 @@
+name: CI
+
+# Runs the Elixir test suite (and a warnings-as-errors compile) on every PR and
+# on pushes to the default branch. The repo previously had no CI — only
+# fly-deploy.yml — so the migration's realtime/auth paths had no automated gate.
+on:
+  pull_request:
+  push:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: mix test (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: "1.18.4"
+            otp: "26.2.5"
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MIX_ENV: test
+      # Hologram's realtime runtime stays OFF in test — that's the v0.9 default
+      # (Hologram.enabled? is false in :test unless HOLOGRAM_START=1). The suite
+      # is designed to run with it disabled; the 0.9.2 #813 fix keeps
+      # Hologram.Router from crashing when disabled. Tests that need the live
+      # runtime (e.g. realtime-broadcast assertions) opt in with HOLOGRAM_START=1.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir / OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+
+      - name: Cache deps and _build
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Compile (warnings as errors)
+        run: mix compile --warnings-as-errors
+
+      # `mix test` is aliased to `ash.setup --quiet` + `test`, so it creates and
+      # migrates the test database against the Postgres service above.
+      - name: Run tests
+        run: mix test
