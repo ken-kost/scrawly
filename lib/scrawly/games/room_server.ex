@@ -1,7 +1,8 @@
 defmodule Scrawly.Games.RoomServer do
   @moduledoc """
   GenServer representing a game room. Single source of truth for room membership,
-  game state, chat messages, and drawing data. Clients long-poll via `wait_for_update/3`.
+  game state, chat messages, and drawing data. State changes are projected to
+  subscribed game pages via Hologram realtime (`:room_delta` / `:chat_appended`).
 
   Subscribes to RoundTimer PubSub to forward timer ticks. Auto-advances rounds
   when timer expires or all players guess correctly.
@@ -24,7 +25,6 @@ defmodule Scrawly.Games.RoomServer do
     players: [],
     watchers: [],
     version: 0,
-    waiters: [],
     # Room settings
     word_count: 1,
     word_source: :local,
@@ -91,13 +91,6 @@ defmodule Scrawly.Games.RoomServer do
   def get_state(room_id) do
     GenServer.call(via(room_id), :get_state)
   catch
-    :exit, _ -> {:error, :not_found}
-  end
-
-  def wait_for_update(room_id, known_version, timeout \\ 8_000) do
-    GenServer.call(via(room_id), {:wait_for_update, known_version}, timeout)
-  catch
-    :exit, {:timeout, _} -> :timeout
     :exit, _ -> {:error, :not_found}
   end
 
@@ -249,14 +242,6 @@ defmodule Scrawly.Games.RoomServer do
   @impl true
   def handle_call(:get_state, _from, state) do
     {:reply, {:ok, to_public(state)}, state}
-  end
-
-  def handle_call({:wait_for_update, known_version}, from, state) do
-    if state.version > known_version do
-      {:reply, {:ok, to_public(state)}, state}
-    else
-      {:noreply, %{state | waiters: [from | state.waiters]}}
-    end
   end
 
   def handle_call({:join, player}, _from, state) do
@@ -563,8 +548,11 @@ defmodule Scrawly.Games.RoomServer do
       new_state =
         %{state | chat_messages: [message | state.chat_messages] |> Enum.take(50)}
         |> bump_version()
-        |> notify_waiters()
+        # Chat fans out via the realtime :chat_appended delta below, not the
+        # room_state_changed poll nudge — so a chat message never triggers a poll.
+        |> notify_waiters(false)
 
+      broadcast_chat_appended(state.room_id, message)
       {:reply, :ok, new_state}
     else
       now = System.monotonic_time(:millisecond)
@@ -585,8 +573,9 @@ defmodule Scrawly.Games.RoomServer do
               chat_rate_limits: new_limits
           }
           |> bump_version()
-          |> notify_waiters()
+          |> notify_waiters(false)
 
+        broadcast_chat_appended(state.room_id, message)
         {:reply, :ok, new_state}
       end
     end
@@ -805,15 +794,61 @@ defmodule Scrawly.Games.RoomServer do
   defp bump_version(state), do: %{state | version: state.version + 1}
   defp notify_lobby, do: Phoenix.PubSub.broadcast(Scrawly.PubSub, "lobby:rooms", :rooms_updated)
 
+  # Broadcast choke point every mutation funnels through (legacy name retained
+  # across ~25 call sites). Replaces the old room_state_changed → poll nudge:
+  # each mutation projects a secret-free delta straight to subscribed pages over
+  # Hologram realtime (SSE). No-op when the Hologram runtime isn't started.
   defp notify_waiters(state, broadcast \\ true) do
-    public = to_public(state)
-    Enum.each(state.waiters, fn from -> GenServer.reply(from, {:ok, public}) end)
-
     if broadcast do
-      Phoenix.PubSub.broadcast(Scrawly.PubSub, "room:#{state.room_id}", :room_state_changed)
+      Scrawly.Realtime.broadcast_action({:room, state.room_id}, :room_delta, public_delta(state))
     end
 
-    %{state | waiters: []}
+    state
+  end
+
+  # Fan a just-appended chat message out to every page subscribed to the room's
+  # public realtime channel (players, watchers, anonymous spectators). No-op when
+  # the Hologram runtime isn't started — see `Scrawly.Realtime`.
+  defp broadcast_chat_appended(room_id, message) do
+    Scrawly.Realtime.broadcast_action({:room, room_id}, :chat_appended, %{message: message})
+  end
+
+  # Public, secret-free projection of room state broadcast on each mutation.
+  # Deliberately omits the drawer secrets (current_word, word_choices) and the
+  # bulk fields carried by their own deltas (drawing_strokes via Phase 3,
+  # chat_messages via :chat_appended). The page pulls the per-user enriched slice
+  # (masked word, drawer name) via poll_room_state once per phase/round transition.
+  defp public_delta(state) do
+    %{
+      room_id: state.room_id,
+      status: state.status,
+      players: state.players,
+      watchers: state.watchers,
+      version: state.version,
+      game_id: state.game_id,
+      current_round: state.current_round,
+      total_rounds: state.total_rounds,
+      current_drawer_id: state.current_drawer_id,
+      time_left: state.time_left,
+      round_active: state.round_active,
+      correct_guessers: state.correct_guessers,
+      phase: state.phase,
+      choice_time_left: choice_time_left(state),
+      last_game_id: state.last_game_id,
+      max_players: state.max_players,
+      past_games: state.past_games
+    }
+  end
+
+  defp choice_time_left(state) do
+    case state.choice_deadline do
+      nil ->
+        0
+
+      deadline when is_integer(deadline) ->
+        now = System.monotonic_time(:millisecond)
+        max(0, div(deadline - now + 999, 1000))
+    end
   end
 
   defp to_public(state) do

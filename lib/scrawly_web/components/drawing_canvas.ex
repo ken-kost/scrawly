@@ -27,9 +27,11 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
           </pattern>
         </defs>
         <rect width="800" height="450" fill="url(#canvas-grid)" />
-        {%for stroke <- @strokes}
-          <path d={stroke.path} stroke={stroke.color} stroke-width={stroke.width} fill="none" stroke-linecap="round" stroke-linejoin="round" />
-        {/for}
+        {%if !@is_drawer}
+          {%for stroke <- @strokes}
+            <path d={stroke.path} stroke={stroke.color} stroke-width={stroke.width} fill="none" stroke-linecap="round" stroke-linejoin="round" />
+          {/for}
+        {/if}
         {%if @is_drawer}
           <path id="drawing-path" stroke={@active_color} stroke-width={@active_width} fill="none" stroke-linecap="round" stroke-linejoin="round" />
         {/if}

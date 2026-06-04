@@ -245,6 +245,11 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
       type: :system
     }
 
+    # System messages (join/leave/round events) fan out via the realtime chat
+    # delta, same as user messages — the room_delta state broadcast intentionally
+    # carries no chat. No-op when the Hologram runtime isn't started.
+    Scrawly.Realtime.broadcast_action({:room, state.room_id}, :chat_appended, %{message: msg})
+
     %{state | chat_messages: [msg | state.chat_messages] |> Enum.take(50)}
   end
 
