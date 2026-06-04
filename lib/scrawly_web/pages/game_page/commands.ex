@@ -6,7 +6,7 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   They receive a `%Hologram.Server{}` struct and return one (possibly with a next_action).
   """
 
-  import Hologram.Component, only: [put_action: 2, put_action: 3]
+  import Hologram.Component, only: [put_action: 2, put_action: 3, put_broadcast_except: 5]
 
   alias Scrawly.Games
   alias Scrawly.Games.{WordHints, RoomServer}
@@ -31,15 +31,8 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
           Scrawly.Accounts.join_room(user_id, room_id)
           Games.join_room(room_id, user_id)
 
-          # Notify already-connected channel clients about the new player.
-          case RoomServer.get_state(room_id) do
-            {:ok, rs} ->
-              ScrawlyWeb.Endpoint.broadcast("game:#{rs.code}", "room_state_changed", %{})
-
-            _ ->
-              :ok
-          end
-
+          # RoomServer.join already broadcast a :room_delta to subscribers; the
+          # joining player gets its first enriched state from the poll below.
           poll_and_enrich(server, room_id, user_id)
 
         {:error, :room_full} ->
@@ -192,6 +185,56 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
 
     server
+  end
+
+  # ── Drawing: persist + fan out via realtime ──────────────────────────
+  # The drawer's browser owns the live stroke (JS) and streams chunks over the
+  # channel. On completion/clear/undo it issues one of these commands, which
+  # persists to RoomServer (source of truth) and broadcasts the canonical result
+  # to peers on {:room, id}, excluding the drawer's own identity (they already
+  # rendered it locally — the receiving action also guards on is_drawer).
+
+  def complete_stroke(
+        %{room_id: room_id, stroke_id: stroke_id, path: path, color: color, width: width} = params,
+        server
+      ) do
+    RoomServer.append_drawing(room_id, %{path: path, color: color, width: width})
+
+    put_broadcast_except(
+      server,
+      {:user, params[:user_id]},
+      {:room, room_id},
+      :stroke_completed,
+      %{stroke_id: stroke_id, path: path, color: color, width: width}
+    )
+  end
+
+  def clear_drawing_cmd(%{room_id: room_id} = params, server) do
+    RoomServer.clear_drawing(room_id)
+
+    put_broadcast_except(
+      server,
+      {:user, params[:user_id]},
+      {:room, room_id},
+      :drawing_cleared,
+      %{}
+    )
+  end
+
+  def undo_drawing_cmd(%{room_id: room_id} = params, server) do
+    case RoomServer.undo_drawing(room_id) do
+      {:ok, strokes} ->
+        put_broadcast_except(
+          server,
+          {:user, params[:user_id]},
+          {:room, room_id},
+          :drawing_undone,
+          %{strokes: strokes}
+        )
+
+      _ ->
+        server
+    end
   end
 
   def fetch_past_games(%{room_id: room_id}, server) do

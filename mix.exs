@@ -43,7 +43,7 @@ defmodule Scrawly.MixProject do
   defp deps do
     [
       {:usage_rules, "~> 1.2", only: [:dev]},
-      {:hologram, "~> 0.8"},
+      {:hologram, "~> 0.9.2"},
       {:picosat_elixir, "~> 0.2"},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:tidewave, "~> 0.5", only: [:dev]},

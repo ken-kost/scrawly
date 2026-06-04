@@ -3,8 +3,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
   use Hologram.JS
 
   js_import :connectGameChannel, from: "./game_channel.mjs"
-  js_import :pushDrawingSegment, from: "./game_channel.mjs"
-  js_import :pushDrawingClear, from: "./game_channel.mjs"
+
+  # Keyboard shortcuts (JS interop — v0.9.2 has no native key events).
+  js_import :installCanvasShortcuts, from: "./keyboard.mjs"
 
   # JS-managed drawing — bypasses Hologram re-renders for smooth drawing
   js_import :startStroke, from: "./drawing_manager.mjs"
@@ -163,6 +164,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
                   |> put_action(:do_join_as_watcher)
               end
 
+            # Subscribe this page to the room's public realtime channel (chat
+            # now; room/timer state deltas in later phases). Members, watchers
+            # and anonymous spectators all subscribe — these payloads carry no
+            # per-user secrets. The drawer additionally subscribes to its own
+            # {:user, id} channel for word secrets in a later phase.
+            server = put_subscription(server, {:room, room_id})
+
             {component, server}
 
           {:error, _} ->
@@ -256,15 +264,82 @@ defmodule ScrawlyWeb.Pages.GamePage do
             |> sync_drawing_path(params)
             |> maybe_connect_channel()
 
-          # Only unauthenticated watchers (no token) need polling fallback
-          has_token = Map.get(component.state, :socket_token, "") != ""
-
-          if has_token do
-            component
-          else
-            put_action(component, name: :poll_room, delay: 3000)
-          end
+          # Players, watchers and anonymous spectators now receive live updates
+          # via the {:room, id} realtime channel (:room_delta / :chat_appended).
+          # No recurring poll — keep the enriched state and let deltas drive it.
+          component
       end
+    end
+  end
+
+  # ── Client-side Actions: Room realtime delta ─────────────────────────
+  # Pushed by RoomServer.notify_waiters on every state mutation (join/leave,
+  # timer tick, game/round/phase change, scores) to every page subscribed to
+  # {:room, id}. Replaces the room_state_changed → poll loop.
+  #
+  # Carries no word secrets. A phase/round transition fires poll_room_state once
+  # to pull the per-user enriched slice (masked word for guessers, raw word for
+  # the drawer, drawer name, word_choices) — that path keeps WordHints
+  # server-side. Non-transition deltas (timer ticks, joins, guesses, scores)
+  # apply inline with no round-trip, which is the per-tick poll we delete here.
+  def action(:room_delta, params, component) do
+    cond do
+      component.state.leaving? ->
+        component
+
+      # Lamport guard — drop stale or duplicate deltas (delivery is at-most-once,
+      # unordered). handle_game_state_changes is level-triggered, so a skipped
+      # delta self-heals on the next one.
+      Map.get(params, :version, 0) <= Map.get(component.state, :version, 0) ->
+        component
+
+      # Game just ended → score page; room dissolved/creator left → home.
+      params.status == :post_game and Map.get(params, :last_game_id) != nil ->
+        put_page(component, ScrawlyWeb.Pages.GameScorePage, game_id: params.last_game_id)
+
+      params.status == :ended ->
+        component
+        |> put_state(:version, params.version)
+        |> put_action(name: :go_home, delay: 2000)
+
+      true ->
+        old_started = component.state.game_started
+        new_active = params.game_id != nil
+        old_round = component.state.round
+        new_round = Map.get(params, :current_round) || 0
+        old_phase = component.state.phase
+        new_phase = Map.get(params, :phase, :idle)
+
+        transition? =
+          old_started != new_active or new_round != old_round or new_phase != old_phase
+
+        # Ambient fields update on every delta (cheap, secret-free).
+        component =
+          component
+          |> put_state(:version, params.version)
+          |> put_state(:players, params.players)
+          |> put_state(:watchers, Map.get(params, :watchers) || [])
+          |> put_state(:room_status, params.status)
+          |> put_state(:correct_guessers, Map.get(params, :correct_guessers) || [])
+          |> put_state(:past_games, Map.get(params, :past_games) || component.state.past_games)
+          |> put_state(
+            :can_start_game,
+            component.state.is_creator and length(params.players) >= 2 and params.game_id == nil
+          )
+
+        if transition? do
+          # Defer all game-state/word fields to the proven room_refreshed path so
+          # its transition detection sees the correct pre-transition values.
+          put_command(component, :poll_room_state,
+            room_id: component.state.room_id,
+            user_id: component.state.current_user_id
+          )
+        else
+          # Fast path: tick the timers (and keep the frozen word display).
+          component
+          |> put_state(:time_left, Map.get(params, :time_left) || 0)
+          |> put_state(:choice_time_left, Map.get(params, :choice_time_left) || 0)
+        end
     end
   end
 
@@ -361,6 +436,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def action(:update_message, %{event: %{value: msg}}, component),
     do: put_state(component, :new_message, msg)
 
+  # Escape in the chat input clears it (dispatched from keyboard.mjs).
+  def action(:clear_message, _params, component),
+    do: put_state(component, :new_message, "")
+
   def action(:scroll_chat, _params, component) do
     JS.exec(~JS"""
       var el = document.getElementById('chat-messages');
@@ -370,39 +449,53 @@ defmodule ScrawlyWeb.Pages.GamePage do
     component
   end
 
-  # ── Client-side Actions: Channel Events ─────────────────────────────
-  # Received from Phoenix Channel broadcasts via JS interop.
+  # ── Client-side Actions: Chat realtime delta ─────────────────────────
+  # Pushed by RoomServer's send_chat_message choke point via Hologram realtime
+  # to every page subscribed to {:room, room_id}. Appends one message,
+  # idempotent by id (so the sender's own SSE self-echo can't double-apply),
+  # keeps the 50-message cap, and auto-scrolls. This replaces the chat half of
+  # the old room_refreshed poll.
+  def action(:chat_appended, %{message: message}, component) do
+    existing = Map.get(component.state, :chat_messages, [])
 
-  # Dispatched by JS once the channel WebSocket is actually connected.
-  # Immediately poll to sync state — the join broadcast may have fired
-  # before the channel was ready, so the joining user could have stale data.
+    if Enum.any?(existing, &(Map.get(&1, :id) == Map.get(message, :id))) do
+      component
+    else
+      component
+      |> put_state(:chat_messages, [message | existing] |> Enum.take(50))
+      |> put_action(:scroll_chat)
+    end
+  end
+
+  # ── Client-side Actions: Drawing realtime deltas ─────────────────────
+  # Completed strokes / clear / undo now arrive as Hologram realtime broadcasts
+  # on {:room, id} (produced by the drawer's :complete_stroke / :clear_drawing_cmd
+  # / :undo_drawing_cmd commands), not Phoenix channel events. Live in-progress
+  # chunks still stream over the channel (applyRemoteChunk, JS-only). The drawer
+  # is excluded from these broadcasts and also guarded out by is_drawer below,
+  # since it already rendered the stroke locally.
+
+  # Dispatched by JS once the drawing channel (chunks) is connected. Restores the
+  # drawer's local stroke history on reconnect and does a one-shot state resync.
   def action(:channel_connected, _params, component) do
+    # Install keyboard shortcuts (idempotent) — Ctrl/Cmd+Z undo, E eraser for the
+    # drawer, Escape to clear chat. v0.9.2 has no native key events, so this is
+    # JS interop (see keyboard.mjs).
+    JS.call(:installCanvasShortcuts, [])
+
+    if component.state.is_drawer do
+      JS.call(:setStrokes, [Map.get(component.state, :drawing_strokes, [])])
+    end
+
     component
     |> put_state(:channel_connected, true)
     |> put_action(:poll_room)
   end
 
-  # Received from channel broadcast when another player draws a stroke
-  def action(:receive_drawing_stroke, params, component) do
-    if not component.state.is_drawer do
-      stroke = %{
-        path: params.path || "",
-        color: params.color || "#000000",
-        width: params.width || 2
-      }
-
-      strokes = Map.get(component.state, :drawing_strokes, [])
-      put_state(component, :drawing_strokes, strokes ++ [stroke])
-    else
-      component
-    end
-  end
-
-  # Received from channel after `drawing_stroke_complete` is broadcast.
-  # Removes the JS-side overlay and promotes the stroke into Hologram state
-  # in the same action — Hologram batches the JS.call + state update so the
-  # DOM diff applies both in one render cycle (no flicker).
-  def action(:receive_drawing_stroke_complete, params, component) do
+  # Peer received a completed stroke. Remove the live JS overlay and promote the
+  # canonical stroke into Hologram state in the same action so the DOM diff
+  # applies both in one render cycle (no flicker).
+  def action(:stroke_completed, params, component) do
     if not component.state.is_drawer do
       stroke = %{
         path: params.path || "",
@@ -419,36 +512,14 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  # Legacy: receive_drawing_segment (backward compat from old channel)
-  def action(:receive_drawing_segment, params, component) do
-    if not component.state.is_drawer do
-      stroke = %{path: params.segment || "", color: "#000000", width: 2}
-      strokes = Map.get(component.state, :drawing_strokes, [])
-      put_state(component, :drawing_strokes, strokes ++ [stroke])
-    else
-      component
-    end
-  end
-
-  # Received from channel broadcast when drawer clears canvas
-  def action(:receive_drawing_clear, _params, component) do
+  # Peer received a canvas clear.
+  def action(:drawing_cleared, _params, component) do
     JS.call(:setDrawingPath, [""])
     put_state(component, :drawing_strokes, [])
   end
 
-  # Received from channel on undo
-  def action(:receive_drawing_undo, params, component) do
-    if not component.state.is_drawer do
-      strokes = params.strokes || []
-      JS.call(:setStrokes, [strokes])
-      put_state(component, :drawing_strokes, strokes)
-    else
-      component
-    end
-  end
-
-  # Received on channel join — full strokes sync for late joiners
-  def action(:sync_full_drawing_path, params, component) do
+  # Peer received an undo — the broadcast carries the full authoritative stroke list.
+  def action(:drawing_undone, params, component) do
     if not component.state.is_drawer do
       strokes = params.strokes || []
       JS.call(:setStrokes, [strokes])
@@ -488,9 +559,38 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
+  # Drawer finished a stroke (dispatched from drawing_manager.endStroke with the
+  # final path). Persist it and fan it out to peers; the drawer already rendered
+  # it locally in JS, so nothing changes in its own Hologram state here.
+  def action(:commit_stroke, %{stroke_id: stroke_id, path: path, color: color, width: width}, component) do
+    put_command(component, :complete_stroke,
+      room_id: component.state.room_id,
+      user_id: component.state.current_user_id,
+      stroke_id: stroke_id,
+      path: path,
+      color: color,
+      width: width
+    )
+  end
+
+  # Drawer undid a stroke (dispatched from drawing_manager.undoStroke, only when a
+  # stroke was actually popped). Persist + fan out the resulting stroke list.
+  def action(:commit_undo, _params, component) do
+    put_command(component, :undo_drawing_cmd,
+      room_id: component.state.room_id,
+      user_id: component.state.current_user_id
+    )
+  end
+
   def action(:clear_canvas, _params, component) do
     JS.call(:clearDrawing, [])
-    put_state(component, :drawing_strokes, [])
+
+    component
+    |> put_state(:drawing_strokes, [])
+    |> put_command(:clear_drawing_cmd,
+      room_id: component.state.room_id,
+      user_id: component.state.current_user_id
+    )
   end
 
   # ── Drawing tool actions ─────────────────────────────────────────────
@@ -547,6 +647,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
     do: Commands.record_correct_guess(params, server)
 
   def command(:choose_word, params, server), do: Commands.choose_word(params, server)
+
+  def command(:complete_stroke, params, server), do: Commands.complete_stroke(params, server)
+  def command(:clear_drawing_cmd, params, server), do: Commands.clear_drawing_cmd(params, server)
+  def command(:undo_drawing_cmd, params, server), do: Commands.undo_drawing_cmd(params, server)
 
   def command(:fetch_past_games, params, server),
     do: Commands.fetch_past_games(params, server)
@@ -1015,7 +1119,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
                 <button class="tool-btn" $click={:clear_canvas}>clear</button>
               </div>
               <span class="mono" style="font-size: 11px; color: var(--muted); margin-left: auto;">
-                <span class="kbd">U</span> undo · <span class="kbd">C</span> clear
+                <span class="kbd">⌘/Ctrl+Z</span> undo · <span class="kbd">E</span> eraser
               </span>
             </div>
           {%else}
