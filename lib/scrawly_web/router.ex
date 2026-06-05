@@ -26,6 +26,8 @@ defmodule ScrawlyWeb.Router do
 
     auth_routes AuthController, Scrawly.Accounts.User, path: "/auth"
     sign_out_route AuthController
+
+    get "/guest", AuthController, :guest
   end
 
   # Other scopes may use custom stacks.

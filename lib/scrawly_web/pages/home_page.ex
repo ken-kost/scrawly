@@ -26,15 +26,15 @@ defmodule ScrawlyWeb.Pages.HomePage do
   alias ScrawlyWeb.Components.GameDemo
 
   def init(_params, component, server) do
-    authenticated =
+    {authenticated, is_guest} =
       case get_session(server, "user_id") do
         nil ->
-          false
+          {false, false}
 
         user_id ->
           case Ash.get(Scrawly.Accounts.User, user_id) do
-            {:ok, _user} -> true
-            _ -> false
+            {:ok, user} -> {true, user.is_guest}
+            _ -> {false, false}
           end
       end
 
@@ -70,6 +70,11 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_state(:new_round_multiplier, "1")
     |> put_state(:new_ai_tone, "fun")
     |> put_state(:authenticated, authenticated)
+    |> put_state(:is_guest, is_guest)
+    |> put_state(:show_login_modal, false)
+    |> put_state(:login_email, "")
+    |> put_state(:login_password, "")
+    |> put_state(:login_error, "")
     |> put_state(:socket_token, token)
     # Demo board tool state — sent down as props to GameDemo
     |> put_state(:demo_color, "#000000")
@@ -89,16 +94,21 @@ defmodule ScrawlyWeb.Pages.HomePage do
             where one person draws and everyone else races to name it.
           </p>
           <div class="row" style="gap: 8px; margin-top: 24px;">
-            {%if @authenticated}
+            {%if @authenticated && !@is_guest}
               <button class="app-btn app-btn-primary app-btn-lg" $click={:show_create_room}>
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="16" height="16"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
                 create a room
               </button>
             {%else}
-              <button class="app-btn app-btn-primary app-btn-lg" $click={:show_login}>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="16" height="16"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
-                create a room
-              </button>
+              {%if @is_guest}
+                <button class="app-btn app-btn-lg" $click={:show_login}>sign in to create rooms</button>
+              {%else}
+                <button class="app-btn app-btn-primary app-btn-lg" $click={:show_login}>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="16" height="16"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+                  create a room
+                </button>
+                <a class="app-btn app-btn-lg" href="/guest">play as guest</a>
+              {/if}
             {/if}
             <span class="mono" style="font-size: 12px; color: var(--muted); margin-left: 8px;">
               press <span class="kbd">N</span> for new
@@ -244,6 +254,43 @@ defmodule ScrawlyWeb.Pages.HomePage do
           </form>
         </div>
       {/if}
+
+      {%if @show_login_modal}
+        <div class="scrim">
+          <form class="app-modal" $submit="submit_register">
+            <div class="app-modal-head">
+              <div>
+                <h3>create an account</h3>
+                <div class="sub">register to create and host rooms.</div>
+              </div>
+              <button type="button" class="icon-btn" $click={:hide_login}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="18" height="18"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg>
+              </button>
+            </div>
+            <div class="app-modal-body">
+              {%if @login_error != ""}
+                <div style="color: var(--danger); font-size: 13px; margin-bottom: 4px;">{@login_error}</div>
+              {/if}
+              <div>
+                <label class="field-label">email</label>
+                <input class="app-input" type="email" name="email" autocomplete="email"
+                       placeholder="you@example.com"
+                       value={@login_email} $input={:update_login_email} />
+              </div>
+              <div>
+                <label class="field-label">password</label>
+                <input class="app-input" type="password" name="password" autocomplete="current-password"
+                       placeholder="at least 8 characters"
+                       value={@login_password} $input={:update_login_password} />
+              </div>
+            </div>
+            <div class="app-modal-foot">
+              <button type="button" class="app-btn app-btn-ghost" $click={:submit_sign_in}>sign in</button>
+              <button type="submit" class="app-btn app-btn-primary">create account</button>
+            </div>
+          </form>
+        </div>
+      {/if}
     </div>
     """
   end
@@ -264,6 +311,52 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_state(:new_round_duration, "60")
     |> put_state(:new_round_multiplier, "1")
     |> put_state(:new_ai_tone, "fun")
+  end
+
+  # ── Login / register modal actions ─────────────────────────────────
+
+  def action(:show_login, _params, component) do
+    component
+    |> put_state(:show_login_modal, true)
+    |> put_state(:login_error, "")
+  end
+
+  def action(:hide_login, _params, component) do
+    put_state(component, :show_login_modal, false)
+  end
+
+  def action(:update_login_email, %{event: %{value: val}}, component) do
+    put_state(component, :login_email, val)
+  end
+
+  def action(:update_login_password, %{event: %{value: val}}, component) do
+    put_state(component, :login_password, val)
+  end
+
+  def action(:submit_register, _params, component) do
+    put_command(component, :register,
+      email: component.state.login_email,
+      password: component.state.login_password
+    )
+  end
+
+  def action(:submit_sign_in, _params, component) do
+    put_command(component, :sign_in,
+      email: component.state.login_email,
+      password: component.state.login_password
+    )
+  end
+
+  def action(:login_failed, %{message: message}, component) do
+    put_state(component, :login_error, message)
+  end
+
+  def action(:reload_home, _params, component) do
+    JS.exec(~JS"""
+      window.location.assign('/');
+    """)
+
+    component
   end
 
   def action(:update_room_name, %{event: %{value: name}}, component) do
@@ -479,18 +572,48 @@ defmodule ScrawlyWeb.Pages.HomePage do
     }
   end
 
-  # Authenticated user creates room — they become creator and auto-join
+  # Non-guest authenticated user creates room — they become creator and auto-join.
+  # Guests are rejected here (the UI also hides the button for them).
   def command(:create_room, params, server) do
     user_id = get_session(server, :user_id)
-    attrs = Map.put(room_attrs(params), :creator_id, user_id)
 
-    with {:ok, room} <- Scrawly.Games.create_room(attrs),
+    with {:ok, %{is_guest: false}} <- Ash.get(Scrawly.Accounts.User, user_id),
+         attrs = Map.put(room_attrs(params), :creator_id, user_id),
+         {:ok, room} <- Scrawly.Games.create_room(attrs),
          {:ok, _user} <- Scrawly.Accounts.join_room(user_id, room.id),
          {:ok, _room} <- Scrawly.Games.join_room(room.id, user_id),
          {:ok, _pid} <- Scrawly.Games.RoomServer.ensure_started(room.id) do
       put_action(server, :join_room_with_user, room_id: room.id)
     else
       _ -> server
+    end
+  end
+
+  def command(:register, %{email: email, password: password}, server) do
+    case Scrawly.Accounts.register_with_password(email, password) do
+      {:ok, user} ->
+        server
+        |> put_session(:user_id, user.id)
+        |> put_session(:user_token, user.__metadata__[:token])
+        |> put_action(:reload_home)
+
+      {:error, _} ->
+        put_action(server, :login_failed,
+          message: "could not create account — use a valid email and a password of at least 8 characters"
+        )
+    end
+  end
+
+  def command(:sign_in, %{email: email, password: password}, server) do
+    case Scrawly.Accounts.sign_in_with_password(email, password) do
+      {:ok, user} ->
+        server
+        |> put_session(:user_id, user.id)
+        |> put_session(:user_token, user.__metadata__[:token])
+        |> put_action(:reload_home)
+
+      {:error, _} ->
+        put_action(server, :login_failed, message: "incorrect email or password")
     end
   end
 

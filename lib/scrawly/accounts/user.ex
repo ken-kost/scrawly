@@ -86,6 +86,27 @@ defmodule Scrawly.Accounts.User do
       end
     end
 
+    create :register_as_guest do
+      accept []
+
+      change fn changeset, _context ->
+        suffix = :crypto.strong_rand_bytes(5) |> Base.encode32(case: :lower, padding: false)
+
+        changeset
+        |> Ash.Changeset.force_change_attribute(:email, "guest-#{suffix}@guest.scrawly.local")
+        |> Ash.Changeset.force_change_attribute(:username, "guest-#{suffix}")
+        |> Ash.Changeset.force_change_attribute(:is_guest, true)
+        |> Ash.Changeset.after_action(fn _changeset, user ->
+          {:ok, token, _claims} = AshAuthentication.Jwt.token_for_user(user, %{"purpose" => "user"})
+          {:ok, Ash.Resource.put_metadata(user, :token, token)}
+        end)
+      end
+
+      metadata :token, :string do
+        allow_nil? false
+      end
+    end
+
     create :create do
       accept [:email, :username]
       primary? true
@@ -168,6 +189,12 @@ defmodule Scrawly.Accounts.User do
       constraints min_length: 2, max_length: 20
     end
 
+    attribute :is_guest, :boolean do
+      default false
+      allow_nil? false
+      public? true
+    end
+
     attribute :score, :integer do
       allow_nil? false
       default 0
@@ -228,5 +255,6 @@ defmodule Scrawly.Accounts.User do
     |> to_string()
     |> String.split("@")
     |> List.first()
+    |> String.slice(0, 20)
   end
 end

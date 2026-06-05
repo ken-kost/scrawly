@@ -21,4 +21,19 @@ defmodule ScrawlyWeb.AuthController do
     |> clear_session(:scrawly)
     |> redirect(to: "/")
   end
+
+  def guest(conn, params) do
+    user = Scrawly.Accounts.register_as_guest!()
+
+    conn
+    |> store_in_session(user)
+    |> put_session(:user_id, user.id)
+    |> redirect(to: guest_return_to(params))
+  end
+
+  defp guest_return_to(%{"return_to" => "/" <> _ = path}) do
+    if String.starts_with?(path, "//"), do: "/", else: path
+  end
+
+  defp guest_return_to(_), do: "/"
 end

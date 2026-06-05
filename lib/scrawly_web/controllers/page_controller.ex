@@ -10,10 +10,10 @@ defmodule ScrawlyWeb.PageController do
   def show(conn, params) do
     case conn.private.plug_session["user_token"] do
       nil ->
-        # Store the return path and redirect to register
+        # No session — create a guest account and return to the requested page
+        # so anyone with a room link can join and chat as a guest.
         conn
-        |> put_session(:return_to, conn.request_path)
-        |> redirect(to: "/register")
+        |> redirect(to: "/guest?return_to=" <> URI.encode_www_form(conn.request_path))
 
       _user_token ->
         # User is authenticated, let Hologram handle the page routing
