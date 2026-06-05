@@ -107,6 +107,26 @@ defmodule Scrawly.Accounts.User do
       end
     end
 
+    update :upgrade_guest do
+      require_atomic? false
+      accept [:email]
+      argument :password, :string, allow_nil?: false, sensitive?: true, constraints: [min_length: 8]
+
+      change set_attribute(:is_guest, false)
+      change {AshAuthentication.Strategy.Password.HashPasswordChange, strategy_name: :password}
+
+      change fn changeset, _context ->
+        Ash.Changeset.after_action(changeset, fn _changeset, user ->
+          {:ok, token, _claims} = AshAuthentication.Jwt.token_for_user(user, %{"purpose" => "user"})
+          {:ok, Ash.Resource.put_metadata(user, :token, token)}
+        end)
+      end
+
+      metadata :token, :string do
+        allow_nil? false
+      end
+    end
+
     create :create do
       accept [:email, :username]
       primary? true

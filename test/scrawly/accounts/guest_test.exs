@@ -46,4 +46,27 @@ defmodule Scrawly.Accounts.GuestTest do
       assert result.next_action == nil
     end
   end
+
+  describe "upgrade_guest" do
+    test "turns a guest into a real account in place" do
+      guest = Accounts.register_as_guest!()
+      email = "upgraded-#{System.unique_integer([:positive])}@example.com"
+
+      {:ok, upgraded} = Accounts.upgrade_guest(guest, %{email: email, password: "password123"})
+
+      assert upgraded.id == guest.id
+      assert upgraded.is_guest == false
+      assert to_string(upgraded.email) == email
+      assert is_binary(upgraded.hashed_password)
+      assert match?({:ok, _, _}, AshAuthentication.Jwt.verify(upgraded.__metadata__[:token], User))
+      assert match?({:ok, _}, Accounts.sign_in_with_password(email, "password123"))
+    end
+
+    test "rejects a password shorter than 8 characters" do
+      guest = Accounts.register_as_guest!()
+      email = "short-#{System.unique_integer([:positive])}@example.com"
+
+      assert {:error, _} = Accounts.upgrade_guest(guest, %{email: email, password: "short"})
+    end
+  end
 end

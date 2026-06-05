@@ -11,6 +11,7 @@ defmodule Scrawly.Accounts do
     resource Scrawly.Accounts.User do
       define :register_with_password, action: :register_with_password, args: [:email, :password]
       define :register_as_guest, action: :register_as_guest
+      define :upgrade_guest, action: :upgrade_guest
       define :sign_in_with_password, action: :sign_in_with_password, args: [:email, :password]
       define :join_room, action: :join_room, args: [:current_room_id]
       define :leave_room, action: :leave_room

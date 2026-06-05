@@ -101,7 +101,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
               </button>
             {%else}
               {%if @is_guest}
-                <button class="app-btn app-btn-lg" $click={:show_login}>sign in to create rooms</button>
+                <button class="app-btn app-btn-primary app-btn-lg" $click={:show_login}>register to create rooms</button>
               {%else}
                 <button class="app-btn app-btn-primary app-btn-lg" $click={:show_login}>
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="16" height="16"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
@@ -590,7 +590,18 @@ defmodule ScrawlyWeb.Pages.HomePage do
   end
 
   def command(:register, %{email: email, password: password}, server) do
-    case Scrawly.Accounts.register_with_password(email, password) do
+    user_id = get_session(server, :user_id)
+
+    result =
+      case user_id && Ash.get(Scrawly.Accounts.User, user_id) do
+        {:ok, %{is_guest: true} = guest} ->
+          Scrawly.Accounts.upgrade_guest(guest, %{email: email, password: password})
+
+        _ ->
+          Scrawly.Accounts.register_with_password(email, password)
+      end
+
+    case result do
       {:ok, user} ->
         server
         |> put_session(:user_id, user.id)
