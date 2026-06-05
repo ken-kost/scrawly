@@ -14,9 +14,6 @@ defmodule ScrawlyWeb.Presence do
   @impl true
   def init(_opts), do: {:ok, %{}}
 
-  # Game-channel presence no longer rebroadcasts a poll nudge — player join/leave
-  # reaches pages as a RoomServer :room_delta. Presence remains only for the
-  # lobby online counter (online_count/0 below), so handle_metas is now a no-op.
   @impl true
   def handle_metas(_topic, _diff, _presences, state), do: {:ok, state}
 

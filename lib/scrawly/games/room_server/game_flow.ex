@@ -17,9 +17,6 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
 
   alias Scrawly.Games
 
-  # Trigger async AI word refill when the pool drops at or below this count.
-  # Each round consumes 3 words (one chosen, two discarded), so this is generous
-  # enough to keep the pool full without paying for unused generation.
   @ai_refill_threshold 6
 
   @doc """
@@ -69,7 +66,6 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
         |> bump_fn.()
         |> notify_fn.()
 
-      # Trigger async AI word refill if pool is running low
       if state.word_source == :ai and used_from_ai > 0 and
            length(remaining_ai) <= @ai_refill_threshold do
         send(
@@ -148,7 +144,6 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
       Phoenix.PubSub.unsubscribe(Scrawly.PubSub, "game:#{state.game_id}")
     end
 
-    # Build past game entry before clearing state
     game_entry = build_past_game_entry(state)
 
     %{
@@ -245,10 +240,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
       type: :system
     }
 
-    # System messages (join/leave/round events) fan out via the realtime chat
-    # delta, same as user messages — the room_delta state broadcast intentionally
-    # carries no chat. No-op when the Hologram runtime isn't started.
-    Scrawly.Realtime.broadcast_action({:room, state.room_id}, :chat_appended, %{message: msg})
+    Hologram.Realtime.broadcast_action({:room, state.room_id}, :chat_appended, %{message: msg})
 
     %{state | chat_messages: [msg | state.chat_messages] |> Enum.take(50)}
   end

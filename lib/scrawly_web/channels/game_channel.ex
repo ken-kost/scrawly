@@ -50,9 +50,6 @@ defmodule ScrawlyWeb.GameChannel do
     end
   end
 
-  # Live in-progress chunks — broadcast immediately to peers, no RoomServer
-  # roundtrip so the GenServer hot path stays clear. The *completed* stroke is
-  # persisted + fanned out via the Hologram :complete_stroke command instead.
   @impl true
   def handle_in("drawing_stroke_chunk", payload, socket) do
     stroke_id = payload["stroke_id"]
@@ -76,9 +73,6 @@ defmodule ScrawlyWeb.GameChannel do
     end
   end
 
-  # If this socket leaves with an in-flight stroke (drawer closed tab, network
-  # drop, etc.), tell remaining peers to GC their overlays so the stroke doesn't
-  # visually freeze on their canvas.
   @impl true
   def terminate(_reason, socket) do
     open = Map.get(socket.assigns, :open_stroke_ids, MapSet.new())

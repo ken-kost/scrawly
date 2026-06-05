@@ -31,8 +31,6 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
           Scrawly.Accounts.join_room(user_id, room_id)
           Games.join_room(room_id, user_id)
 
-          # RoomServer.join already broadcast a :room_delta to subscribers; the
-          # joining player gets its first enriched state from the poll below.
           poll_and_enrich(server, room_id, user_id)
 
         {:error, :room_full} ->
@@ -67,7 +65,6 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     {word_count, _word_source, ai_words, round_duration, total_rounds, ai_status} =
       fetch_room_game_settings(room_id, players)
 
-    # Build 3 word choices for the first drawer (AI pool first, fall back to local).
     {choices, remaining_ai, _used_from_ai} =
       GameFlow.pick_word_choices(ai_words, [], word_count, 3)
 
@@ -100,8 +97,11 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
 
     case RoomServer.get_state(room_id) do
-      {:ok, state} -> put_action(server, :room_refreshed, enrich_state(state, get_user_id(server)))
-      _ -> server
+      {:ok, state} ->
+        put_action(server, :room_refreshed, enrich_state(state, get_user_id(server)))
+
+      _ ->
+        server
     end
   end
 
@@ -160,11 +160,8 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
         %{room_id: room_id, player_id: player_id, player_name: player_name} = _params,
         server
       ) do
-    # RoomServer.record_guess is the source of truth — it computes points using
-    # the authoritative scoring formula and updates the in-game player score.
     case RoomServer.record_guess(room_id, player_id) do
       {:ok, _state, points} when points > 0 ->
-        # Persist score to user profile (cross-game total)
         with {:ok, user} <- Ash.get(Scrawly.Accounts.User, player_id) do
           new_score = (user.score || 0) + points
           user |> Ash.Changeset.for_update(:update_score, %{score: new_score}) |> Ash.update()
@@ -187,15 +184,9 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     server
   end
 
-  # ── Drawing: persist + fan out via realtime ──────────────────────────
-  # The drawer's browser owns the live stroke (JS) and streams chunks over the
-  # channel. On completion/clear/undo it issues one of these commands, which
-  # persists to RoomServer (source of truth) and broadcasts the canonical result
-  # to peers on {:room, id}, excluding the drawer's own identity (they already
-  # rendered it locally — the receiving action also guards on is_drawer).
-
   def complete_stroke(
-        %{room_id: room_id, stroke_id: stroke_id, path: path, color: color, width: width} = params,
+        %{room_id: room_id, stroke_id: stroke_id, path: path, color: color, width: width} =
+          params,
         server
       ) do
     RoomServer.append_drawing(room_id, %{path: path, color: color, width: width})
@@ -242,7 +233,6 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
       case Games.get_games_for_room(room_id) do
         {:ok, games} ->
           Enum.map(games, fn g ->
-            # Fetch top scorer for this game
             winner =
               case Games.get_game_results_for_game(g.id) do
                 {:ok, results} when results != [] ->
@@ -263,10 +253,6 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     put_action(server, :past_games_loaded, games: games)
   end
 
-  ## Private
-
-  # Reads RoomServer state, computes per-user fields (word hint, drawer name, is_drawer),
-  # and returns a room_refreshed action with the enriched map.
   defp poll_and_enrich(server, room_id, user_id) do
     case RoomServer.get_state(room_id) do
       {:ok, state} ->
@@ -277,13 +263,6 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
   end
 
-  # Enriches public RoomServer state with per-user fields:
-  #   - is_drawer
-  #   - current_word_display (masked for non-drawers)
-  #   - drawer_name
-  #   - hint_info
-  #   - word_choices (only for the drawer; empty list for others)
-  #   - choice_time_left (seconds remaining in choice phase)
   defp enrich_state(state, user_id) do
     is_drawer = state.current_drawer_id == user_id
     game_active = state.game_id != nil
@@ -321,7 +300,6 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
         %{stage: 0, revealed_count: 0, total_letters: 0, remaining_count: 0, progress_pct: 0}
       end
 
-    # Only the drawer sees the actual word choices; everyone else gets empty.
     word_choices = if is_drawer, do: Map.get(state, :word_choices, []), else: []
 
     choice_time_left =
@@ -364,7 +342,6 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
         rm = rs.round_multiplier || 1
         tone = rs.ai_tone || :fun
         tr = length(players) * rm
-        # 3 choices per round; cap at 60 to limit prompt size.
         ai_num_words = min(max(tr * 3, 9), 60)
 
         {generated, status} =

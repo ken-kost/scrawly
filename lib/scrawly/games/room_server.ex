@@ -25,7 +25,6 @@ defmodule Scrawly.Games.RoomServer do
     players: [],
     watchers: [],
     version: 0,
-    # Room settings
     word_count: 1,
     word_source: :local,
     prompt: nil,
@@ -33,11 +32,8 @@ defmodule Scrawly.Games.RoomServer do
     round_duration: 60,
     round_multiplier: 1,
     ai_tone: :fun,
-    # AI-generated word pool (ephemeral, consumed round by round)
     ai_words: [],
-    # Words already used this game (to avoid repeats)
     used_words: [],
-    # Game state
     game_id: nil,
     current_round: 0,
     total_rounds: 5,
@@ -47,25 +43,17 @@ defmodule Scrawly.Games.RoomServer do
     round_active: false,
     correct_guessers: [],
     last_game_id: nil,
-    # Word-choice phase (skribbl.io-style)
     phase: :idle,
     word_choices: [],
     choice_deadline: nil,
-    # Per-round guesser points (used to compute drawer mean at round end)
     round_guesser_points: [],
-    # Round results tracking
     round_results: [],
     round_start_scores: %{},
-    # Shared chat and drawing
     chat_messages: [],
     drawing_strokes: [],
-    # Rate limiting: map of player_id => [monotonic_ms, ...] (recent message timestamps)
     chat_rate_limits: %{},
-    # History of completed games in this room
     past_games: []
   ]
-
-  ## Public API
 
   def ensure_started(room_id) do
     case Registry.lookup(@registry, room_id) do
@@ -200,8 +188,6 @@ defmodule Scrawly.Games.RoomServer do
       end
     end)
   end
-
-  ## GenServer Callbacks
 
   @impl true
   def init(room_id) do
@@ -345,8 +331,6 @@ defmodule Scrawly.Games.RoomServer do
 
     {:reply, {:ok, to_public(new_state)}, new_state}
   end
-
-  # ── Game state mutations ─────────────────────────────────────────────
 
   def handle_call({:start_game, params}, _from, state) do
     Phoenix.PubSub.subscribe(Scrawly.PubSub, "game:#{params.game_id}")
@@ -534,8 +518,6 @@ defmodule Scrawly.Games.RoomServer do
     {:stop, :normal, :ok, new_state}
   end
 
-  # ── Chat & Drawing ──────────────────────────────────────────────────
-
   @chat_max_messages 3
   @chat_window_ms 5_000
 
@@ -543,13 +525,10 @@ defmodule Scrawly.Games.RoomServer do
     type = Map.get(message, :type)
     player_name = Map.get(message, :player_name)
 
-    # System messages always bypass rate limiting.
     if type in [:system, :correct_guess] or player_name == "System" do
       new_state =
         %{state | chat_messages: [message | state.chat_messages] |> Enum.take(50)}
         |> bump_version()
-        # Chat fans out via the realtime :chat_appended delta below, not the
-        # room_state_changed poll nudge — so a chat message never triggers a poll.
         |> notify_waiters(false)
 
       broadcast_chat_appended(state.room_id, message)
@@ -590,7 +569,6 @@ defmodule Scrawly.Games.RoomServer do
     {:reply, :ok, new_state}
   end
 
-  # Legacy: plain string segment (backward compat)
   def handle_call({:append_drawing, segment}, _from, state) when is_binary(segment) do
     stroke = %{path: segment, color: "#000000", width: 2}
 
@@ -625,8 +603,6 @@ defmodule Scrawly.Games.RoomServer do
 
     {:reply, {:ok, new_strokes}, new_state}
   end
-
-  # ── PubSub handlers (RoundTimer events) ──────────────────────────────
 
   @impl true
   def handle_info({:timer_update, %{remaining_seconds: seconds}}, state) do
@@ -720,7 +696,6 @@ defmodule Scrawly.Games.RoomServer do
     if state.status == :post_game do
       Games.return_room_to_lobby(state.room_id)
 
-      # Clear players — they'll re-join when they land on the GamePage
       new_state =
         %{state | status: :lobby, players: []}
         |> add_sys_msg("Room is back in the lobby. Start a new game!")
@@ -740,10 +715,8 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   def handle_info({:refill_ai_words, _room_id, word_count, total_rounds, ai_tone}, state) do
-    # Skip refill if no prompt is set or game ended
     if state.prompt && state.prompt != "" && state.game_id do
       tone_str = to_string(ai_tone || :fun)
-      # 3 choices per round; cap at 60 to limit prompt size.
       num_words = min(max(total_rounds * 3, 9), 60)
 
       case Games.generate_ai_words(state.prompt, word_count, %{
@@ -765,8 +738,6 @@ defmodule Scrawly.Games.RoomServer do
   def handle_info({:timer_stopped, _}, state), do: {:noreply, state}
   def handle_info(_msg, state), do: {:noreply, state}
 
-  ## Private — Auto advance
-
   defp auto_next_round(state) do
     GameFlow.start_word_choice(
       state,
@@ -782,42 +753,27 @@ defmodule Scrawly.Games.RoomServer do
     GameFlow.auto_end_game(state, &bump_version/1, &notify_waiters/1)
   end
 
-  # Sends a self-addressed timeout message after the word-choice timer expires.
   defp schedule_word_choice_timeout(game_id, round) do
     Process.send_after(self(), {:word_choice_timeout, game_id, round}, 15_000)
   end
-
-  ## Private — Helpers
 
   defp via(room_id), do: {:via, Registry, {@registry, room_id}}
   defp creator_present?(state), do: Enum.any?(state.players, &(&1.id == state.creator_id))
   defp bump_version(state), do: %{state | version: state.version + 1}
   defp notify_lobby, do: Phoenix.PubSub.broadcast(Scrawly.PubSub, "lobby:rooms", :rooms_updated)
 
-  # Broadcast choke point every mutation funnels through (legacy name retained
-  # across ~25 call sites). Replaces the old room_state_changed → poll nudge:
-  # each mutation projects a secret-free delta straight to subscribed pages over
-  # Hologram realtime (SSE). No-op when the Hologram runtime isn't started.
   defp notify_waiters(state, broadcast \\ true) do
     if broadcast do
-      Scrawly.Realtime.broadcast_action({:room, state.room_id}, :room_delta, public_delta(state))
+      Hologram.Realtime.broadcast_action({:room, state.room_id}, :room_delta, public_delta(state))
     end
 
     state
   end
 
-  # Fan a just-appended chat message out to every page subscribed to the room's
-  # public realtime channel (players, watchers, anonymous spectators). No-op when
-  # the Hologram runtime isn't started — see `Scrawly.Realtime`.
   defp broadcast_chat_appended(room_id, message) do
-    Scrawly.Realtime.broadcast_action({:room, room_id}, :chat_appended, %{message: message})
+    Hologram.Realtime.broadcast_action({:room, room_id}, :chat_appended, %{message: message})
   end
 
-  # Public, secret-free projection of room state broadcast on each mutation.
-  # Deliberately omits the drawer secrets (current_word, word_choices) and the
-  # bulk fields carried by their own deltas (drawing_strokes via Phase 3,
-  # chat_messages via :chat_appended). The page pulls the per-user enriched slice
-  # (masked word, drawer name) via poll_room_state once per phase/round transition.
   defp public_delta(state) do
     %{
       room_id: state.room_id,
