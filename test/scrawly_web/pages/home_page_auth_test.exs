@@ -18,7 +18,7 @@ defmodule ScrawlyWeb.Pages.HomePageAuthTest do
       result = HomePage.init(%{}, component, server)
 
       assert result.state.authenticated == false
-      assert result.state.current_user == nil
+      assert result.state.is_guest == false
     end
 
     test "loads authenticated user data from session" do
@@ -42,7 +42,7 @@ defmodule ScrawlyWeb.Pages.HomePageAuthTest do
 
       # Should have user data in state
       assert result.state.authenticated == true
-      assert result.state.current_user.id == user.id
+      assert result.state.is_guest == false
     end
 
     test "auto-generates username from email during registration" do

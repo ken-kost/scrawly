@@ -17,7 +17,8 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       is_drawer: true,
       game_started: true,
       time_left: 60,
-      room_id: "test-room"
+      room_id: "test-room",
+      current_user_id: "test-user"
     }
 
     %Hologram.Component{state: Map.merge(defaults, overrides)}
@@ -94,12 +95,12 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
     end
   end
 
-  describe "receive_drawing_stroke" do
-    test "appends stroke to non-drawer's strokes" do
+  describe "stroke_completed" do
+    test "appends completed stroke to non-drawer's strokes" do
       comp = drawing_component(%{is_drawer: false})
-      params = %{path: "M 10 20 L 30 40", color: "#EF4444", width: 5}
+      params = %{stroke_id: "s1", path: "M 10 20 L 30 40", color: "#EF4444", width: 5}
 
-      result = GamePage.action(:receive_drawing_stroke, params, comp)
+      result = GamePage.action(:stroke_completed, params, comp)
 
       assert length(result.state.drawing_strokes) == 1
       [stroke] = result.state.drawing_strokes
@@ -110,9 +111,9 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
 
     test "does nothing for drawer" do
       comp = drawing_component(%{is_drawer: true})
-      params = %{path: "M 10 20", color: "#000000", width: 2}
+      params = %{stroke_id: "s1", path: "M 10 20", color: "#000000", width: 2}
 
-      result = GamePage.action(:receive_drawing_stroke, params, comp)
+      result = GamePage.action(:stroke_completed, params, comp)
 
       assert result.state.drawing_strokes == []
     end
@@ -126,15 +127,15 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
           ]
         })
 
-      params = %{path: "M 10 20", color: "#3B82F6", width: 10}
+      params = %{stroke_id: "s2", path: "M 10 20", color: "#3B82F6", width: 10}
 
-      result = GamePage.action(:receive_drawing_stroke, params, comp)
+      result = GamePage.action(:stroke_completed, params, comp)
 
       assert length(result.state.drawing_strokes) == 2
     end
   end
 
-  describe "receive_drawing_clear" do
+  describe "drawing_cleared" do
     test "clears all strokes" do
       comp =
         drawing_component(%{
@@ -143,7 +144,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
           ]
         })
 
-      result = GamePage.action(:receive_drawing_clear, %{}, comp)
+      result = GamePage.action(:drawing_cleared, %{}, comp)
 
       assert result.state.drawing_strokes == []
     end
