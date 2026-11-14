@@ -10,7 +10,7 @@ defmodule Scrawly.Games.RoomServer do
   use GenServer
 
   alias Scrawly.Games
-  alias Scrawly.Games.{Guess, Scoring, RoomServer.GameFlow, RoomServer.View}
+  alias Scrawly.Games.{Guess, Scoring, StrokeRules, RoomServer.GameFlow, RoomServer.View}
 
   @registry Scrawly.RoomRegistry
   @supervisor Scrawly.RoomSupervisor
@@ -219,8 +219,10 @@ defmodule Scrawly.Games.RoomServer do
       game, and there are at least 2 players.
     * `:dissolve` - the actor is the creator.
     * `:leave` - the actor is a player or the creator.
+    * `:draw` - the actor is the current drawer (`:not_drawer`) and the room
+      is in `:drawing` (`:wrong_phase`). Covers strokes, clear and undo.
   """
-  @spec authorize(map, term, :start_game | :dissolve | :leave) :: :ok | {:error, atom}
+  @spec authorize(map, term, :start_game | :dissolve | :leave | :draw) :: :ok | {:error, atom}
   def authorize(state, actor_id, :start_game) do
     cond do
       not creator?(state, actor_id) -> {:error, :not_creator}
@@ -240,8 +242,21 @@ defmodule Scrawly.Games.RoomServer do
       else: {:error, :not_member}
   end
 
+  def authorize(state, actor_id, :draw) do
+    cond do
+      not (is_binary(actor_id) and actor_id == state.current_drawer_id) -> {:error, :not_drawer}
+      state.phase != :drawing -> {:error, :wrong_phase}
+      true -> :ok
+    end
+  end
+
   defp creator?(state, actor_id), do: actor_id != nil and actor_id == state.creator_id
   defp player?(state, actor_id), do: Enum.any?(state.players, &(&1.id == actor_id))
+
+  defp member_of?(state, user_id) do
+    user_id != nil and
+      (player?(state, user_id) or Enum.any?(state.watchers, &(&1.id == user_id)))
+  end
 
   def room_exists?(room_id) do
     case Registry.lookup(@registry, room_id) do
@@ -250,22 +265,65 @@ defmodule Scrawly.Games.RoomServer do
     end
   end
 
-  def append_drawing(room_id, path_segment) do
-    GenServer.call(via(room_id), {:append_drawing, path_segment})
+  @doc """
+  Appends a completed stroke drawn by `actor_id`, who must pass
+  `authorize(state, actor_id, :draw)`. Only `path`, `color` and `width` are
+  kept, after `StrokeRules.check_append/2`.
+
+  Returns `:ok`, `{:error, :not_drawer | :wrong_phase | :not_found}`, or
+  `{:error, :invalid_stroke | :stroke_limit, strokes}` with the canvas as
+  stored, so the drawer can resync.
+  """
+  @spec append_drawing(term, term, term) ::
+          :ok
+          | {:error, :not_drawer | :wrong_phase | :not_found}
+          | {:error, :invalid_stroke | :stroke_limit, [StrokeRules.stroke()]}
+  def append_drawing(room_id, actor_id, stroke) do
+    GenServer.call(via(room_id), {:append_drawing, actor_id, stroke})
   catch
     :exit, _ -> {:error, :not_found}
   end
 
-  def clear_drawing(room_id) do
-    GenServer.call(via(room_id), :clear_drawing)
+  @doc "Clears the canvas for the current drawer (`authorize/3` `:draw`)."
+  @spec clear_drawing(term, term) :: :ok | {:error, :not_drawer | :wrong_phase | :not_found}
+  def clear_drawing(room_id, actor_id) do
+    GenServer.call(via(room_id), {:clear_drawing, actor_id})
   catch
     :exit, _ -> {:error, :not_found}
   end
 
-  def undo_drawing(room_id) do
-    GenServer.call(via(room_id), :undo_drawing)
+  @doc """
+  Drops the last stroke for the current drawer (`authorize/3` `:draw`) and
+  returns the remaining strokes.
+  """
+  @spec undo_drawing(term, term) ::
+          {:ok, [StrokeRules.stroke()]} | {:error, :not_drawer | :wrong_phase | :not_found}
+  def undo_drawing(room_id, actor_id) do
+    GenServer.call(via(room_id), {:undo_drawing, actor_id})
   catch
     :exit, _ -> {:error, :not_found}
+  end
+
+  @doc """
+  Whether `user_id` is a player or a watcher of the room. `false` when the
+  room is not running. Copies no state.
+  """
+  @spec member?(term, term) :: boolean
+  def member?(room_id, user_id) do
+    GenServer.call(via(room_id), {:member?, user_id})
+  catch
+    :exit, _ -> false
+  end
+
+  @doc """
+  Whether `user_id` may draw right now (`authorize/3` `:draw`). `false` when
+  the room is not running. Copies no state.
+  """
+  @spec drawing_allowed?(term, term) :: boolean
+  def drawing_allowed?(room_id, user_id) do
+    GenServer.call(via(room_id), {:drawing_allowed?, user_id})
+  catch
+    :exit, _ -> false
   end
 
   def list_active_rooms do
@@ -538,48 +596,43 @@ defmodule Scrawly.Games.RoomServer do
     end
   end
 
-  def handle_call({:append_drawing, stroke}, _from, state) when is_map(stroke) do
-    new_state =
-      %{state | drawing_strokes: state.drawing_strokes ++ [stroke]}
-      |> bump_version()
-      |> notify_waiters(false)
+  def handle_call({:append_drawing, actor_id, stroke}, _from, state) do
+    with :ok <- authorize(state, actor_id, :draw),
+         {:ok, stroke} <- StrokeRules.check_append(state.drawing_strokes, stroke) do
+      {:reply, :ok, put_strokes(state, state.drawing_strokes ++ [stroke])}
+    else
+      {:error, reason} when reason in [:invalid_stroke, :stroke_limit] ->
+        {:reply, {:error, reason, state.drawing_strokes}, state}
 
-    {:reply, :ok, new_state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
-  def handle_call({:append_drawing, segment}, _from, state) when is_binary(segment) do
-    stroke = %{path: segment, color: "#000000", width: 2}
-
-    new_state =
-      %{state | drawing_strokes: state.drawing_strokes ++ [stroke]}
-      |> bump_version()
-      |> notify_waiters(false)
-
-    {:reply, :ok, new_state}
+  def handle_call({:clear_drawing, actor_id}, _from, state) do
+    case authorize(state, actor_id, :draw) do
+      :ok -> {:reply, :ok, put_strokes(state, [])}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
-  def handle_call(:clear_drawing, _from, state) do
-    new_state =
-      %{state | drawing_strokes: []}
-      |> bump_version()
-      |> notify_waiters(false)
+  def handle_call({:undo_drawing, actor_id}, _from, state) do
+    case authorize(state, actor_id, :draw) do
+      :ok ->
+        new_strokes = Enum.drop(state.drawing_strokes, -1)
+        {:reply, {:ok, new_strokes}, put_strokes(state, new_strokes)}
 
-    {:reply, :ok, new_state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
-  def handle_call(:undo_drawing, _from, state) do
-    new_strokes =
-      case state.drawing_strokes do
-        [] -> []
-        strokes -> Enum.drop(strokes, -1)
-      end
+  def handle_call({:member?, user_id}, _from, state) do
+    {:reply, member_of?(state, user_id), state}
+  end
 
-    new_state =
-      %{state | drawing_strokes: new_strokes}
-      |> bump_version()
-      |> notify_waiters(false)
-
-    {:reply, {:ok, new_strokes}, new_state}
+  def handle_call({:drawing_allowed?, user_id}, _from, state) do
+    {:reply, authorize(state, user_id, :draw) == :ok, state}
   end
 
   @impl true
@@ -951,6 +1004,13 @@ defmodule Scrawly.Games.RoomServer do
 
   defp schedule_word_choice_timeout(game_id, round) do
     Process.send_after(self(), {:word_choice_timeout, game_id, round}, 15_000)
+  end
+
+  # Stroke changes are fanned out by the stroke commands, not by :room_delta.
+  defp put_strokes(state, strokes) do
+    %{state | drawing_strokes: strokes}
+    |> bump_version()
+    |> notify_waiters(false)
   end
 
   defp via(room_id), do: {:via, Registry, {@registry, room_id}}

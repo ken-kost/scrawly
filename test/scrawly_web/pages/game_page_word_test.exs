@@ -240,7 +240,7 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
     test "a spectator joining mid-round gets no word, doesn't crash and keeps the strokes",
          ctx do
       choose!(ctx)
-      :ok = RoomServer.append_drawing(ctx.room.id, @stroke)
+      :ok = RoomServer.append_drawing(ctx.room.id, ctx.creator.id, @stroke)
 
       for server <- [server_for(create_user()), anon_server("late-anon")] do
         component = init_page(ctx.room, server)

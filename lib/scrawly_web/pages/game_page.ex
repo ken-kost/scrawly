@@ -466,7 +466,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
       ) do
     put_command(component, :complete_stroke,
       room_id: component.state.room_id,
-      user_id: component.state.current_user_id,
       stroke_id: stroke_id,
       path: path,
       color: color,
@@ -474,11 +473,15 @@ defmodule ScrawlyWeb.Pages.GamePage do
     )
   end
 
+  # Reply to :complete_stroke when the server refused to store the stroke
+  # (invalid, or the canvas is full): show the drawer what everyone else sees.
+  def action(:stroke_rejected, %{strokes: strokes}, component) do
+    JS.call(:setStrokes, [strokes])
+    put_state(component, :drawing_strokes, strokes)
+  end
+
   def action(:commit_undo, _params, component) do
-    put_command(component, :undo_drawing_cmd,
-      room_id: component.state.room_id,
-      user_id: component.state.current_user_id
-    )
+    put_command(component, :undo_drawing_cmd, room_id: component.state.room_id)
   end
 
   def action(:clear_canvas, _params, component) do
@@ -486,10 +489,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
     component
     |> put_state(:drawing_strokes, [])
-    |> put_command(:clear_drawing_cmd,
-      room_id: component.state.room_id,
-      user_id: component.state.current_user_id
-    )
+    |> put_command(:clear_drawing_cmd, room_id: component.state.room_id)
   end
 
   def action(:select_color, params, component) do

@@ -18,7 +18,7 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   import Hologram.Component, only: [put_action: 2, put_action: 3, put_broadcast_except: 5]
 
   alias Scrawly.{Accounts, Games}
-  alias Scrawly.Games.RoomServer
+  alias Scrawly.Games.{RoomServer, StrokeRules}
   alias Scrawly.Games.RoomServer.GameFlow
   alias ScrawlyWeb.Auth
 
@@ -201,49 +201,81 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
   end
 
-  def complete_stroke(
-        %{room_id: room_id, stroke_id: stroke_id, path: path, color: color, width: width} =
-          params,
-        server
-      ) do
-    RoomServer.append_drawing(room_id, %{path: path, color: color, width: width})
+  @doc """
+  Stores a completed stroke drawn by the session user and fans it out to the
+  room's other tabs. Only `room_id`, `stroke_id`, `path`, `color` and `width`
+  are read from params.
 
-    put_broadcast_except(
-      server,
-      {:user, params[:user_id]},
-      {:room, room_id},
-      :stroke_completed,
-      %{stroke_id: stroke_id, path: path, color: color, width: width}
-    )
-  end
+  The room process checks that the session user is the current drawer while
+  `:drawing` and validates the stroke (`StrokeRules`). A non-drawer, the wrong
+  phase, a missing room or no account gets `:command_denied`; an invalid stroke
+  or a full canvas gets `:stroke_rejected` with the stored strokes, so the
+  drawer's canvas drops what nobody else will see.
+  """
+  def complete_stroke(%{room_id: room_id} = params, server) do
+    stroke = Map.take(params, [:path, :color, :width])
+    stroke_id = clean_stroke_id(Map.get(params, :stroke_id))
 
-  def clear_drawing_cmd(%{room_id: room_id} = params, server) do
-    RoomServer.clear_drawing(room_id)
-
-    put_broadcast_except(
-      server,
-      {:user, params[:user_id]},
-      {:room, room_id},
-      :drawing_cleared,
-      %{}
-    )
-  end
-
-  def undo_drawing_cmd(%{room_id: room_id} = params, server) do
-    case RoomServer.undo_drawing(room_id) do
-      {:ok, strokes} ->
-        put_broadcast_except(
-          server,
-          {:user, params[:user_id]},
-          {:room, room_id},
-          :drawing_undone,
-          %{strokes: strokes}
+    with {:ok, uid} <- session_user_id(server),
+         :ok <- RoomServer.append_drawing(room_id, uid, stroke) do
+      broadcast_to_other_tabs(
+        server,
+        room_id,
+        :stroke_completed,
+        Map.put(stroke, :stroke_id, stroke_id)
+      )
+    else
+      {:error, reason, strokes} ->
+        Logger.warning(
+          "stroke rejected: #{inspect(reason)} in room #{inspect(room_id)} " <>
+            "for #{inspect(Auth.user_id(server))}"
         )
 
-      _ ->
-        server
+        put_action(server, :stroke_rejected,
+          stroke_id: stroke_id,
+          reason: reason,
+          strokes: strokes
+        )
+
+      {:error, reason} ->
+        Auth.deny(server, :complete_stroke, reason)
     end
   end
+
+  @doc "Clears the canvas as the session user (current drawer, `:drawing` only)."
+  def clear_drawing_cmd(%{room_id: room_id}, server) do
+    with {:ok, uid} <- session_user_id(server),
+         :ok <- RoomServer.clear_drawing(room_id, uid) do
+      broadcast_to_other_tabs(server, room_id, :drawing_cleared, %{})
+    else
+      {:error, reason} -> Auth.deny(server, :clear_drawing_cmd, reason)
+    end
+  end
+
+  @doc "Undoes the last stroke as the session user (current drawer, `:drawing` only)."
+  def undo_drawing_cmd(%{room_id: room_id}, server) do
+    with {:ok, uid} <- session_user_id(server),
+         {:ok, strokes} <- RoomServer.undo_drawing(room_id, uid) do
+      broadcast_to_other_tabs(server, room_id, :drawing_undone, %{strokes: strokes})
+    else
+      {:error, reason} -> Auth.deny(server, :undo_drawing_cmd, reason)
+    end
+  end
+
+  # Excludes only the tab that sent the command: it already shows the change.
+  # Never exclude by {:user, id}: this app does not set Hologram's user id.
+  defp broadcast_to_other_tabs(server, room_id, action, params) do
+    put_broadcast_except(
+      server,
+      {:instance, server.instance_id},
+      {:room, room_id},
+      action,
+      params
+    )
+  end
+
+  # The stroke id is only echoed back so viewers can drop the live overlay.
+  defp clean_stroke_id(id), do: if(StrokeRules.valid_stroke_id?(id), do: id, else: nil)
 
   defp dissolve_room_server(room_id, uid) do
     case RoomServer.dissolve_room(room_id, uid) do

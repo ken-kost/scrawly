@@ -44,6 +44,19 @@ defmodule Scrawly.RoomTestHelpers do
     room
   end
 
+  @doc """
+  Starts a game in `room` as `creator` (the room needs a second player) with
+  `word` as the only choice, and commits it: the room is then in `:drawing`
+  with `creator` as the drawer. Stops the round timer on exit. Returns the
+  public state.
+  """
+  def start_drawing!(room, creator, word \\ "zzyzx") do
+    {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: [word]})
+    on_exit(fn -> Games.stop_round_timer(started.game_id) end)
+    {:ok, %{phase: :drawing} = state} = RoomServer.choose_word(room.id, creator.id, word)
+    state
+  end
+
   @doc "Stops the room's RoomServer if it is running."
   def stop_room(room_id) do
     case Registry.lookup(Scrawly.RoomRegistry, room_id) do
