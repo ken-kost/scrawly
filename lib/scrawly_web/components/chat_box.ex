@@ -7,8 +7,8 @@ defmodule ScrawlyWeb.Components.ChatBox do
   """
   use Hologram.Component
 
-  prop :messages, :list, default: []
-  prop :current_message, :string, default: ""
+  prop :messages, :list, required: true
+  prop :current_message, :string, required: true
   prop :current_user_id, :string, default: nil
   prop :disabled, :boolean, default: false
   prop :is_drawer, :boolean, default: false
@@ -31,22 +31,10 @@ defmodule ScrawlyWeb.Components.ChatBox do
                 <span>{msg.message}</span>
               </div>
             {%else}
-              {%if Map.get(msg, :type) == :close_guess}
-                <div class="msg close">
-                  <span class="who">{Map.get(msg, :player_name, "")}</span>
-                  <span>{msg.message}</span>
-                  <span class="mono" style="margin-left: auto; font-size: 11px; color: var(--muted);">close</span>
-                </div>
-              {%else}
-                {%if Map.get(msg, :type) == :round_complete}
-                  <div class="msg system">→ {msg.message}</div>
-                {%else}
-                  <div class="msg">
-                    <span class={"who " <> if(@current_user_id != nil and Map.get(msg, :player_id) == @current_user_id, do: "me", else: "")}>{Map.get(msg, :player_name, "")}</span>
-                    <span>{msg.message}</span>
-                  </div>
-                {/if}
-              {/if}
+              <div class="msg">
+                <span class={"who " <> if(@current_user_id != nil and Map.get(msg, :player_id) == @current_user_id, do: "me", else: "")}>{Map.get(msg, :player_name, "")}</span>
+                <span>{msg.message}</span>
+              </div>
             {/if}
           {/if}
         {/for}
@@ -59,7 +47,7 @@ defmodule ScrawlyWeb.Components.ChatBox do
                placeholder={if(@current_user_id == nil, do: "sign in to chat", else: if(@is_drawer, do: "you are drawing — chat disabled", else: "type a guess..."))}
                value={@current_message}
                disabled={@disabled || @current_user_id == nil}
-               $input={:update_message} />
+               $change={:update_message} />
         <button type="submit" class="app-btn app-btn-sm" disabled={@disabled || @current_user_id == nil || String.trim(@current_message) == ""}>send</button>
       </form>
     </div>

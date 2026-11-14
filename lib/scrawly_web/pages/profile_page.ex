@@ -85,7 +85,7 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
               placeholder="how the lobby knows you"
               minlength="2"
               maxlength="20"
-              $input={:update_username} />
+              $change={:update_username} />
 
             <div style="margin-top: 18px;">
               <div class="row" style="justify-content: space-between; align-items: center;">
@@ -147,7 +147,7 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
               autocomplete="current-password"
               value={@current_password}
               placeholder="••••••••"
-              $input={:update_current_password} />
+              $change={:update_current_password} />
 
             <label class="field-label" style="margin-top: 14px;">new password</label>
             <input
@@ -157,7 +157,7 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
               autocomplete="new-password"
               value={@new_password}
               placeholder="at least 8 characters"
-              $input={:update_new_password} />
+              $change={:update_new_password} />
 
             <label class="field-label" style="margin-top: 14px;">confirm new password</label>
             <input
@@ -167,7 +167,7 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
               autocomplete="new-password"
               value={@new_password_confirmation}
               placeholder="repeat new password"
-              $input={:update_new_password_confirmation} />
+              $change={:update_new_password_confirmation} />
 
             {%if @password_error}
               <div class="form-error">{@password_error}</div>
@@ -218,7 +218,7 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
                   autocomplete="current-password"
                   value={@recovery_password}
                   placeholder="••••••••"
-                  $input={:update_recovery_password} />
+                  $change={:update_recovery_password} />
                 <button type="submit" class="app-btn app-btn-primary">
                   {%if @recovery_status == :active}generate a new code{%else}set up a recovery code{/if}
                 </button>

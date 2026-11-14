@@ -307,8 +307,8 @@ defmodule ScrawlyWeb.Pages.GamePageLifecycleAuthzTest do
   describe "client call sites send no identity" do
     setup %{room: room} do
       component = %Hologram.Component{
+        props: %{room_id: room.id},
         state: %{
-          room_id: room.id,
           current_user_id: "someone",
           current_user_username: "someone",
           is_creator: true,

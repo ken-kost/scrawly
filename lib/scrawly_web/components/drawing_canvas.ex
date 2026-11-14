@@ -11,10 +11,10 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
   """
   use Hologram.Component
 
-  prop :room_id, :string, default: "test"
-  prop :is_drawer, :boolean, default: false
+  prop :is_drawer, :boolean, required: true
+  # Not read yet: stroke-engine owns it (and the pointer bindings below).
   prop :disabled, :boolean, default: false
-  prop :strokes, :list, default: []
+  prop :strokes, :list, required: true
   prop :active_color, :string, default: "#000000"
   prop :active_width, :integer, default: 2
 

@@ -71,8 +71,8 @@ defmodule ScrawlyWeb.GameChannel do
     end
   end
 
-  # Unknown events (including the legacy pushes in assets/js/user_socket.js)
-  # are ignored instead of crashing the channel.
+  # Unknown events (such as the legacy pushes priv/static/game_socket.js still
+  # exposes, or an old client) are ignored instead of crashing the channel.
   def handle_in(_event, _payload, socket), do: {:noreply, socket}
 
   @impl true

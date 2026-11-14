@@ -18,6 +18,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   alias Scrawly.Games
 
   @ai_refill_threshold 6
+  @max_chat_history 50
 
   @doc """
   Advance to the next round and enter the word-choice phase.
@@ -239,17 +240,28 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   come from the room process, never from client input.
   """
   def add_sys_msg(state, text, type \\ :system) do
-    msg = %{
-      id: System.unique_integer([:positive]),
-      player_name: "System",
-      message: text,
-      timestamp: DateTime.utc_now(),
-      type: type
-    }
+    push_chat(state, %{player_name: "System", message: text, type: type})
+  end
+
+  @doc """
+  The only place a chat line enters a room: stamps `fields` with a unique `id`
+  and an integer `timestamp` (Unix ms), broadcasts it as `:chat_appended`
+  (`%{message: msg}`) and prepends it to `state.chat_messages` (capped at 50).
+
+  Chat lines reach the browser through room state and that broadcast, so they
+  hold plain data only: a struct (a DateTime, say) would make every client
+  load that type's code chunk before it can show the line.
+  """
+  def push_chat(state, fields) when is_map(fields) do
+    msg =
+      Map.merge(fields, %{
+        id: System.unique_integer([:positive]),
+        timestamp: System.system_time(:millisecond)
+      })
 
     Hologram.Realtime.broadcast_action({:room, state.room_id}, :chat_appended, %{message: msg})
 
-    %{state | chat_messages: [msg | state.chat_messages] |> Enum.take(50)}
+    %{state | chat_messages: Enum.take([msg | state.chat_messages], @max_chat_history)}
   end
 
   @doc """

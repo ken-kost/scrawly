@@ -12,8 +12,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :endStroke, from: "./drawing_manager.mjs"
   js_import :clearDrawing, from: "./drawing_manager.mjs"
   js_import :setDrawingPath, from: "./drawing_manager.mjs"
-  js_import :getDrawingPath, from: "./drawing_manager.mjs"
-  js_import :resetSentLength, from: "./drawing_manager.mjs"
   js_import :setToolColor, from: "./drawing_manager.mjs"
   js_import :setToolWidth, from: "./drawing_manager.mjs"
   js_import :undoStroke, from: "./drawing_manager.mjs"
@@ -36,6 +34,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # Page state is serialized into the HTML, so it is built from the session
   # user's own view of the room: only the drawer's view carries the word and
   # the word choices (RoomServer.View.for_viewer/2).
+  #
+  # `room_id` is the page param, so it is a prop: actions read
+  # `component.props.room_id` and the template `@room_id`. It is never copied
+  # into state (a same-named state key would shadow the prop).
   def init(%{room_id: room_id}, component, server) do
     watch_mode = get_session(server, :watch_mode) == "yes"
     user_id = ScrawlyWeb.Auth.user_id(server)
@@ -50,8 +52,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
             component =
               component
               |> put_state(:room_missing?, false)
-              |> put_state(:watching?, user_id == "Watcher")
-              |> put_state(:room_id, room_id)
+              |> put_state(:watching?, false)
               |> put_state(:room_code, rs.code)
               |> put_state(:room_name, "Room #{rs.name}")
               |> put_state(:room_status, rs.status)
@@ -175,10 +176,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
     put_action(component, name: :mounted, params: [next: next, delay: delay])
   end
 
-  defp load_user_data(component, "Watcher") do
-    put_state(component, :current_user_username, "Watcher")
-  end
-
   defp load_user_data(component, user_id) do
     case Ash.get(Scrawly.Accounts.User, user_id) do
       {:ok, user} ->
@@ -205,14 +202,14 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   def action(:do_join_room, _params, component) do
-    put_command(component, :join_room, room_id: component.state.room_id)
+    put_command(component, :join_room, room_id: component.props.room_id)
   end
 
   def action(:poll_room, _params, component) do
     if component.state.leaving? do
       component
     else
-      put_command(component, :poll_room_state, room_id: component.state.room_id)
+      put_command(component, :poll_room_state, room_id: component.props.room_id)
     end
   end
 
@@ -305,7 +302,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
           |> put_state(:revealed_word, Map.get(params, :revealed_word))
 
         if transition? do
-          put_command(component, :poll_room_state, room_id: component.state.room_id)
+          put_command(component, :poll_room_state, room_id: component.props.room_id)
         else
           component
           |> put_state(:time_left, Map.get(params, :time_left) || 0)
@@ -315,7 +312,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   def action(:do_join_as_watcher, _params, component) do
-    put_command(component, :join_as_watcher, room_id: component.state.room_id)
+    put_command(component, :join_as_watcher, room_id: component.props.room_id)
   end
 
   def action(:switch_to_watcher, _params, component) do
@@ -329,7 +326,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
     component
     |> put_state(:leaving?, true)
-    |> put_command(command, room_id: component.state.room_id)
+    |> put_command(command, room_id: component.props.room_id)
   end
 
   def action(:room_dissolved, _params, component) do
@@ -360,7 +357,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   def action(:choose_word, %{word: word}, component) do
     if component.state.is_drawer and component.state.phase == :choosing do
-      put_command(component, :choose_word, room_id: component.state.room_id, word: word)
+      put_command(component, :choose_word, room_id: component.props.room_id, word: word)
     else
       component
     end
@@ -390,7 +387,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
             component
             |> put_state(:new_message, "")
             |> put_state(:message_timestamps, [now | recent])
-            |> put_command(:submit_guess, room_id: component.state.room_id, text: message)
+            |> put_command(:submit_guess, room_id: component.props.room_id, text: message)
           else
             component
           end
@@ -518,7 +515,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   # The head of the drawer's op queue (drawing_manager.mjs), one op at a time.
   def action(:send_stroke_op, %{kind: kind} = op, component) do
-    base = [room_id: component.state.room_id, op_epoch: op.op_epoch, op_seq: op.op_seq]
+    base = [room_id: component.props.room_id, op_epoch: op.op_epoch, op_seq: op.op_seq]
 
     case kind do
       "commit" ->
@@ -981,8 +978,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
             <span class="mono">round {@round}/{@total_rounds}</span>
           </div>
           <div class="panel-body" style="padding: 0;">
-            <ScoreBoard players={@players} current_round={@round} total_rounds={@total_rounds}
-                        current_word={@current_word_display} time_left={@time_left} game_status={@room_status} />
+            <ScoreBoard players={@players} />
           </div>
         </div>
 
@@ -1002,7 +998,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
             </span>
           </div>
 
-          <DrawingCanvas room_id={@room_id} is_drawer={@is_drawer}
+          <DrawingCanvas is_drawer={@is_drawer}
             disabled={!@game_started or @time_left == 0}
             strokes={@drawing_strokes}
             active_color={if(@draw_eraser, do: "#FFFFFF", else: @draw_color)}

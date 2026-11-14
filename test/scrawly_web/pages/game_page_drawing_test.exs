@@ -395,7 +395,11 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
 
   describe "client actions" do
     test ":send_stroke_op puts the op's command, with no user_id" do
-      component = %Hologram.Component{state: %{room_id: "r1", current_user_id: "forged"}}
+      component = %Hologram.Component{
+        props: %{room_id: "r1"},
+        state: %{current_user_id: "forged"}
+      }
+
       op = %{op_epoch: "e1", op_seq: 3}
 
       commit =
@@ -443,7 +447,10 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
     end
 
     test ":clear_canvas empties the canvas and leaves the command to the op queue" do
-      component = %Hologram.Component{state: %{room_id: "r1", drawing_strokes: [@stroke]}}
+      component = %Hologram.Component{
+        props: %{room_id: "r1"},
+        state: %{drawing_strokes: [@stroke]}
+      }
 
       cleared = GamePage.action(:clear_canvas, %{}, component)
       assert cleared.state.drawing_strokes == []

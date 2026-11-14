@@ -11,18 +11,6 @@ defmodule ScrawlyWeb.Components.GameDemo do
   prop :width, :integer, default: 2
   prop :eraser, :boolean, default: false
 
-  @palette [
-    "#000000",
-    "#EF4444",
-    "#F97316",
-    "#EAB308",
-    "#22C55E",
-    "#3B82F6",
-    "#A855F7",
-    "#EC4899"
-  ]
-  @widths [2, 4, 8]
-
   def template do
     ~HOLO"""
     <div class="surface" style="overflow: hidden; display: flex; flex-direction: column;">
@@ -85,7 +73,4 @@ defmodule ScrawlyWeb.Components.GameDemo do
     </div>
     """
   end
-
-  def palette, do: @palette
-  def widths, do: @widths
 end

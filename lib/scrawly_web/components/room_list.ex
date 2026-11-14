@@ -3,8 +3,7 @@ defmodule ScrawlyWeb.Components.RoomList do
 
   alias ScrawlyWeb.Components.Avatar
 
-  prop :rooms, :list, default: []
-  prop :loading, :boolean, default: false
+  prop :rooms, :list, required: true
 
   def template do
     ~HOLO"""

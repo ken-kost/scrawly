@@ -427,6 +427,68 @@ defmodule ScrawlyWeb.Pages.GameScorePageTest do
     end
   end
 
+  # ── init/3: page data is plain ──────────────────────────────────────
+
+  describe "init/3 page data" do
+    setup do
+      host = create_user()
+      a = create_user()
+      b = create_user()
+
+      {:ok, room} =
+        Games.create_room(%{name: "TEST score data", max_players: 4, creator_id: host.id})
+
+      {:ok, game} = Games.create_game(room.id, 2)
+
+      # Inserted out of score order on purpose.
+      for {user, score} <- [{a, 120}, {host, 340}, {b, 75}] do
+        {:ok, _} =
+          Games.create_game_result(%{
+            player_id: user.id,
+            game_id: game.id,
+            room_id: room.id,
+            score: score,
+            player_username: user.username
+          })
+      end
+
+      %{host: host, a: a, b: b, game: game}
+    end
+
+    test "results are plain maps sorted by score, the date a string, no :game_id", ctx do
+      {component, _server} =
+        GameScorePage.init(%{game_id: ctx.game.id}, %Component{}, server_for(ctx.a))
+
+      state = component.state
+
+      assert state.results == [
+               %{player_id: ctx.host.id, player_username: ctx.host.username, score: 340},
+               %{player_id: ctx.a.id, player_username: ctx.a.username, score: 120},
+               %{player_id: ctx.b.id, player_username: ctx.b.username, score: 75}
+             ]
+
+      for result <- state.results do
+        refute is_struct(result)
+        assert result |> Map.keys() |> Enum.sort() == [:player_id, :player_username, :score]
+      end
+
+      assert state.game_date == Calendar.strftime(ctx.game.created_at, "%b %d, %Y at %H:%M")
+      refute Map.has_key?(state, :game_id)
+      # Nothing in the state makes the browser load a struct type's chunk.
+      assert struct_free?(state)
+    end
+
+    test "an unknown game has no results and a nil date", ctx do
+      {component, _server} =
+        GameScorePage.init(%{game_id: Ecto.UUID.generate()}, %Component{}, server_for(ctx.a))
+
+      assert component.state.results == []
+      assert component.state.game_date == nil
+      refute Map.has_key?(component.state, :game_id)
+      assert struct_free?(component.state)
+    end
+  end
+
   # Plays the client: sends each next_command through the page's command/3
   # and runs the action it replies with, until nothing is left to send.
   defp drive_commands(%{next_command: nil} = component, _ctx, sent), do: {component, sent}

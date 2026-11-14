@@ -18,11 +18,10 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       is_drawer: true,
       game_started: true,
       time_left: 60,
-      room_id: "test-room",
       current_user_id: "test-user"
     }
 
-    %Hologram.Component{state: Map.merge(defaults, overrides)}
+    %Hologram.Component{props: %{room_id: "test-room"}, state: Map.merge(defaults, overrides)}
   end
 
   @s1 %{id: "s-1", path: "M 1 2", color: "#000000", width: 2}
@@ -36,7 +35,6 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
     ]
 
     state = %{
-      room_id: "r1",
       room_code: "ABCD",
       socket_token: "",
       channel_connected: false,
@@ -70,7 +68,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       drawing_strokes: [@s1, @s2]
     }
 
-    %Hologram.Component{state: Map.merge(state, overrides)}
+    %Hologram.Component{props: %{room_id: "r1"}, state: Map.merge(state, overrides)}
   end
 
   # A :room_refreshed reply for user-1 (strokes stripped, as Commands sends it).

@@ -14,7 +14,7 @@ defmodule ScrawlyWeb.Components.RecoveryCodePanel do
 
   use Hologram.Component
 
-  prop :code, :string
+  prop :code, :string, required: true
   prop :saved, :boolean, default: false
 
   def template do

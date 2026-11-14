@@ -26,7 +26,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert %Hologram.Component{state: state} = component
       assert %Hologram.Server{} = server
       assert state.room_missing? == false
-      assert state.room_id == room.id
+      # The page param stays a prop (component.props.room_id), never state.
+      refute Map.has_key?(state, :room_id)
       assert state.room_code == room.code
       assert state.room_name == "Room #{room.name}"
       assert state.room_status == :lobby
@@ -48,7 +49,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert component.next_action.params == %{next: :poll_room, delay: 500}
       assert component.next_page == nil
 
-      html = render_template(state)
+      html = render_template(state, %{room_id: room.id})
       assert html =~ "game-page-marker"
       assert html =~ "Room #{room.name}"
       refute html =~ "room not found"
@@ -134,6 +135,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
 
     test "send_message clears input and sends via command" do
       component = %Hologram.Component{
+        props: %{room_id: "test-room"},
         state: %{
           new_message: "Test message",
           chat_messages: [],
@@ -144,7 +146,6 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
           current_word: nil,
           rate_limited: false,
           message_timestamps: [],
-          room_id: "test-room",
           drawing_path: "",
           drawing?: false,
           drawing_sent_length: 0
@@ -162,6 +163,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
 
     test "send_message ignores empty messages" do
       component = %Hologram.Component{
+        props: %{room_id: "test-room"},
         state: %{
           new_message: "   ",
           chat_messages: [],
@@ -172,7 +174,6 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
           current_word: nil,
           rate_limited: false,
           message_timestamps: [],
-          room_id: "test-room",
           drawing_path: "",
           drawing?: false,
           drawing_sent_length: 0
@@ -193,10 +194,11 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
     end
   end
 
-  # The page template alone (no layout), rendered as the server does on load.
-  defp render_template(state) do
+  # The page template alone (no layout), rendered as the server does on load:
+  # its vars are the page params (props) merged with the state.
+  defp render_template(state, params \\ %{}) do
     {html, _registry, _server} =
-      GamePage.template().(state)
+      GamePage.template().(Map.merge(params, state))
       |> Renderer.render_dom(%Renderer.Env{}, %Hologram.Server{})
 
     html
@@ -207,7 +209,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
   defp view_params(component, overrides) do
     Map.merge(
       %{
-        room_id: component.state.room_id,
+        room_id: component.props.room_id,
         status: :playing,
         players: component.state.players,
         version: 1,
@@ -271,8 +273,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       ]
 
       component = %Hologram.Component{
+        props: %{room_id: room.id},
         state: %{
-          room_id: room.id,
           room_code: room.code,
           current_user_id: "user-1",
           players: players,
@@ -396,8 +398,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
   describe "room_delta word fields" do
     setup %{room: room} do
       component = %Hologram.Component{
+        props: %{room_id: room.id},
         state: %{
-          room_id: room.id,
           is_creator: false,
           players: [],
           watchers: [],
@@ -478,7 +480,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
   describe ":choose_word" do
     test "sends only the room and the word" do
       component = %Hologram.Component{
-        state: %{room_id: "r1", is_drawer: true, phase: :choosing, current_user_id: "user-1"}
+        props: %{room_id: "r1"},
+        state: %{is_drawer: true, phase: :choosing, current_user_id: "user-1"}
       }
 
       result = GamePage.action(:choose_word, %{word: "apple"}, component)

@@ -135,7 +135,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
             <h2>open rooms</h2>
             <span class="mono" style="font-size: 11px; color: var(--muted);">live</span>
           </div>
-          <RoomList rooms={@rooms} loading={false} />
+          <RoomList rooms={@rooms} />
 
           <div class="lobby-chat">
             <div class="section-header">
@@ -198,12 +198,12 @@ defmodule ScrawlyWeb.Pages.HomePage do
             <div class="app-modal-body">
               <div>
                 <label class="field-label">name</label>
-                <input class="app-input" placeholder="e.g. late night doodles" name="room_name" maxlength="40" value={@new_room_name} $input={:update_room_name} />
+                <input class="app-input" placeholder="e.g. late night doodles" name="room_name" maxlength="40" value={@new_room_name} $change={:update_room_name} />
               </div>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
                 <div>
                   <label class="field-label">max players</label>
-                  <input class="app-input mono" type="number" min="2" max="12" name="max_players" value={@new_max_players} $input={:update_max_players} />
+                  <input class="app-input mono" type="number" min="2" max="12" name="max_players" value={@new_max_players} $change={:update_max_players} />
                 </div>
                 <div>
                   <label class="field-label">words / round</label>
@@ -224,7 +224,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
               {%if @new_word_source == "ai"}
                 <div>
                   <label class="field-label">theme prompt</label>
-                  <input class="app-input" placeholder="ocean animals, things in a kitchen..." maxlength="200" value={@new_prompt} $input={:update_prompt} />
+                  <input class="app-input" placeholder="ocean animals, things in a kitchen..." maxlength="200" value={@new_prompt} $change={:update_prompt} />
                 </div>
                 <div>
                   <label class="field-label">tone</label>
@@ -282,13 +282,13 @@ defmodule ScrawlyWeb.Pages.HomePage do
                 <label class="field-label">email</label>
                 <input class="app-input" type="email" name="email" autocomplete="email"
                        placeholder="you@example.com"
-                       value={@login_email} $input={:update_login_email} />
+                       value={@login_email} $change={:update_login_email} />
               </div>
               <div>
                 <label class="field-label">password</label>
                 <input class="app-input" type="password" name="password" autocomplete="current-password"
                        placeholder="at least 8 characters"
-                       value={@login_password} $input={:update_login_password} />
+                       value={@login_password} $change={:update_login_password} />
               </div>
             </div>
             <div class="app-modal-foot">
@@ -320,25 +320,25 @@ defmodule ScrawlyWeb.Pages.HomePage do
                 <label class="field-label">email</label>
                 <input class="app-input" type="email" name="email" autocomplete="email"
                        placeholder="you@example.com"
-                       value={@reset_email} $input={:update_reset_email} />
+                       value={@reset_email} $change={:update_reset_email} />
               </div>
               <div>
                 <label class="field-label">recovery code</label>
                 <input class="app-input mono" type="text" name="recovery_code" autocomplete="off"
                        spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"
-                       value={@reset_code} $input={:update_reset_code} />
+                       value={@reset_code} $change={:update_reset_code} />
               </div>
               <div>
                 <label class="field-label">new password</label>
                 <input class="app-input" type="password" name="new_password" autocomplete="new-password"
                        placeholder="at least 8 characters"
-                       value={@reset_password} $input={:update_reset_password} />
+                       value={@reset_password} $change={:update_reset_password} />
               </div>
               <div>
                 <label class="field-label">confirm new password</label>
                 <input class="app-input" type="password" name="new_password_confirmation" autocomplete="new-password"
                        placeholder="repeat new password"
-                       value={@reset_password_confirmation} $input={:update_reset_password_confirmation} />
+                       value={@reset_password_confirmation} $change={:update_reset_password_confirmation} />
               </div>
             </div>
             <div class="app-modal-foot">

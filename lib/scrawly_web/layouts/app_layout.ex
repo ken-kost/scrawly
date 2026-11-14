@@ -268,7 +268,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                     placeholder="you@example.com"
                     class="app-input"
                     value={@login_email}
-                    $input={action: :update_login_email, target: "layout"} />
+                    $change={action: :update_login_email, target: "layout"} />
                 </div>
                 <div>
                   <label class="field-label">password</label>
@@ -278,7 +278,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                     placeholder="••••••••"
                     class="app-input"
                     value={@login_password}
-                    $input={action: :update_login_password, target: "layout"} />
+                    $change={action: :update_login_password, target: "layout"} />
                 </div>
               </div>
               <div class="app-modal-foot" style="flex-direction: column; align-items: stretch;">
@@ -322,7 +322,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                     placeholder="you@example.com"
                     class="app-input"
                     value={@reset_email}
-                    $input={action: :update_reset_email, target: "layout"} />
+                    $change={action: :update_reset_email, target: "layout"} />
                 </div>
                 <div>
                   <label class="field-label">recovery code</label>
@@ -334,7 +334,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                     placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"
                     class="app-input mono"
                     value={@reset_code}
-                    $input={action: :update_reset_code, target: "layout"} />
+                    $change={action: :update_reset_code, target: "layout"} />
                 </div>
                 <div>
                   <label class="field-label">new password</label>
@@ -345,7 +345,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                     placeholder="at least 8 characters"
                     class="app-input"
                     value={@reset_password}
-                    $input={action: :update_reset_password, target: "layout"} />
+                    $change={action: :update_reset_password, target: "layout"} />
                 </div>
                 <div>
                   <label class="field-label">confirm new password</label>
@@ -356,7 +356,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                     placeholder="repeat new password"
                     class="app-input"
                     value={@reset_password_confirmation}
-                    $input={action: :update_reset_password_confirmation, target: "layout"} />
+                    $change={action: :update_reset_password_confirmation, target: "layout"} />
                 </div>
               </div>
               <div class="app-modal-foot" style="flex-direction: column; align-items: stretch;">
@@ -402,7 +402,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                     placeholder="you@example.com"
                     class="app-input"
                     value={@register_email}
-                    $input={action: :update_register_email, target: "layout"} />
+                    $change={action: :update_register_email, target: "layout"} />
                 </div>
                 <div>
                   <label class="field-label">password</label>
@@ -412,7 +412,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                     placeholder="••••••••"
                     class="app-input"
                     value={@register_password}
-                    $input={action: :update_register_password, target: "layout"} />
+                    $change={action: :update_register_password, target: "layout"} />
                 </div>
               </div>
               <div class="app-modal-foot" style="flex-direction: column; align-items: stretch;">

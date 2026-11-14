@@ -124,6 +124,20 @@ defmodule Scrawly.RoomTestHelpers do
 
   def chat_texts(state), do: Enum.map(state.chat_messages, & &1.message)
 
+  @doc """
+  True when `term` holds no struct at any depth (map keys and values, lists,
+  tuples). Data that reaches the browser should be struct-free: Hologram
+  makes the client load a code chunk for every struct type it receives.
+  """
+  def struct_free?(%_{}), do: false
+
+  def struct_free?(map) when is_map(map),
+    do: Enum.all?(map, fn {k, v} -> struct_free?(k) and struct_free?(v) end)
+
+  def struct_free?(list) when is_list(list), do: Enum.all?(list, &struct_free?/1)
+  def struct_free?(tuple) when is_tuple(tuple), do: struct_free?(Tuple.to_list(tuple))
+  def struct_free?(_other), do: true
+
   @doc "A handful of local words of every difficulty, enough to pick word choices."
   def seed_test_words do
     for difficulty <- [:easy, :medium, :hard], i <- 1..4 do

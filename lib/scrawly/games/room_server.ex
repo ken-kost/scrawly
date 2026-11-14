@@ -15,7 +15,6 @@ defmodule Scrawly.Games.RoomServer do
   @registry Scrawly.RoomRegistry
   @supervisor Scrawly.RoomSupervisor
   @max_watchers 50
-  @max_chat_history 50
   @max_message_length 240
   @chat_max_messages 3
   @chat_window_ms 5_000
@@ -895,18 +894,13 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   defp append_chat(state, sender, text) do
-    message = %{
-      id: System.unique_integer([:positive]),
+    state
+    |> GameFlow.push_chat(%{
       player_id: sender.id,
       player_name: Map.get(sender, :username) || "Unknown",
       message: text,
-      timestamp: DateTime.utc_now(),
       type: :chat
-    }
-
-    broadcast_chat_appended(state.room_id, message)
-
-    %{state | chat_messages: Enum.take([message | state.chat_messages], @max_chat_history)}
+    })
     |> bump_version()
     |> notify_waiters(false)
   end
@@ -1117,10 +1111,6 @@ defmodule Scrawly.Games.RoomServer do
     end
 
     state
-  end
-
-  defp broadcast_chat_appended(room_id, message) do
-    Hologram.Realtime.broadcast_action({:room, room_id}, :chat_appended, %{message: message})
   end
 
   defp public_delta(state), do: View.delta(state)

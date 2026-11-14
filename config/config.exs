@@ -94,6 +94,13 @@ config :tailwind,
     cd: Path.expand("..", __DIR__)
   ]
 
+# Fail the build when the Hologram runtime bundle or a page bundle (the
+# uncompressed .js; struct chunks are exempt) grows past this many bytes. Read
+# while the bundles compile, so it can't live in runtime.exs. Sized at ~1.25x
+# the largest dev bundle (runtime, 671_034 bytes on Hologram 0.12.8); dev and
+# test bundles carry client stacktraces, so prod bundles have more headroom.
+config :hologram, max_bundle_size: 840_000
+
 # Configures Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

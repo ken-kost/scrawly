@@ -16,7 +16,6 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
 
   defp base_component(overrides \\ %{}) do
     defaults = %{
-      room_id: "test-room",
       room_code: "ABCD",
       current_user_id: "user-1",
       current_user_username: "Alice",
@@ -56,7 +55,8 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       drawing_sent_length: 0
     }
 
-    %Hologram.Component{state: Map.merge(defaults, overrides)}
+    # room_id is the page param, so a prop (never state).
+    %Hologram.Component{props: %{room_id: "test-room"}, state: Map.merge(defaults, overrides)}
   end
 
   # The client sends only the room and the typed text; the server decides
@@ -332,13 +332,13 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
           id: 1,
           player_name: "System",
           message: "Game started! Bob is drawing first.",
-          timestamp: DateTime.utc_now(),
+          timestamp: System.system_time(:millisecond),
           type: :system
         }
       ]
 
       params = %{
-        room_id: comp.state.room_id,
+        room_id: comp.props.room_id,
         status: :playing,
         players: comp.state.players,
         version: 1,
@@ -383,13 +383,13 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
           id: 2,
           player_name: "System",
           message: "Round 2! Charlie is drawing.",
-          timestamp: DateTime.utc_now(),
+          timestamp: System.system_time(:millisecond),
           type: :system
         }
       ]
 
       params = %{
-        room_id: comp.state.room_id,
+        room_id: comp.props.room_id,
         status: :playing,
         players: comp.state.players,
         version: 6,
@@ -429,7 +429,7 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       comp = base_component(%{game_started: true, game_id: "g1", version: 10})
 
       params = %{
-        room_id: comp.state.room_id,
+        room_id: comp.props.room_id,
         status: :lobby,
         players: comp.state.players,
         version: 11,
@@ -478,13 +478,13 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
           id: 4,
           player_name: "System",
           message: "Time's up! The word was butterfly.",
-          timestamp: DateTime.utc_now(),
+          timestamp: System.system_time(:millisecond),
           type: :system
         }
       ]
 
       params = %{
-        room_id: comp.state.room_id,
+        room_id: comp.props.room_id,
         status: :playing,
         players: comp.state.players,
         version: 21,
@@ -576,7 +576,7 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
             id: i,
             player_name: "Bot",
             message: "msg #{i}",
-            timestamp: DateTime.utc_now(),
+            timestamp: System.system_time(:millisecond),
             type: :chat
           }
         end
@@ -598,13 +598,13 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
             id: i,
             player_name: "Bot",
             message: "server msg #{i}",
-            timestamp: DateTime.utc_now(),
+            timestamp: System.system_time(:millisecond),
             type: :chat
           }
         end
 
       params = %{
-        room_id: comp.state.room_id,
+        room_id: comp.props.room_id,
         status: :playing,
         players: comp.state.players,
         version: 6,

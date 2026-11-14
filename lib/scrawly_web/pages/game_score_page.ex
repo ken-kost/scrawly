@@ -15,10 +15,19 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   def init(%{game_id: game_id}, component, server) do
     user_id = ScrawlyWeb.Auth.user_id(server)
 
+    # Plain maps only: page state reaches the browser, and a GameResult record
+    # (or the DateTime below) would make it load that type's code chunks.
     results =
       case Scrawly.Games.get_game_results_for_game(game_id) do
-        {:ok, r} -> Enum.sort_by(r, & &1.score, :desc)
-        _ -> []
+        {:ok, r} ->
+          r
+          |> Enum.sort_by(& &1.score, :desc)
+          |> Enum.map(
+            &%{player_id: &1.player_id, player_username: &1.player_username, score: &1.score}
+          )
+
+        _ ->
+          []
       end
 
     {room_id, room_name, round_details, game_date, creator_id} =
@@ -63,7 +72,7 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
               }
             end)
 
-          {game.room_id, rname, details, game.created_at, cid}
+          {game.room_id, rname, details, format_date(game.created_at), cid}
 
         _ ->
           {nil, "Unknown", [], nil, nil}
@@ -78,7 +87,6 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
     # Every key in every branch: the countdown actions read them all.
     component =
       component
-      |> put_state(:game_id, game_id)
       |> put_state(:results, results)
       |> put_state(:current_user_id, user_id)
       |> put_state(:room_id, room_id)
@@ -103,6 +111,10 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
       {component, server}
     end
   end
+
+  # Same format as PastGamesPage.
+  defp format_date(nil), do: nil
+  defp format_date(datetime), do: Calendar.strftime(datetime, "%b %d, %Y at %H:%M")
 
   # ms before the room returns to the lobby (View.public/1), or nil when it is
   # not running or not in :post_game.
