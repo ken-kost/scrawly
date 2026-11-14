@@ -7,8 +7,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :connectGameChannel, from: "./game_channel.mjs"
   js_import :disconnectGameChannel, from: "./game_channel.mjs"
 
-  js_import :installCanvasShortcuts, from: "./keyboard.mjs"
-
   js_import :startStroke, from: "./drawing_manager.mjs"
   js_import :continueStroke, from: "./drawing_manager.mjs"
   js_import :endStroke, from: "./drawing_manager.mjs"
@@ -441,8 +439,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # canvas: the drawer's strokes live in drawing_manager.mjs (restored once per
   # mount by :mounted), the viewers' in :drawing_strokes.
   def action(:channel_connected, _params, component) do
-    JS.call(:installCanvasShortcuts, [])
-
     component
     |> put_state(:channel_connected, true)
     |> put_action(:poll_room)
@@ -571,24 +567,32 @@ defmodule ScrawlyWeb.Pages.GamePage do
     put_state(component, :draw_width, width)
   end
 
-  def action(:toggle_eraser, _params, component) do
-    is_eraser = not Map.get(component.state, :draw_eraser, false)
+  def action(:toggle_eraser, _params, component), do: toggle_eraser(component)
 
-    if is_eraser do
-      JS.call(:setToolColor, ["#FFFFFF"])
-      JS.call(:setToolWidth, [20])
-    else
-      JS.call(:setToolColor, [component.state.draw_color])
-      JS.call(:setToolWidth, [component.state.draw_width])
-    end
+  def action(:undo_drawing, _params, component), do: undo_last_stroke(component)
 
-    put_state(component, :draw_eraser, is_eraser)
-  end
+  # ── Drawer keyboard shortcuts ──────────────────────────────────────
+  # The `<window>` bindings render only inside the drawer's toolbar. Key
+  # filters match a superset of modifiers and fire on auto-repeat, so these
+  # clauses keep only the plain press: E alone toggles once even when held,
+  # Ctrl+Z / Cmd+Z undo once (no Shift: that is redo elsewhere). Ctrl+Cmd+Z
+  # fires both undo bindings with the same event; the :meta one yields.
 
-  def action(:undo_drawing, _params, component) do
-    JS.call(:undoStroke, [])
-    component
-  end
+  def action(
+        :shortcut_eraser,
+        %{event: %{ctrl_key: false, meta_key: false, alt_key: false, repeat: false}},
+        component
+      ),
+      do: toggle_eraser(component)
+
+  def action(:shortcut_eraser, _params, component), do: component
+
+  def action(:shortcut_undo, %{via: :meta, event: %{ctrl_key: true}}, component), do: component
+
+  def action(:shortcut_undo, %{event: %{shift_key: false, repeat: false}}, component),
+    do: undo_last_stroke(component)
+
+  def action(:shortcut_undo, _params, component), do: component
 
   alias ScrawlyWeb.Pages.GamePage.Commands
 
@@ -709,6 +713,26 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   defp end_drawing_phase(component, _old_phase, _new_phase), do: component
+
+  # Shared by the toolbar buttons and the keyboard shortcuts.
+  defp toggle_eraser(component) do
+    is_eraser = not Map.get(component.state, :draw_eraser, false)
+
+    if is_eraser do
+      JS.call(:setToolColor, ["#FFFFFF"])
+      JS.call(:setToolWidth, [20])
+    else
+      JS.call(:setToolColor, [component.state.draw_color])
+      JS.call(:setToolWidth, [component.state.draw_width])
+    end
+
+    put_state(component, :draw_eraser, is_eraser)
+  end
+
+  defp undo_last_stroke(component) do
+    JS.call(:undoStroke, [])
+    component
+  end
 
   # Every navigation away from GamePage that the page itself starts: the game
   # socket would otherwise stay joined (header links are handled by the
@@ -1030,6 +1054,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
               <span class="mono" style="font-size: 11px; color: var(--muted); margin-left: auto;">
                 <span class="kbd">⌘/Ctrl+Z</span> undo · <span class="kbd">E</span> eraser
               </span>
+              <window
+                $key_down.e="shortcut_eraser"
+                $key_down.ctrl+z.prevent_default={:shortcut_undo, via: :ctrl}
+                $key_down.meta+z.prevent_default={:shortcut_undo, via: :meta} />
             </div>
           {%else}
             <div class="toolbar" style="justify-content: space-between;">

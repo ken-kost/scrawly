@@ -5,8 +5,6 @@ defmodule ScrawlyWeb.Pages.HomePage do
   js_import :connectLobbyChannel, from: "./lobby_channel.mjs"
   js_import :disconnectLobbyChannel, from: "./lobby_channel.mjs"
   js_import :sendLobbyChat, from: "./lobby_channel.mjs"
-  js_import :installHomeKeybinds, from: "./home_keybinds.mjs"
-  js_import :uninstallHomeKeybinds, from: "./home_keybinds.mjs"
 
   js_import :connectDemoBoard, from: "./demo_board.mjs"
   js_import :disconnectDemoBoard, from: "./demo_board.mjs"
@@ -85,6 +83,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
   def template do
     ~HOLO"""
     <div class="page">
+      <window $key_down.n="shortcut_new" />
       <section class="hero">
         <div>
           <h1>draw.<span class="slash">/</span>guess.<br/>quietly.</h1>
@@ -148,7 +147,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
                 {/for}
               {/if}
             </div>
-            <form class="chat-input" $submit="send_lobby_chat">
+            <form class="chat-input" $submit="send_lobby_chat" $key_down.n.stop_propagation="noop">
               <input type="text" name="message" autocomplete="off" maxlength="240"
                      placeholder="message the lobby..."
                      value={@lobby_chat_input}
@@ -176,8 +175,9 @@ defmodule ScrawlyWeb.Pages.HomePage do
       </div>
 
       {%if @show_create_room}
+        <window $key_down.escape="hide_create_room" />
         <div class="scrim">
-          <form class="app-modal" $submit="create_room">
+          <form class="app-modal" $submit="create_room" $key_down.n.stop_propagation="noop">
             <div class="app-modal-head">
               <div>
                 <h3>new room</h3>
@@ -255,8 +255,9 @@ defmodule ScrawlyWeb.Pages.HomePage do
       {/if}
 
       {%if @show_login_modal}
+        <window $key_down.escape="hide_login" />
         <div class="scrim">
-          <form class="app-modal" $submit="submit_register">
+          <form class="app-modal" $submit="submit_register" $key_down.n.stop_propagation="noop">
             <div class="app-modal-head">
               <div>
                 <h3>create an account</h3>
@@ -293,8 +294,9 @@ defmodule ScrawlyWeb.Pages.HomePage do
       {/if}
 
       {%if @show_reset_modal}
+        <window $key_down.escape="hide_reset" />
         <div class="scrim">
-          <form class="app-modal" style="max-width: 420px;" $submit="submit_reset">
+          <form class="app-modal" style="max-width: 420px;" $submit="submit_reset" $key_down.n.stop_propagation="noop">
             <div class="app-modal-head">
               <div>
                 <h3>reset your password</h3>
@@ -348,6 +350,21 @@ defmodule ScrawlyWeb.Pages.HomePage do
     """
   end
 
+  defp modal_open?(state) do
+    state.show_create_room or state.show_login_modal or state.show_reset_modal or
+      state.recovery_code != nil
+  end
+
+  defp open_create_room(component), do: put_state(component, :show_create_room, true)
+
+  # The page's register / sign-in modal (also what guests get: :register
+  # upgrades them).
+  defp open_sign_in(component) do
+    component
+    |> put_state(:show_login_modal, true)
+    |> put_state(:login_error, "")
+  end
+
   defp put_reset_defaults(component) do
     component
     |> put_state(:show_reset_modal, false)
@@ -358,11 +375,34 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_state(:reset_error, "")
   end
 
+  # ── Keyboard: N for new ────────────────────────────────────────────
+  # `<window $key_down.n>` also fires while the user types, so every form with
+  # a text field on this screen stops "n" first with a `:noop` binding (a
+  # binding needs a real operation: a nil one stops nothing). Apply the same
+  # guard to forms added later. Ctrl/Cmd/Alt+N match the filter too; the
+  # fallback clause ignores them.
+
+  def action(
+        :shortcut_new,
+        %{event: %{ctrl_key: false, meta_key: false, alt_key: false}},
+        component
+      ) do
+    state = component.state
+
+    cond do
+      modal_open?(state) -> component
+      state.authenticated and not state.is_guest -> open_create_room(component)
+      true -> open_sign_in(component)
+    end
+  end
+
+  def action(:shortcut_new, _params, component), do: component
+
+  def action(:noop, _params, component), do: component
+
   # ── Create-room modal actions ──────────────────────────────────────
 
-  def action(:show_create_room, _params, component) do
-    put_state(component, :show_create_room, true)
-  end
+  def action(:show_create_room, _params, component), do: open_create_room(component)
 
   def action(:hide_create_room, _params, component) do
     component
@@ -378,11 +418,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   # ── Login / register modal actions ─────────────────────────────────
 
-  def action(:show_login, _params, component) do
-    component
-    |> put_state(:show_login_modal, true)
-    |> put_state(:login_error, "")
-  end
+  def action(:show_login, _params, component), do: open_sign_in(component)
 
   def action(:hide_login, _params, component) do
     put_state(component, :show_login_modal, false)
@@ -619,21 +655,18 @@ defmodule ScrawlyWeb.Pages.HomePage do
   def action(:connect_lobby, _params, component) do
     token = Map.get(component.state, :socket_token, "")
     JS.call(:connectLobbyChannel, [token])
-    JS.call(:installHomeKeybinds, [component.state.authenticated])
     JS.call(:connectDemoBoard, [])
     component
   end
 
   def action(:join_room_with_user, %{room_id: room_id}, component) do
     JS.call(:disconnectLobbyChannel, [])
-    JS.call(:uninstallHomeKeybinds, [])
     JS.call(:disconnectDemoBoard, [])
     put_page(component, ScrawlyWeb.Pages.GamePage, room_id: room_id)
   end
 
   def action(:watch_room, %{room_id: room_id}, component) do
     JS.call(:disconnectLobbyChannel, [])
-    JS.call(:uninstallHomeKeybinds, [])
     JS.call(:disconnectDemoBoard, [])
     put_command(component, :enter_watch_mode, room_id: room_id)
   end

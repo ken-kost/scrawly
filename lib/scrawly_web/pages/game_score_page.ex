@@ -441,8 +441,9 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
       {/if}
 
       {%if @modal_round}
-        <div class="scrim" $click={:close_drawing_modal}>
-          <div class="app-modal" style="max-width: 800px;">
+        <window $key_down.escape="close_drawing_modal" />
+        <div class="scrim">
+          <div class="app-modal" style="max-width: 800px;" $click_outside={:close_drawing_modal}>
             {%for round <- @round_details}
               {%if round.round == @modal_round}
                 <div class="app-modal-head">

@@ -47,7 +47,8 @@ defmodule ScrawlyWeb.Components.ChatBox do
                placeholder={if(@current_user_id == nil, do: "sign in to chat", else: if(@is_drawer, do: "you are drawing — chat disabled", else: "type a guess..."))}
                value={@current_message}
                disabled={@disabled || @current_user_id == nil}
-               $change={:update_message} />
+               $change={:update_message}
+               $key_down.escape.prevent_default="clear_message" />
         <button type="submit" class="app-btn app-btn-sm" disabled={@disabled || @current_user_id == nil || String.trim(@current_message) == ""}>send</button>
       </form>
     </div>

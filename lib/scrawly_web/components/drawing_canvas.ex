@@ -4,10 +4,10 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
 
   Markup contract with drawing_manager.mjs: the svg is `#game-canvas-svg`;
   viewers get the completed strokes rendered here (`data-stroke-id`); the
-  drawer gets `#drawing-path` (the stroke in progress, also how keyboard.mjs
-  detects the drawer) and their completed strokes are drawn by JS before it;
-  everyone gets the empty `#game-canvas-overlay` group as the last child, where
-  JS draws live strokes from other tabs.
+  drawer gets `#drawing-path` (the stroke in progress) and their completed
+  strokes are drawn by JS before it; everyone gets the empty
+  `#game-canvas-overlay` group as the last child, where JS draws live strokes
+  from other tabs.
   """
   use Hologram.Component
 

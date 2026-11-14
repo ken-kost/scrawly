@@ -160,12 +160,53 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                 {@online_count} online
               </span>
 
-              <button
-                $click={action: :toggle_accent_picker, target: "layout"}
-                class="icon-btn"
-                title="Choose accent">
-                <span style="width: 14px; height: 14px; border-radius: 999px; background: var(--accent); display: inline-block; border: 1px solid var(--hairline-2);"></span>
-              </button>
+              <span
+                style="display: contents;"
+                $click_outside={action: if(@show_accent_picker, do: :close_accent_picker), target: "layout"}>
+                <button
+                  $click={action: :toggle_accent_picker, target: "layout"}
+                  class="icon-btn"
+                  title="Choose accent">
+                  <span style="width: 14px; height: 14px; border-radius: 999px; background: var(--accent); display: inline-block; border: 1px solid var(--hairline-2);"></span>
+                </button>
+                {%if @show_accent_picker}
+                  <window $key_down.escape={action: :close_accent_picker, target: "layout"} />
+                  <div class="accent-popover">
+                    <div class="section-label" style="margin-bottom: 8px;">theme</div>
+                    <div class="seg" style="margin-bottom: 12px;">
+                      <button
+                        type="button"
+                        class={if(!@dark_mode, do: "active", else: "")}
+                        $click={action: :set_theme, target: "layout", params: %{mode: "light"}}>light</button>
+                      <button
+                        type="button"
+                        class={if(@dark_mode, do: "active", else: "")}
+                        $click={action: :set_theme, target: "layout", params: %{mode: "dark"}}>dark</button>
+                    </div>
+                    <div class="section-label" style="margin-bottom: 8px;">accent</div>
+                    <div class="accent-row">
+                      <button
+                        type="button"
+                        class={if(@accent == :purple, do: "accent-dot active", else: "accent-dot")}
+                        style="background: #8b5cf6;"
+                        title="hologram"
+                        $click={action: :set_accent, target: "layout", params: %{name: "purple"}}></button>
+                      <button
+                        type="button"
+                        class={if(@accent == :yellow, do: "accent-dot active", else: "accent-dot")}
+                        style="background: #ffbd59;"
+                        title="ash"
+                        $click={action: :set_accent, target: "layout", params: %{name: "yellow"}}></button>
+                      <button
+                        type="button"
+                        class={if(@accent == :orange, do: "accent-dot active", else: "accent-dot")}
+                        style="background: #fd4f00;"
+                        title="phoenix"
+                        $click={action: :set_accent, target: "layout", params: %{name: "orange"}}></button>
+                    </div>
+                  </div>
+                {/if}
+              </span>
 
               <button
                 $click={action: :toggle_theme, target: "layout"}
@@ -195,53 +236,18 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                 <button class="app-btn app-btn-ghost app-btn-sm" $click={action: :show_login, target: "layout"}>log in</button>
                 <button class="app-btn app-btn-ink app-btn-sm" $click={action: :show_register, target: "layout"}>register</button>
               {/if}
-
-              {%if @show_accent_picker}
-                <div class="accent-popover">
-                  <div class="section-label" style="margin-bottom: 8px;">theme</div>
-                  <div class="seg" style="margin-bottom: 12px;">
-                    <button
-                      type="button"
-                      class={if(!@dark_mode, do: "active", else: "")}
-                      $click={action: :set_theme, target: "layout", params: %{mode: "light"}}>light</button>
-                    <button
-                      type="button"
-                      class={if(@dark_mode, do: "active", else: "")}
-                      $click={action: :set_theme, target: "layout", params: %{mode: "dark"}}>dark</button>
-                  </div>
-                  <div class="section-label" style="margin-bottom: 8px;">accent</div>
-                  <div class="accent-row">
-                    <button
-                      type="button"
-                      class={if(@accent == :purple, do: "accent-dot active", else: "accent-dot")}
-                      style="background: #8b5cf6;"
-                      title="hologram"
-                      $click={action: :set_accent, target: "layout", params: %{name: "purple"}}></button>
-                    <button
-                      type="button"
-                      class={if(@accent == :yellow, do: "accent-dot active", else: "accent-dot")}
-                      style="background: #ffbd59;"
-                      title="ash"
-                      $click={action: :set_accent, target: "layout", params: %{name: "yellow"}}></button>
-                    <button
-                      type="button"
-                      class={if(@accent == :orange, do: "accent-dot active", else: "accent-dot")}
-                      style="background: #fd4f00;"
-                      title="phoenix"
-                      $click={action: :set_accent, target: "layout", params: %{name: "orange"}}></button>
-                  </div>
-                </div>
-              {/if}
             </div>
           </div>
         </header>
 
         {%if @show_login_modal}
+          <window $key_down.escape={action: :hide_auth_modal, target: "layout"} />
           <div class="scrim">
             <form
               class="app-modal"
               style="max-width: 400px;"
-              $submit={action: :submit_login, target: "layout"}>
+              $submit={action: :submit_login, target: "layout"}
+              $key_down.n.stop_propagation={action: :noop, target: "layout"}>
               <div class="app-modal-head">
                 <div>
                   <h3>log in</h3>
@@ -290,11 +296,13 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
         {/if}
 
         {%if @show_reset_modal}
+          <window $key_down.escape={action: :hide_auth_modal, target: "layout"} />
           <div class="scrim">
             <form
               class="app-modal"
               style="max-width: 400px;"
-              $submit={action: :submit_reset, target: "layout"}>
+              $submit={action: :submit_reset, target: "layout"}
+              $key_down.n.stop_propagation={action: :noop, target: "layout"}>
               <div class="app-modal-head">
                 <div>
                   <h3>reset password</h3>
@@ -371,11 +379,13 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
         {/if}
 
         {%if @show_register_modal}
+          <window $key_down.escape={action: :hide_auth_modal, target: "layout"} />
           <div class="scrim">
             <form
               class="app-modal"
               style="max-width: 400px;"
-              $submit={action: :submit_register, target: "layout"}>
+              $submit={action: :submit_register, target: "layout"}
+              $key_down.n.stop_propagation={action: :noop, target: "layout"}>
               <div class="app-modal-head">
                 <div>
                   <h3>register</h3>
@@ -480,6 +490,15 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     put_state(component, :show_accent_picker, not component.state.show_accent_picker)
   end
 
+  # Escape and $click_outside. The toggle and the popover share the
+  # `display: contents` span that carries $click_outside (so .header-actions
+  # stays their layout box and the popover's containing block): a click on the
+  # toggle while open is "inside", and the toggle alone closes it. The binding
+  # resolves to nil while the popover is closed, which disables it.
+  def action(:close_accent_picker, _params, component) do
+    put_state(component, :show_accent_picker, false)
+  end
+
   def action(:set_accent, %{name: name}, component) do
     atom = String.to_existing_atom(name)
 
@@ -487,6 +506,12 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     |> put_state(:accent, atom)
     |> put_command(:save_accent, %{accent: name})
   end
+
+  # Target of the typing guards on the layout's forms
+  # (`$key_down.n.stop_propagation`): it stops a page's `<window>` N shortcut
+  # while the user types here. A guard needs a real operation; a nil one
+  # stops nothing.
+  def action(:noop, _params, component), do: component
 
   # ── Auth actions ───────────────────────────────────────────────
 
