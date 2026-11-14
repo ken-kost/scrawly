@@ -105,44 +105,6 @@ defmodule Scrawly.Integration.CompleteGameFlowTest do
       assert length(unique_words) == total_rounds
     end
 
-    test "GamePage start_game params mirror backend state", %{
-      room: room,
-      players: players
-    } do
-      first_drawer = List.first(players)
-
-      # Create and start game via Ash
-      {:ok, game} = Games.create_game(room.id, 5)
-      {:ok, started_game} = Games.start_round(game.id, first_drawer.id)
-
-      # Simulate what GamePage.command(:start_game) produces as action params
-      params = %{
-        game_id: game.id,
-        round: started_game.current_round,
-        first_drawer_id: first_drawer.id,
-        current_word: started_game.current_word,
-        players: players
-      }
-
-      assert params.game_id == game.id
-      assert params.round == 1
-      assert params.first_drawer_id == first_drawer.id
-      assert params.current_word != nil
-
-      # Verify WordHints produces correct hidden display
-      hidden = WordHints.hidden_display(started_game.current_word)
-      assert is_binary(hidden)
-      assert String.contains?(hidden, "_")
-      refute hidden == started_game.current_word
-
-      # Verify is_drawer logic: first player is drawer, others are not
-      assert first_drawer.id == params.first_drawer_id
-
-      for p <- Enum.drop(players, 1) do
-        refute p.id == params.first_drawer_id
-      end
-    end
-
     test "GamePage next_round params mirror backend state for round 2", %{
       room: room,
       player_queue: player_queue

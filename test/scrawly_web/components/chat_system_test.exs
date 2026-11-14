@@ -30,8 +30,11 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       round: 1,
       total_rounds: 5,
       current_drawer: %{id: "user-2", name: "Bob"},
-      current_word: "butterfly",
+      current_word: nil,
       current_word_display: "_ _ _ _ _ _ _ _ _",
+      word_length: 9,
+      revealed_word: nil,
+      phase: :drawing,
       time_left: 60,
       is_drawer: false,
       is_creator: true,
@@ -40,7 +43,7 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       new_message: "",
       chat_messages: [],
       correct_guessers: [],
-      used_words: ["butterfly"],
+      used_words: [],
       rate_limited: false,
       message_timestamps: [],
       can_start_game: true,
@@ -343,19 +346,23 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
         current_round: 1,
         total_rounds: 5,
         current_drawer_id: "user-2",
-        current_word: "butterfly",
+        current_word: nil,
         time_left: 80,
         round_active: true,
         correct_guessers: [],
         chat_messages: server_chat,
-        drawing_path: "",
+        drawing_strokes: [],
         name: "Test",
         code: "ABCD",
         creator_id: "user-1",
         max_players: 4,
         watchers: [],
         is_drawer: false,
-        current_word_display: "_ _ _ _ _",
+        word_display: "_ _ _ _ _",
+        word_length: 5,
+        revealed_word: nil,
+        phase: :drawing,
+        word_choices: [],
         drawer_name: "Bob"
       }
 
@@ -390,19 +397,23 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
         current_round: 2,
         total_rounds: 5,
         current_drawer_id: "user-3",
-        current_word: "elephant",
+        current_word: nil,
         time_left: 80,
         round_active: true,
         correct_guessers: [],
         chat_messages: server_chat,
-        drawing_path: "",
+        drawing_strokes: [],
         name: "Test",
         code: "ABCD",
         creator_id: "user-1",
         max_players: 4,
         watchers: [],
         is_drawer: false,
-        current_word_display: "_ _ _ _ _",
+        word_display: "_ _ _ _ _",
+        word_length: 5,
+        revealed_word: nil,
+        phase: :drawing,
+        word_choices: [],
         drawer_name: "Bob"
       }
 
@@ -431,14 +442,18 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
         round_active: false,
         correct_guessers: [],
         chat_messages: [],
-        drawing_path: "",
+        drawing_strokes: [],
         name: "Test",
         code: "ABCD",
         creator_id: "user-1",
         max_players: 4,
         watchers: [],
         is_drawer: false,
-        current_word_display: "",
+        word_display: "",
+        word_length: 0,
+        revealed_word: nil,
+        phase: :idle,
+        word_choices: [],
         drawer_name: "Unknown",
         last_game_id: "g1"
       }
@@ -455,7 +470,6 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
           game_started: true,
           game_id: "g1",
           time_left: 5,
-          current_word: "butterfly",
           version: 20
         })
 
@@ -478,19 +492,23 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
         current_round: 1,
         total_rounds: 5,
         current_drawer_id: "user-2",
-        current_word: "butterfly",
+        current_word: nil,
         time_left: 0,
         round_active: false,
         correct_guessers: [],
         chat_messages: server_chat,
-        drawing_path: "",
+        drawing_strokes: [],
         name: "Test",
         code: "ABCD",
         creator_id: "user-1",
         max_players: 4,
         watchers: [],
         is_drawer: false,
-        current_word_display: "_ _ _ _ _",
+        word_display: "b _ _ _ e _ _ _ y",
+        word_length: 9,
+        revealed_word: "butterfly",
+        phase: :round_end,
+        word_choices: [],
         drawer_name: "Bob"
       }
 
@@ -506,6 +524,8 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
 
       assert timeout_msg != nil
       assert timeout_msg.message =~ "butterfly"
+      assert result.state.revealed_word == "butterfly"
+      assert result.state.current_word == nil
     end
   end
 
@@ -517,7 +537,6 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       comp =
         base_component(%{
           new_message: "butterfly",
-          current_word: "butterfly",
           time_left: 60,
           correct_guessers: [],
           current_drawer: %{id: "user-2", name: "Bob"}
@@ -535,7 +554,6 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       comp =
         base_component(%{
           new_message: "butterfly",
-          current_word: "butterfly",
           time_left: 60,
           correct_guessers: ["user-1"],
           current_drawer: %{id: "user-2", name: "Bob"}
@@ -594,19 +612,23 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
         current_round: 1,
         total_rounds: 5,
         current_drawer_id: "user-2",
-        current_word: "butterfly",
+        current_word: nil,
         time_left: 55,
         round_active: true,
         correct_guessers: [],
         chat_messages: server_messages,
-        drawing_path: "",
+        drawing_strokes: [],
         name: "Test",
         code: "ABCD",
         creator_id: "user-1",
         max_players: 4,
         watchers: [],
         is_drawer: false,
-        current_word_display: "_ _ _ _ _",
+        word_display: "_ _ _ _ _",
+        word_length: 5,
+        revealed_word: nil,
+        phase: :drawing,
+        word_choices: [],
         drawer_name: "Bob"
       }
 

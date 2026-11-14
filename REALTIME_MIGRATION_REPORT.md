@@ -155,10 +155,23 @@ test debt is addressed.
 ---
 
 ## Security note
-The `:room_delta` payload (`RoomServer.public_delta/1`) **omits `current_word` and
-`word_choices`**. Non-drawers never receive the raw word on the public `{:room, id}`
-channel; the masked display is computed server-side by `WordHints` via each user's own
-`poll_room_state` on a transition. (For v1 this uses "option A" — see deferred items.)
+**Correction:** the original note claimed only `:room_delta` mattered. In fact the word
+also leaked through `GamePage.init/3` (page state is serialized into the HTML) and through
+every `:room_refreshed` reply (`poll_room_state`, `join_room`, `join_as_watcher`,
+`start_game`, `choose_word`), which were built from the raw room state.
+
+Now all of them go through `Scrawly.Games.RoomServer.View`:
+- `View.public/1` (`get_state/1`, call replies) and `View.delta/1` (`:room_delta`) never
+  contain `current_word`, `word_choices` or `choice_deadline`. They carry `word_display`
+  (the `WordHints` mask for the current `time_left`), `word_length` (letters only) and
+  `revealed_word` (the word, only in `:round_end`).
+- Only `View.for_viewer/2` adds the word and the choices, and only when the viewer is the
+  drawer. The viewer is always the session user (`RoomServer.get_view(room_id,
+  Auth.user_id(server))`), never a param; account-less visitors are `nil` and never the
+  drawer.
+
+The 1 Hz tick's `:room_delta` carries the current mask, so hints reach every client
+without a poll and a reload shows the current hint.
 
 ---
 
@@ -167,9 +180,9 @@ channel; the masked display is computed server-side by `WordHints` via each user
 1. **Multi-client manual verification** — see matrix above. Highest priority before merge.
 2. **Test-suite rewrite** — port the channel/poll tests to realtime assertions; add
    version-guard, word-leak, and producer-broadcast coverage. (You deferred this.)
-3. **Progressive hint reveal (option B)** — with option A, the masked word updates at
-   phase/round boundaries, not every tick. Drawing/round timers stay smooth (1Hz delta).
-   If per-tick letter reveal matters, broadcast a precomputed reveal schedule.
+3. **Progressive hint reveal** — done: the 1Hz `:room_delta` carries the current mask
+   (`word_display`), computed server-side. Never send a reveal schedule or letter positions:
+   they would let a client read letters early.
 4. **Hard-disconnect player removal** — `terminate` intentionally does **not** call
    `RoomServer.leave` (it would dissolve the room on creator reload and cause leave/rejoin
    flicker). Disconnected players already lingered before this migration (presence only

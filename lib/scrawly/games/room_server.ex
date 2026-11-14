@@ -10,7 +10,7 @@ defmodule Scrawly.Games.RoomServer do
   use GenServer
 
   alias Scrawly.Games
-  alias Scrawly.Games.{Guess, Scoring, RoomServer.GameFlow}
+  alias Scrawly.Games.{Guess, Scoring, RoomServer.GameFlow, RoomServer.View}
 
   @registry Scrawly.RoomRegistry
   @supervisor Scrawly.RoomSupervisor
@@ -81,8 +81,24 @@ defmodule Scrawly.Games.RoomServer do
     %{id: {__MODULE__, room_id}, start: {__MODULE__, :start_link, [room_id]}, restart: :temporary}
   end
 
+  @doc """
+  The room as anyone may see it (`View.public/1`): never the word or the word
+  choices. Use `get_view/2` for what a given viewer's page needs.
+  """
   def get_state(room_id) do
     GenServer.call(via(room_id), :get_state)
+  catch
+    :exit, _ -> {:error, :not_found}
+  end
+
+  @doc """
+  The room as `viewer_id` may see it (`View.for_viewer/2`): the word and the
+  word choices are included only when `viewer_id` is the current drawer. Pass
+  the session user's id, or `nil` for visitors without an account.
+  """
+  @spec get_view(term, term) :: {:ok, map} | {:error, :not_found}
+  def get_view(room_id, viewer_id) do
+    GenServer.call(via(room_id), {:get_view, viewer_id})
   catch
     :exit, _ -> {:error, :not_found}
   end
@@ -301,6 +317,10 @@ defmodule Scrawly.Games.RoomServer do
   @impl true
   def handle_call(:get_state, _from, state) do
     {:reply, {:ok, to_public(state)}, state}
+  end
+
+  def handle_call({:get_view, viewer_id}, _from, state) do
+    {:reply, {:ok, View.for_viewer(state, viewer_id)}, state}
   end
 
   def handle_call({:join, player}, _from, state) do
@@ -950,75 +970,9 @@ defmodule Scrawly.Games.RoomServer do
     Hologram.Realtime.broadcast_action({:room, room_id}, :chat_appended, %{message: message})
   end
 
-  defp public_delta(state) do
-    %{
-      room_id: state.room_id,
-      status: state.status,
-      players: state.players,
-      watchers: state.watchers,
-      version: state.version,
-      game_id: state.game_id,
-      current_round: state.current_round,
-      total_rounds: state.total_rounds,
-      current_drawer_id: state.current_drawer_id,
-      time_left: state.time_left,
-      round_active: state.round_active,
-      correct_guessers: state.correct_guessers,
-      phase: state.phase,
-      choice_time_left: choice_time_left(state),
-      last_game_id: state.last_game_id,
-      max_players: state.max_players,
-      past_games: state.past_games
-    }
-  end
+  defp public_delta(state), do: View.delta(state)
 
-  defp choice_time_left(state) do
-    case state.choice_deadline do
-      nil ->
-        0
-
-      deadline when is_integer(deadline) ->
-        now = System.monotonic_time(:millisecond)
-        max(0, div(deadline - now + 999, 1000))
-    end
-  end
-
-  defp to_public(state) do
-    Map.take(state, [
-      :room_id,
-      :name,
-      :code,
-      :status,
-      :creator_id,
-      :max_players,
-      :players,
-      :watchers,
-      :version,
-      :game_id,
-      :current_round,
-      :total_rounds,
-      :current_drawer_id,
-      :current_word,
-      :time_left,
-      :round_active,
-      :correct_guessers,
-      :chat_messages,
-      :drawing_strokes,
-      :last_game_id,
-      :round_results,
-      :word_count,
-      :word_source,
-      :prompt,
-      :creator_name,
-      :round_duration,
-      :round_multiplier,
-      :ai_tone,
-      :past_games,
-      :phase,
-      :word_choices,
-      :choice_deadline
-    ])
-  end
+  defp to_public(state), do: View.public(state)
 
   defp to_player_map(user) do
     %{

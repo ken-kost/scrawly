@@ -150,8 +150,11 @@ defmodule Scrawly.Games.Game do
       constraints min: 1, max: 12
     end
 
+    # The secret word: kept off public interfaces. Actions still write it
+    # (`accept` only needs it writable), and the RoomServer never exposes it
+    # to non-drawers (see RoomServer.View).
     attribute :current_word, :string do
-      public? true
+      public? false
     end
 
     attribute :current_drawer_id, :uuid do

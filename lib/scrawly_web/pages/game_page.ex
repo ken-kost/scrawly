@@ -24,19 +24,21 @@ defmodule ScrawlyWeb.Pages.GamePage do
   param :room_id, :string
 
   alias ScrawlyWeb.Components.{ChatBox, ScoreBoard, DrawingCanvas}
-  alias Scrawly.Games.{WordHints, RoomServer}
+  alias Scrawly.Games.RoomServer
 
+  # Page state is serialized into the HTML, so it is built from the session
+  # user's own view of the room: only the drawer's view carries the word and
+  # the word choices (RoomServer.View.for_viewer/2).
   def init(%{room_id: room_id}, component, server) do
     watch_mode = get_session(server, :watch_mode) == "yes"
+    user_id = ScrawlyWeb.Auth.user_id(server)
 
     case RoomServer.ensure_started(room_id) do
       {:ok, _pid} ->
-        case RoomServer.get_state(room_id) do
+        case RoomServer.get_view(room_id, user_id) do
           {:ok, rs} ->
-            user_id = ScrawlyWeb.Auth.user_id(server)
             is_creator = user_id == rs.creator_id
             game_active = rs.game_id != nil
-            is_drawer = rs.current_drawer_id == user_id
 
             component =
               component
@@ -63,32 +65,20 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(
                 :current_drawer,
                 if(rs.current_drawer_id,
-                  do: %{
-                    id: rs.current_drawer_id,
-                    username:
-                      (Enum.find(rs.players, &(&1.id == rs.current_drawer_id)) ||
-                         %{username: "Unknown"}).username
-                  },
+                  do: %{id: rs.current_drawer_id, username: rs.drawer_name},
                   else: nil
                 )
               )
-              |> put_state(:current_word, if(game_active, do: rs.current_word, else: ""))
-              |> put_state(
-                :current_word_display,
-                if(game_active && !is_drawer,
-                  do: WordHints.hidden_display(rs.current_word || "", rs.round_duration || 60),
-                  else: ""
-                )
-              )
-              |> put_state(:is_drawer, is_drawer)
+              |> put_state(:current_word, rs.current_word)
+              |> put_state(:current_word_display, rs.word_display)
+              |> put_state(:word_length, rs.word_length)
+              |> put_state(:revealed_word, rs.revealed_word)
+              |> put_state(:is_drawer, rs.is_drawer)
               |> put_state(:correct_guessers, rs.correct_guessers || [])
               |> put_state(:used_words, [])
-              |> put_state(:phase, Map.get(rs, :phase, :idle))
-              |> put_state(
-                :word_choices,
-                if(is_drawer, do: Map.get(rs, :word_choices, []), else: [])
-              )
-              |> put_state(:choice_time_left, 0)
+              |> put_state(:phase, rs.phase)
+              |> put_state(:word_choices, rs.word_choices)
+              |> put_state(:choice_time_left, rs.choice_time_left)
               |> put_state(
                 :can_start_game,
                 is_creator and length(rs.players) >= 2 and rs.game_id == nil
@@ -266,6 +256,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
             :can_start_game,
             component.state.is_creator and length(params.players) >= 2 and params.game_id == nil
           )
+          # The word fields are the same for everyone; the drawer's word and
+          # choices only ever arrive through the poll reply.
+          |> put_state(:current_word_display, Map.get(params, :word_display, ""))
+          |> put_state(:word_length, Map.get(params, :word_length, 0))
+          |> put_state(:revealed_word, Map.get(params, :revealed_word))
 
         if transition? do
           put_command(component, :poll_room_state, room_id: component.state.room_id)
@@ -313,11 +308,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   def action(:choose_word, %{word: word}, component) do
     if component.state.is_drawer and component.state.phase == :choosing do
-      put_command(component, :choose_word,
-        room_id: component.state.room_id,
-        player_id: component.state.current_user_id,
-        word: word
-      )
+      put_command(component, :choose_word, room_id: component.state.room_id, word: word)
     else
       component
     end
@@ -560,7 +551,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
     new_phase = Map.get(params, :phase, :idle)
 
     is_drawer = params.is_drawer || false
-    word_display = params.current_word_display || ""
+    word_display = Map.get(params, :word_display, "")
+    word_length = Map.get(params, :word_length, 0)
+    revealed_word = Map.get(params, :revealed_word)
+    current_word = Map.get(params, :current_word)
     drawer_name = params.drawer_name || "Unknown"
     word_choices = Map.get(params, :word_choices, [])
     choice_time_left = Map.get(params, :choice_time_left, 0)
@@ -575,8 +569,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
         |> put_state(:round, new_round)
         |> put_state(:total_rounds, params.total_rounds || 5)
         |> put_state(:current_drawer, %{id: params.current_drawer_id, username: drawer_name})
-        |> put_state(:current_word, params.current_word)
+        |> put_state(:current_word, current_word)
         |> put_state(:current_word_display, word_display)
+        |> put_state(:word_length, word_length)
+        |> put_state(:revealed_word, revealed_word)
         |> put_state(:is_drawer, is_drawer)
         |> put_state(:time_left, new_time)
         |> put_state(:phase, new_phase)
@@ -593,6 +589,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
         |> put_state(:current_drawer, nil)
         |> put_state(:current_word, nil)
         |> put_state(:current_word_display, "")
+        |> put_state(:word_length, 0)
+        |> put_state(:revealed_word, nil)
         |> put_state(:time_left, 0)
         |> put_state(:is_drawer, false)
         |> put_state(:correct_guessers, [])
@@ -607,8 +605,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
         component
         |> put_state(:round, new_round)
         |> put_state(:current_drawer, %{id: params.current_drawer_id, username: drawer_name})
-        |> put_state(:current_word, params.current_word)
+        |> put_state(:current_word, current_word)
         |> put_state(:current_word_display, word_display)
+        |> put_state(:word_length, word_length)
+        |> put_state(:revealed_word, revealed_word)
         |> put_state(:is_drawer, is_drawer)
         |> put_state(:time_left, new_time)
         |> put_state(:phase, new_phase)
@@ -620,8 +620,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
         component
         |> put_state(:time_left, new_time)
         |> put_state(:current_word_display, word_display)
+        |> put_state(:word_length, word_length)
+        |> put_state(:revealed_word, revealed_word)
         |> put_state(:is_drawer, is_drawer)
-        |> put_state(:current_word, params.current_word)
+        |> put_state(:current_word, current_word)
         |> put_state(:phase, new_phase)
         |> put_state(:word_choices, word_choices)
         |> put_state(:choice_time_left, choice_time_left)
@@ -662,8 +664,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
           component
         end
 
+      # Replies carry no strokes (stripped server-side): keep the list that
+      # init, the stroke actions and round resets maintain.
       true ->
-        put_state(component, :drawing_strokes, Map.get(params, :drawing_strokes, []))
+        component
     end
   end
 
@@ -810,14 +814,18 @@ defmodule ScrawlyWeb.Pages.GamePage do
               </div>
             {%else}
               <div class="word-letters">
-                {%if @is_drawer && @current_word}
-                  {String.upcase(@current_word)}
+                {%if @revealed_word}
+                  {String.upcase(@revealed_word)}
                 {%else}
-                  {%if @current_word_display}{@current_word_display}{%else}_ _ _{/if}
+                  {%if @is_drawer}
+                    {String.upcase(@current_word || "")}
+                  {%else}
+                    {%if @current_word_display}{@current_word_display}{%else}_ _ _{/if}
+                  {/if}
                 {/if}
               </div>
               <div class="word-meta">
-                {%if @is_drawer}your word · {String.length(@current_word || "")} letters{%else}round {@round} of {@total_rounds} · {String.length(@current_word || "")} letters{/if}
+                {%if @is_drawer}your word · {@word_length} letters{%else}round {@round} of {@total_rounds} · {@word_length} letters{/if}
               </div>
             {/if}
           </div>

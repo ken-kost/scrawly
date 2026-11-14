@@ -7,6 +7,10 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
   The acting user always comes from the session via `ScrawlyWeb.Auth`, never from
   params. Rejected commands reply with `:command_denied` (see `Auth.deny/3`).
+
+  Every `:room_refreshed` reply is the session user's own view of the room
+  (`RoomServer.get_view/2`): the word and the word choices are only ever sent
+  to the current drawer.
   """
 
   require Logger
@@ -14,12 +18,12 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   import Hologram.Component, only: [put_action: 2, put_action: 3, put_broadcast_except: 5]
 
   alias Scrawly.{Accounts, Games}
-  alias Scrawly.Games.{WordHints, RoomServer}
+  alias Scrawly.Games.RoomServer
   alias Scrawly.Games.RoomServer.GameFlow
   alias ScrawlyWeb.Auth
 
   def poll_room_state(%{room_id: room_id}, server) do
-    poll_and_enrich(server, room_id, Auth.user_id(server))
+    reply_with_view(server, room_id)
   end
 
   def join_room(%{room_id: room_id}, server) do
@@ -38,7 +42,7 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
             Accounts.join_room(user, room_id)
             Games.join_room(room_id, user.id)
 
-            poll_and_enrich(server, room_id, user.id)
+            reply_with_view(server, room_id)
 
           {:error, :room_full} ->
             put_action(server, :switch_to_watcher)
@@ -65,7 +69,7 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
           end
 
         case RoomServer.join_as_watcher(room_id, %{id: key, username: username}) do
-          {:ok, state} -> put_action(server, :room_refreshed, state)
+          {:ok, _state} -> reply_with_view(server, room_id)
           {:error, :room_full} -> Auth.deny(server, :join_as_watcher, :room_full)
           {:error, _} -> server
         end
@@ -90,11 +94,7 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
       case RoomServer.start_game(room_id, uid, %{word_choices: choices, ai_words: remaining_ai}) do
         {:ok, _state} ->
           if ai_status, do: RoomServer.system_message(room_id, ai_status)
-
-          case RoomServer.get_state(room_id) do
-            {:ok, state} -> put_action(server, :room_refreshed, enrich_state(state, uid))
-            _ -> server
-          end
+          reply_with_view(server, room_id)
 
         {:error, reason} ->
           Auth.deny(server, :start_game, reason)
@@ -104,19 +104,18 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
   end
 
-  def choose_word(%{room_id: room_id, player_id: player_id, word: word}, server) do
-    case RoomServer.choose_word(room_id, player_id, word) do
-      {:ok, _state} ->
-        case RoomServer.get_state(room_id) do
-          {:ok, state} ->
-            put_action(server, :room_refreshed, enrich_state(state, player_id))
-
-          _ ->
-            server
-        end
-
-      {:error, _} ->
-        server
+  @doc """
+  Commits `word` for the session user, who must be the current drawer while
+  the room is `:choosing` and `word` one of their choices (checked by the room
+  process). Replies with the drawer's view, or `:command_denied`.
+  """
+  def choose_word(%{room_id: room_id, word: word}, server) do
+    with {:ok, uid} <- session_user_id(server),
+         {:ok, _state} <- RoomServer.choose_word(room_id, uid, word) do
+      reply_with_view(server, room_id)
+    else
+      {:error, reason} when is_atom(reason) -> Auth.deny(server, :choose_word, reason)
+      {:error, _reason} -> Auth.deny(server, :choose_word, :choose_failed)
     end
   end
 
@@ -292,76 +291,15 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
   end
 
-  defp poll_and_enrich(server, room_id, user_id) do
-    case RoomServer.get_state(room_id) do
-      {:ok, state} ->
-        put_action(server, :room_refreshed, enrich_state(state, user_id))
+  # Strokes are stripped: the page keeps its own list (init, stroke actions).
+  defp reply_with_view(server, room_id) do
+    case RoomServer.get_view(room_id, Auth.user_id(server)) do
+      {:ok, view} ->
+        put_action(server, :room_refreshed, Map.put(view, :drawing_strokes, []))
 
       {:error, :not_found} ->
         put_action(server, :room_dissolved)
     end
-  end
-
-  defp enrich_state(state, user_id) do
-    is_drawer = state.current_drawer_id == user_id
-    game_active = state.game_id != nil
-    word = state.current_word || ""
-    phase = Map.get(state, :phase, :idle)
-
-    word_display =
-      cond do
-        not game_active ->
-          ""
-
-        phase == :choosing ->
-          ""
-
-        is_drawer ->
-          word
-
-        state.time_left > 0 ->
-          WordHints.generate_hint(word, state.time_left, state.round_duration || 60)
-
-        true ->
-          WordHints.hidden_display(word, state.round_duration || 60)
-      end
-
-    drawer_name =
-      case Enum.find(state.players, &(&1.id == state.current_drawer_id)) do
-        nil -> "Unknown"
-        p -> p.username
-      end
-
-    hint_info =
-      if game_active and not is_drawer and phase == :drawing do
-        WordHints.hint_info(word, state.time_left, state.round_duration || 60)
-      else
-        %{stage: 0, revealed_count: 0, total_letters: 0, remaining_count: 0, progress_pct: 0}
-      end
-
-    word_choices = if is_drawer, do: Map.get(state, :word_choices, []), else: []
-
-    choice_time_left =
-      case Map.get(state, :choice_deadline) do
-        nil ->
-          0
-
-        deadline when is_integer(deadline) ->
-          now = System.monotonic_time(:millisecond)
-          max(0, div(deadline - now + 999, 1000))
-      end
-
-    state
-    |> Map.merge(%{
-      is_drawer: is_drawer,
-      current_word_display: word_display,
-      drawer_name: drawer_name,
-      hint_info: hint_info,
-      word_choices: word_choices,
-      choice_time_left: choice_time_left,
-      phase: phase
-    })
-    |> Map.put(:drawing_strokes, [])
   end
 
   # Word settings for a new game, from the room state snapshot the caller already
