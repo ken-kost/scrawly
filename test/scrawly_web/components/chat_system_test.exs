@@ -81,7 +81,6 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       room_status: :playing,
       room_name: "Room ABCD",
       drawing_path: "",
-      drawing?: false,
       drawing_sent_length: 0
     }
 

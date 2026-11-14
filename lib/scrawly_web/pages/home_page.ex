@@ -4,9 +4,6 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   js_import :connectDemoBoard, from: "./demo_board.mjs"
   js_import :disconnectDemoBoard, from: "./demo_board.mjs"
-  js_import :startStroke, from: "./demo_board.mjs"
-  js_import :continueStroke, from: "./demo_board.mjs"
-  js_import :endStroke, from: "./demo_board.mjs"
   js_import :clearBoard, from: "./demo_board.mjs"
   js_import :setColor, from: "./demo_board.mjs"
   js_import :setWidth, from: "./demo_board.mjs"
@@ -602,26 +599,9 @@ defmodule ScrawlyWeb.Pages.HomePage do
     put_action(component, :join_room_with_user, room_id: room_id)
   end
 
-  # ── Demo board pointer + tools (event-driven, no ticks) ────────────
-
-  def action(:demo_pointer_down, params, component) do
-    x = params.event.offset_x
-    y = params.event.offset_y
-    JS.call(:startStroke, [x, y])
-    component
-  end
-
-  def action(:demo_pointer_move, params, component) do
-    x = params.event.offset_x
-    y = params.event.offset_y
-    JS.call(:continueStroke, [x, y])
-    component
-  end
-
-  def action(:demo_pointer_up, _params, component) do
-    JS.call(:endStroke, [])
-    component
-  end
+  # ── Demo board tools ──────────────────────────────────────────────
+  # Pointer input is native (stroke_engine.mjs via demo_board.mjs); only the
+  # tool state lives here and reaches JS through these calls.
 
   def action(:demo_clear, _params, component) do
     JS.call(:clearBoard, [])

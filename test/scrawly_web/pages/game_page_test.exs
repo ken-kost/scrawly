@@ -303,7 +303,6 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
           can_start_game: true,
           chat_messages: [],
           drawing_strokes: [],
-          drawing?: false,
           draw_color: "#000000",
           draw_width: 2,
           draw_eraser: false,
@@ -480,26 +479,21 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       drawer =
         playing(
           is_drawer: true,
-          drawing?: true,
           current_word: "zzyzx",
           current_drawer: %{id: @me, username: "You"}
         )
 
       ended = delta(11, phase: :round_end, current_drawer_id: @me, round_deadline: nil)
 
-      {result, names} = js_call_names(fn -> GamePage.action(:room_delta, ended, drawer) end)
+      {result, calls} = js_calls(fn -> GamePage.action(:room_delta, ended, drawer) end)
 
       assert result.state.phase == :round_end
       assert result.state.revealed_word == "zzyzx"
-      assert result.state.drawing? == false
       assert result.state.current_word == "zzyzx"
-      assert :endDrawingPhase in names
-      refute :setDrawingPath in names
-
-      pointer = %{event: %{offset_x: 10, offset_y: 10}}
-
-      assert GamePage.action(:canvas_pointer_down, pointer, settled(result)).state.drawing? ==
-               false
+      assert {:endDrawingPhase, []} in calls
+      assert {:setDrawingEnabled, [false]} in calls
+      refute Enum.any?(calls, &match?({:setDrawingPath, _}, &1))
+      assert GamePage.can_draw?(settled(result).state) == false
     end
 
     test "the post_game delta goes to the score page and stops acting on the page" do
@@ -1037,9 +1031,10 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       # 12_300 ms left shows 13 until 12_000: the next tick comes ~300 ms later.
       assert assert_tick(result, 8) in 250..315
 
+      # 14_500 ms left shows 15; the margin keeps this stable on a loaded machine.
       choosing =
         put_countdown(playing(phase: :choosing),
-          choice_deadline_local: before + 14_001,
+          choice_deadline_local: now_ms() + 14_500,
           tick_gen: 8,
           last_tick_at: before - 1_000
         )

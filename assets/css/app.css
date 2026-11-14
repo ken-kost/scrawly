@@ -834,6 +834,17 @@ html, body {
   width: 100%;
 }
 .canvas-frame svg { width: 100%; height: 100%; display: block; user-select: none; -webkit-user-select: none; }
+/* The dot grid sits above the strokes (the eraser paints white, so a grid
+   under the strokes would be erased with them) and lets pointers through. */
+.canvas-frame::after,
+.demo-canvas::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.07) 0.8px, transparent 1.2px);
+  background-size: 18px 18px;
+}
 
 .toolbar {
   display: flex;

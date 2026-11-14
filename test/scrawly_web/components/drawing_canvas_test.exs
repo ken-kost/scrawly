@@ -1,9 +1,12 @@
 defmodule ScrawlyWeb.Components.DrawingCanvasTest do
   @moduledoc """
   Tests for drawing actions on GamePage including tool selection,
-  multi-stroke state, undo, the canvas lifecycle (`:mounted`) and the round
-  resets. Stroke broadcasts are sequenced like every `{:room}` action (see
-  game_page_test.exs for the gap rule).
+  multi-stroke state, undo, the canvas lifecycle (`:mounted`), the rule that
+  turns the native stroke engine on and off (`GamePage.can_draw?/1`,
+  `setDrawingEnabled`) and the round resets. Stroke broadcasts are sequenced
+  like every `{:room}` action (see game_page_test.exs for the gap rule).
+  Pointer input itself is native JS (stroke_engine.mjs; its geometry is
+  tested in test/js/).
   """
   # js_calls/1 traces Hologram.JS.call/4 globally.
   use ExUnit.Case, async: false
@@ -12,10 +15,9 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
 
   alias ScrawlyWeb.Pages.GamePage
 
-  defp drawing_component(overrides \\ %{}) do
+  defp drawing_component(overrides) do
     defaults = %{
       drawing_strokes: [],
-      drawing?: false,
       draw_color: "#000000",
       draw_width: 2,
       draw_eraser: false,
@@ -50,6 +52,8 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
   end
 
   @s1 %{id: "s-1", path: "M 1 2", color: "#000000", width: 2}
+
+  defp enabled_calls(calls), do: for({:setDrawingEnabled, [on]} <- calls, do: on)
   @s2 %{id: "s-2", path: "M 3 4 L 5 6", color: "#d63838", width: 5}
 
   # The full page state of a viewer (user-1) in round 1 of game g1, :drawing.
@@ -105,7 +109,6 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       revealed_word: nil,
       word_choices: [],
       is_drawer: false,
-      drawing?: false,
       drawing_strokes: [@s1, @s2]
     }
 
@@ -152,67 +155,39 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
     )
   end
 
-  describe "canvas_pointer_down" do
-    test "starts drawing for drawer" do
-      comp = drawing_component()
-      params = %{event: %{offset_x: 100, offset_y: 150}}
-
-      result = GamePage.action(:canvas_pointer_down, params, comp)
-
-      assert result.state.drawing? == true
-    end
-
-    test "does nothing for non-drawer" do
-      comp = drawing_component(%{is_drawer: false})
-      params = %{event: %{offset_x: 100, offset_y: 150}}
-
-      result = GamePage.action(:canvas_pointer_down, params, comp)
-
-      assert result.state.drawing? == false
+  describe "can_draw?/1" do
+    test "only the drawer, only in :drawing" do
+      assert GamePage.can_draw?(%{is_drawer: true, phase: :drawing})
+      refute GamePage.can_draw?(%{is_drawer: false, phase: :drawing})
+      refute GamePage.can_draw?(%{is_drawer: nil, phase: :drawing})
+      refute GamePage.can_draw?(%{})
     end
 
     # The room ends the phase; the local countdown only clamps at 0.
     test "follows the phase, never the local countdown" do
-      params = %{event: %{offset_x: 100, offset_y: 150}}
-
       for phase <- [:idle, :choosing, :round_end] do
-        comp = drawing_component(%{phase: phase, time_left: 30})
-        assert GamePage.action(:canvas_pointer_down, params, comp).state.drawing? == false
+        refute GamePage.can_draw?(%{is_drawer: true, phase: phase, time_left: 30})
       end
 
-      comp = drawing_component(%{phase: :drawing, time_left: 0})
-      assert GamePage.action(:canvas_pointer_down, params, comp).state.drawing? == true
+      assert GamePage.can_draw?(%{is_drawer: true, phase: :drawing, time_left: 0})
     end
   end
 
-  describe "canvas_pointer_move" do
-    test "does not update Hologram state (drawing managed by JS)" do
-      comp = drawing_component(%{drawing?: true})
-      params = %{event: %{offset_x: 120, offset_y: 160}}
+  describe "native pointer input" do
+    test "the canvases have no Hologram pointer bindings and the pages no pointer actions" do
+      for file <- [
+            "lib/scrawly_web/components/drawing_canvas.ex",
+            "lib/scrawly_web/components/game_demo.ex"
+          ] do
+        refute File.read!(file) =~ "$pointer", file
+      end
 
-      result = GamePage.action(:canvas_pointer_move, params, comp)
-
-      # Strokes unchanged — JS handles SVG directly
-      assert result.state.drawing_strokes == []
-    end
-
-    test "does nothing when not drawing" do
-      comp = drawing_component(%{drawing?: false})
-      params = %{event: %{offset_x: 120, offset_y: 160}}
-
-      result = GamePage.action(:canvas_pointer_move, params, comp)
-
-      assert result.state.drawing_strokes == []
-    end
-  end
-
-  describe "canvas_pointer_up" do
-    test "stops drawing" do
-      comp = drawing_component(%{drawing?: true})
-
-      result = GamePage.action(:canvas_pointer_up, %{}, comp)
-
-      assert result.state.drawing? == false
+      for file <- ["lib/scrawly_web/pages/game_page.ex", "lib/scrawly_web/pages/home_page.ex"] do
+        source = File.read!(file)
+        refute source =~ "canvas_pointer_", file
+        refute source =~ "demo_pointer_", file
+        refute source =~ ":drawing?", file
+      end
     end
   end
 
@@ -348,6 +323,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       assert [
                {:mountCanvas, []},
                {:restoreStrokes, [[@s1]]},
+               {:setDrawingEnabled, [true]},
                {:connectGameChannel, ["tok", "ABCD"]}
              ] =
                calls
@@ -428,67 +404,119 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
     end
   end
 
-  describe "round transitions stop the stroke in progress" do
-    test "game start, new round and game end set drawing? to false" do
-      lobby =
-        page_component(%{
-          game_started: false,
-          game_id: nil,
-          round: 0,
-          phase: :idle,
-          drawing?: true
-        })
+  # setDrawingEnabled follows can_draw?/1 and is only called when it changes;
+  # turning the engine off drops a stroke in progress without committing it.
+  describe "round transitions turn the stroke engine on and off" do
+    test "game start leaves a viewer's engine off; the drawer's turns on with :drawing" do
+      lobby = page_component(%{game_started: false, game_id: nil, round: 0, phase: :idle})
 
-      started = GamePage.action(:room_delta, refreshed(%{phase: :choosing}), lobby)
+      {started, calls} =
+        js_calls(fn -> GamePage.action(:room_delta, refreshed(%{phase: :choosing}), lobby) end)
+
       assert started.state.game_started == true
-      assert started.state.drawing? == false
+      assert enabled_calls(calls) == []
 
-      in_round = page_component(%{is_drawer: true, drawing?: true})
+      choosing = page_component(%{is_drawer: true, phase: :choosing})
+      mine = %{current_drawer_id: "user-1"}
 
-      next_round =
-        GamePage.action(
-          :room_delta,
-          refreshed(%{current_round: 2, phase: :choosing, current_drawer_id: "user-1"}),
-          in_round
-        )
+      {drawing, calls} =
+        js_calls(fn -> GamePage.action(:room_delta, refreshed(mine), choosing) end)
+
+      assert drawing.state.phase == :drawing
+      assert enabled_calls(calls) == [true]
+    end
+
+    test "a new round and the game's end turn the drawer's engine off and reset the canvas" do
+      in_round =
+        page_component(%{is_drawer: true, current_drawer: %{id: "user-1", username: "You"}})
+
+      {next_round, calls} =
+        js_calls(fn ->
+          GamePage.action(
+            :room_delta,
+            refreshed(%{current_round: 2, phase: :choosing, current_drawer_id: "user-1"}),
+            in_round
+          )
+        end)
 
       assert next_round.state.round == 2
-      assert next_round.state.drawing? == false
       assert next_round.state.drawing_strokes == []
+      assert {:setDrawingPath, [""]} in calls
+      assert enabled_calls(calls) == [false]
 
-      ended =
-        GamePage.action(
-          :room_delta,
-          refreshed(%{status: :lobby, game_id: nil, current_round: 0, phase: :idle}),
-          in_round
-        )
+      {ended, calls} =
+        js_calls(fn ->
+          GamePage.action(
+            :room_delta,
+            refreshed(%{status: :lobby, game_id: nil, current_round: 0, phase: :idle}),
+            in_round
+          )
+        end)
 
       assert ended.state.game_started == false
-      assert ended.state.drawing? == false
       assert ended.state.drawing_strokes == []
+      assert enabled_calls(calls) == [false]
     end
 
-    test "leaving :drawing sets drawing? to false and keeps the strokes" do
-      comp = page_component(%{is_drawer: true, drawing?: true})
+    test "leaving :drawing turns it off and keeps the strokes" do
+      comp = page_component(%{is_drawer: true, current_drawer: %{id: "user-1", username: "You"}})
 
-      result =
-        GamePage.action(
-          :room_delta,
-          refreshed(%{phase: :round_end, round_remaining_ms: 0, revealed_word: "abc"}),
-          comp
-        )
+      {result, calls} =
+        js_calls(fn ->
+          GamePage.action(
+            :room_delta,
+            refreshed(%{
+              phase: :round_end,
+              current_drawer_id: "user-1",
+              round_remaining_ms: 0,
+              revealed_word: "abc"
+            }),
+            comp
+          )
+        end)
 
       assert result.state.phase == :round_end
-      assert result.state.drawing? == false
       assert result.state.drawing_strokes == [@s1, @s2]
+      assert {:endDrawingPhase, []} in calls
+      assert enabled_calls(calls) == [false]
     end
 
-    test "a delta within :drawing leaves drawing? alone" do
-      comp = page_component(%{is_drawer: true, drawing?: true})
-      result = GamePage.action(:room_delta, refreshed(%{round_remaining_ms: 30_000}), comp)
+    test "a delta within :drawing leaves the engine alone" do
+      comp = page_component(%{is_drawer: true, current_drawer: %{id: "user-1", username: "You"}})
 
-      assert result.state.drawing? == true
+      {result, calls} =
+        js_calls(fn ->
+          GamePage.action(
+            :room_delta,
+            refreshed(%{current_drawer_id: "user-1", round_remaining_ms: 30_000}),
+            comp
+          )
+        end)
+
+      assert GamePage.can_draw?(result.state)
       assert result.state.time_left == 30
+      assert enabled_calls(calls) == []
+    end
+
+    test "a Back/Forward restore sets the engine for the restored page" do
+      comp =
+        page_component(%{
+          is_drawer: true,
+          current_drawer: %{id: "user-1", username: "You"},
+          restoring?: true
+        })
+
+      {_result, calls} =
+        js_calls(fn ->
+          GamePage.action(
+            :room_resynced,
+            refreshed(%{current_drawer_id: "user-1", is_drawer: true, drawing_strokes: [@s1]}),
+            comp
+          )
+        end)
+
+      assert {:restoreStrokes, [[@s1]]} in calls
+      assert enabled_calls(calls) == [true]
     end
   end
 

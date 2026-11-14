@@ -8,9 +8,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :ensureGameChannel, from: "./game_channel.mjs"
   js_import :disconnectGameChannel, from: "./game_channel.mjs"
 
-  js_import :startStroke, from: "./drawing_manager.mjs"
-  js_import :continueStroke, from: "./drawing_manager.mjs"
-  js_import :endStroke, from: "./drawing_manager.mjs"
+  js_import :setDrawingEnabled, from: "./drawing_manager.mjs"
   js_import :clearDrawing, from: "./drawing_manager.mjs"
   js_import :setDrawingPath, from: "./drawing_manager.mjs"
   js_import :setToolColor, from: "./drawing_manager.mjs"
@@ -142,7 +140,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
               )
               |> put_state(:chat_messages, rs.chat_messages || [])
               |> put_state(:drawing_strokes, rs.drawing_strokes || [])
-              |> put_state(:drawing?, false)
               |> put_state(:draw_color, "#000000")
               |> put_state(:draw_width, 2)
               |> put_state(:draw_eraser, false)
@@ -231,16 +228,19 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   # First action after every fresh page load, once the DOM exists. Restores the
   # drawer's canvas from the room's strokes (independent of the game socket),
-  # anchors init's countdowns on the browser's clock and starts their tick
-  # chain, connects the game socket for a member, and sends the join init
-  # chose (`:player` / `:watcher`), whose :room_resynced reply connects it for
-  # a new member (GameChannel refuses non-members).
+  # turns the stroke engine on or off (can_draw?/1), anchors init's
+  # countdowns on the browser's clock and starts their tick chain, connects
+  # the game socket for a member, and sends the join init chose (`:player` /
+  # `:watcher`), whose :room_resynced reply connects it for a new member
+  # (GameChannel refuses non-members).
   def action(:mounted, %{join: join}, component) do
     JS.call(:mountCanvas, [])
 
     if component.state.is_drawer do
       JS.call(:restoreStrokes, [component.state.drawing_strokes])
     end
+
+    JS.call(:setDrawingEnabled, [can_draw?(component.state)])
 
     component =
       component
@@ -650,35 +650,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
     |> put_state(:channel_connecting, false)
   end
 
-  # The room decides when drawing ends: the gate is the phase, never the
-  # local countdown (which only clamps at 0 and waits for the phase change).
-  def action(:canvas_pointer_down, params, component) do
-    if component.state.is_drawer and component.state.phase == :drawing do
-      JS.call(:startStroke, [params.event.offset_x, params.event.offset_y])
-      put_state(component, :drawing?, true)
-    else
-      component
-    end
-  end
-
-  def action(:canvas_pointer_move, params, component) do
-    if component.state.drawing? do
-      JS.call(:continueStroke, [params.event.offset_x, params.event.offset_y])
-      component
-    else
-      component
-    end
-  end
-
-  def action(:canvas_pointer_up, _params, component) do
-    if component.state.drawing? do
-      JS.call(:endStroke, [])
-      put_state(component, :drawing?, false)
-    else
-      component
-    end
-  end
-
   # The head of the drawer's op queue (drawing_manager.mjs), one op at a time.
   def action(:send_stroke_op, %{kind: kind} = op, component) do
     base = [room_id: component.props.room_id, op_epoch: op.op_epoch, op_seq: op.op_seq]
@@ -951,6 +922,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
         JS.call(:restoreStrokes, [view.drawing_strokes || []])
       end
 
+      JS.call(:setDrawingEnabled, [can_draw?(component.state)])
+
       component = put_state(component, :restoring?, false)
 
       if member?(component.state) and component.state.socket_token != "" do
@@ -1096,6 +1069,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
         do: reset_turn(component, seq),
         else: end_drawing_phase(component, state.phase, phase)
 
+    component = sync_drawing_enabled(component, state)
+
     component =
       if new_turn or game_over or phase != state.phase,
         do: put_state(component, :phase_entered_at, System.monotonic_time(:millisecond)),
@@ -1126,7 +1101,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
     JS.call(:setDrawingPath, [""])
 
     component
-    |> put_state(:drawing?, false)
     |> put_state(:drawing_strokes, [])
     |> put_state(:strokes_seq, seq)
     |> put_state(:current_word, nil)
@@ -1238,10 +1212,31 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # and the viewers' live overlays: the room will not store either.
   defp end_drawing_phase(component, :drawing, new_phase) when new_phase != :drawing do
     JS.call(:endDrawingPhase, [])
-    put_state(component, :drawing?, false)
+    component
   end
 
   defp end_drawing_phase(component, _old_phase, _new_phase), do: component
+
+  @doc """
+  Whether the page's user may draw: the drawer, while the room is in
+  `:drawing`. The room decides when drawing ends, so the gate is the phase,
+  never the local countdown (which only clamps at 0 and waits for the phase
+  change). drawing_manager.mjs's stroke engine follows it
+  (`setDrawingEnabled`); turning it off drops a stroke in progress.
+  """
+  def can_draw?(state),
+    do: Map.get(state, :is_drawer) == true and Map.get(state, :phase) == :drawing
+
+  # After the reducer changed is_drawer or the phase.
+  defp sync_drawing_enabled(component, old_state) do
+    allowed = can_draw?(component.state)
+
+    if allowed != can_draw?(old_state) do
+      JS.call(:setDrawingEnabled, [allowed])
+    end
+
+    component
+  end
 
   # Shared by the toolbar buttons and the keyboard shortcuts.
   defp toggle_eraser(component) do
@@ -1534,7 +1529,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
           </div>
 
           <DrawingCanvas is_drawer={@is_drawer}
-            disabled={not (@is_drawer and @phase == :drawing)}
             strokes={@drawing_strokes}
             active_color={if(@draw_eraser, do: "#FFFFFF", else: @draw_color)}
             active_width={if(@draw_eraser, do: 20, else: @draw_width)} />
