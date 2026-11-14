@@ -4,21 +4,30 @@ defmodule ScrawlyWeb.DemoBoardChannel do
   Topic: `demo:board`.
 
   Inbound events:
-    * `"draw"` (`%{path, color, width}`) — append a completed stroke (legacy)
     * `"stroke_chunk"` (`%{stroke_id, seq, delta, color, width}`) — live in-flight chunk
-    * `"stroke_complete"` (`%{stroke_id, path, color, width}`) — final stroke
+    * `"stroke_complete"` (`%{stroke_id, path, color, width}`) — final stroke. Replies
+      `:ok` when stored, or `{:error, %{reason: "invalid_stroke"}}` (peers then get
+      `"stroke_abandon"` for its id). The sender commits the stroke optimistically and
+      uses the reply to roll it back, and the `"stroke"` echo to confirm and order it.
     * `"clear"` — wipe the board
 
+  Any other event is ignored.
+
   Outbound events:
-    * `"strokes"` — full snapshot on join (and after clear)
-    * `"stroke"` — single newly added stroke (carries `stroke_id` when streamed)
+    * `"strokes"` — full snapshot on every join and rejoin
+    * `"stroke"` — single newly added stroke with its `stroke_id`, sent to everyone
+      including its sender
     * `"stroke_chunk"` — relay of another client's in-flight chunk
-    * `"stroke_abandon"` — sender disconnected mid-stroke
+    * `"stroke_abandon"` — a stroke was rejected, or its sender disconnected mid-stroke
     * `"cleared"` — board was wiped
   """
   use ScrawlyWeb, :channel
 
   alias Scrawly.Games.DemoBoardServer
+
+  # Exclusive upper bound on a completed stroke's path length. The client
+  # splits longer gestures into several strokes below this.
+  @max_path_length 8_000
 
   @impl true
   def join("demo:board", _payload, socket) do
@@ -45,19 +54,10 @@ defmodule ScrawlyWeb.DemoBoardChannel do
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
-  @impl true
-  def handle_in("draw", %{"path" => path, "color" => color, "width" => width}, socket)
-      when is_binary(path) and is_binary(color) and is_integer(width) do
-    if String.length(path) > 0 and String.length(path) < 8_000 do
-      DemoBoardServer.add_stroke(%{path: path, color: color, width: width})
-    end
-
-    {:noreply, socket}
-  end
-
   # Live in-flight chunks. Broadcast to peers immediately — no GenServer
   # roundtrip on the 20Hz hot path. Persistence happens once on
   # `stroke_complete` below.
+  @impl true
   def handle_in("stroke_chunk", payload, socket) do
     stroke_id = payload["stroke_id"]
     delta = payload["delta"] || ""
@@ -88,11 +88,10 @@ defmodule ScrawlyWeb.DemoBoardChannel do
     width = payload["width"] || 2
 
     if is_binary(stroke_id) and stroke_id != "" and is_binary(path) and
-         String.length(path) > 0 and String.length(path) < 8_000 do
-      # Persist with stroke_id attached. The `stroke_id` is echoed back to
-      # all clients (including the sender) via the existing PubSub `stroke`
-      # event so peers can match it against their in-progress overlay and
-      # do an atomic remove-overlay + add-to-strokes handoff with no flicker.
+         String.length(path) > 0 and String.length(path) < @max_path_length do
+      # Stored with its stroke_id, which the `stroke` echo carries to every
+      # client (the sender included): the sender confirms its pending stroke
+      # by id, peers swap their in-progress overlay for it in one step.
       DemoBoardServer.add_stroke(%{
         path: path,
         color: color,
@@ -100,12 +99,14 @@ defmodule ScrawlyWeb.DemoBoardChannel do
         stroke_id: stroke_id
       })
 
-      open = MapSet.delete(socket.assigns.open_stroke_ids, stroke_id)
-      socket = assign(socket, :open_stroke_ids, open)
-
-      {:noreply, socket}
+      {:reply, :ok, forget_open_stroke(socket, stroke_id)}
     else
-      {:noreply, socket}
+      # Peers drop their overlay for it now rather than when this socket ends.
+      if is_binary(stroke_id) do
+        broadcast_from(socket, "stroke_abandon", %{"stroke_id" => stroke_id})
+      end
+
+      {:reply, {:error, %{reason: "invalid_stroke"}}, forget_open_stroke(socket, stroke_id)}
     end
   end
 
@@ -127,5 +128,9 @@ defmodule ScrawlyWeb.DemoBoardChannel do
     end)
 
     :ok
+  end
+
+  defp forget_open_stroke(socket, stroke_id) do
+    assign(socket, :open_stroke_ids, MapSet.delete(socket.assigns.open_stroke_ids, stroke_id))
   end
 end
