@@ -26,7 +26,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
         viewBox="0 0 800 450"
         preserveAspectRatio="xMidYMid meet"
         style="touch-action: none;"
-        $pointer_down={:canvas_pointer_down}
+        $pointer_down.prevent_default={:canvas_pointer_down}
         $pointer_move={:canvas_pointer_move}
         $pointer_up={:canvas_pointer_up}
         $pointer_cancel={:canvas_pointer_up}

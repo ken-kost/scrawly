@@ -20,8 +20,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - elixir: "1.18.4"
-            otp: "26.2.5"
+          - elixir: "1.19.7"
+            otp: "28.3.3"
 
     services:
       postgres:
@@ -39,11 +39,12 @@ jobs:
 
     env:
       MIX_ENV: test
-      # Hologram's realtime runtime stays OFF in test — that's the v0.9 default
-      # (Hologram.enabled? is false in :test unless HOLOGRAM_START=1). The suite
-      # is designed to run with it disabled; the 0.9.2 #813 fix keeps
-      # Hologram.Router from crashing when disabled. Tests that need the live
-      # runtime (e.g. realtime-broadcast assertions) opt in with HOLOGRAM_START=1.
+      # Hologram's runtime and compiler stay OFF in test (Hologram.enabled? is
+      # false in :dev/:test unless HOLOGRAM_START=1; the default since 0.9, and
+      # unchanged in 0.12). The suite is designed to run with it disabled:
+      # Hologram.Router passes requests through when disabled, and
+      # test/test_helper.exs starts Hologram.PubSub so realtime broadcasts no-op.
+      # Building the page bundles needs HOLOGRAM_START=1 (`mix holo` sets it).
 
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +70,17 @@ jobs:
 
       - name: Compile (warnings as errors)
         run: mix compile --warnings-as-errors
+
+      # The Hologram compiler only runs with HOLOGRAM_START=1, so without this
+      # step CI never builds the page bundles (and no test renders through the
+      # client). It catches client-compilation failures and prop `required` /
+      # `values` errors. The cached _build is not trusted for bundle freshness:
+      # Hologram's build dir is removed first, so every run is a full build.
+      # `mix test` below keeps running without the variable.
+      - name: Build Hologram bundles
+        run: |
+          rm -rf _build/test/lib/hologram/priv
+          HOLOGRAM_START=1 mix compile
 
       # `mix test` is aliased to `ash.setup --quiet` + `test`, so it creates and
       # migrates the test database against the Postgres service above.

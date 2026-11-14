@@ -40,7 +40,7 @@ defmodule ScrawlyWeb.Components.GameDemo do
           viewBox="0 0 400 225"
           preserveAspectRatio="xMidYMid meet"
           style="touch-action: none; width: 100%; height: 100%;"
-          $pointer_down={:demo_pointer_down}
+          $pointer_down.prevent_default={:demo_pointer_down}
           $pointer_move={:demo_pointer_move}
           $pointer_up={:demo_pointer_up}
           $pointer_cancel={:demo_pointer_up}>

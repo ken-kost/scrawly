@@ -28,7 +28,7 @@ defmodule ScrawlyWeb.Endpoint do
     at: "/",
     from: :scrawly,
     gzip: not code_reloading?,
-    only: ["hologram" | ScrawlyWeb.static_paths()]
+    only: ScrawlyWeb.static_paths()
 
   if Code.ensure_loaded?(Tidewave) do
     plug Tidewave
@@ -38,7 +38,7 @@ defmodule ScrawlyWeb.Endpoint do
   # :code_reloader configuration of your endpoint.
   if code_reloading? do
     socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
- #   plug Phoenix.LiveReloader
+    #   plug Phoenix.LiveReloader
     plug Phoenix.CodeReloader
     plug AshPhoenix.Plug.CheckCodegenStatus
   end

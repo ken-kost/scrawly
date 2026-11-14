@@ -5,12 +5,12 @@ defmodule Scrawly.MixProject do
     [
       app: :scrawly,
       version: "0.1.0",
-      elixir: "~> 1.15",
+      elixir: "~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
-      compilers: [:phoenix_live_view, :hologram] ++ Mix.compilers(),
+      compilers: [:phoenix_live_view] ++ Mix.compilers() ++ [:hologram],
       listeners: [Phoenix.CodeReloader],
       consolidate_protocols: Mix.env() != :dev,
       usage_rules: usage_rules()
@@ -43,7 +43,7 @@ defmodule Scrawly.MixProject do
   defp deps do
     [
       {:usage_rules, "~> 1.2", only: [:dev]},
-      {:hologram, "~> 0.9.2"},
+      {:hologram, "~> 0.12.8"},
       {:picosat_elixir, "~> 0.2"},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:tidewave, "~> 0.5", only: [:dev]},
@@ -103,7 +103,7 @@ defmodule Scrawly.MixProject do
         "esbuild scrawly --minify",
         "phx.digest"
       ],
-      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
+      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
     ]
   end
 
