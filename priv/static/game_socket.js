@@ -1,5 +1,9 @@
 // Minimal game socket setup for Hologram pages.
 // Requires phoenix.min.js to be loaded first (provides global Phoenix object).
+//
+// The game channel carries only the drawer's live stroke chunks
+// (sendDrawingStrokeChunk, ScrawlyWeb.GameChannel); completed strokes, undo,
+// clear and the canvas snapshot go through Hologram commands and Realtime.
 (function() {
   if (!window.Phoenix || !window.Phoenix.Socket) {
     console.error("Phoenix.Socket not available for game socket setup");
@@ -34,14 +38,6 @@
       if (socket) { socket.disconnect(); socket = null; }
     },
 
-    sendDrawingSegment: function(segment) {
-      if (channel) channel.push("drawing_segment", { segment: segment });
-    },
-
-    sendDrawingStroke: function(path, color, width) {
-      if (channel) channel.push("drawing_stroke", { segment: path, color: color, width: width });
-    },
-
     sendDrawingStrokeChunk: function(strokeId, seq, delta, color, width) {
       if (channel) channel.push("drawing_stroke_chunk", {
         stroke_id: strokeId,
@@ -52,34 +48,10 @@
       });
     },
 
-    sendDrawingStrokeComplete: function(strokeId, path, color, width) {
-      if (channel) channel.push("drawing_stroke_complete", {
-        stroke_id: strokeId,
-        path: path,
-        color: color,
-        width: width
-      });
-    },
-
-    sendDrawingClear: function() {
-      if (channel) channel.push("drawing_clear", {});
-    },
-
-    sendDrawingUndo: function() {
-      return channel ? channel.push("drawing_undo", {}) : null;
-    },
-
-    requestDrawingPath: function() {
-      return channel ? channel.push("get_drawing_path", {}) : null;
-    },
-
     isInRoom: function() { return !!channel && !!currentRoomCode; },
 
     // Expose the underlying Phoenix channel for direct event registration
-    _getChannel: function() { return channel; },
-
-    // Callback registration stubs — actual handlers are set up in game_channel.mjs
-    onDrawingSegment: function() {},
-    onDrawingClear: function() {}
+    // (game_channel.mjs registers the handlers)
+    _getChannel: function() { return channel; }
   };
 })();

@@ -25,6 +25,10 @@ Status date: 2026-06-04.
   slimmed channel still joins (`gameSocket.isInRoom() == true`).
 - **Not yet done:** multi-client (2+ browser) verification of live chat/state/drawing over
   SSE, the test-suite rewrite, and a few explicitly-deferred polish items (below).
+- **Live stroke chunks stay on the channel (2026-11-14):** a measured gate compared the
+  demo board's chunk stream over Hologram Realtime with the channel and said no-go (added
+  p50 +34 ms at a 100 ms RTT, 3-9x the peer main-thread cost per chunk). See
+  [Live stroke chunks: the measured gate](#live-stroke-chunks-the-measured-gate).
 
 ---
 
@@ -187,14 +191,123 @@ without a poll and a reload shows the current hint.
    `RoomServer.leave` (it would dissolve the room on creator reload and cause leave/rejoin
    flicker). Disconnected players already lingered before this migration (presence only
    nudged a poll), so this is no regression; a correct version needs a reconnect grace period.
-5. **Legacy JS dead code** — `assets/js/user_socket.js`, the `app.js` chat-integration block,
-   and unused senders in `priv/static/game_socket.js` are now dead (the live drawing socket
-   is `window.gameSocket`). Harmless; left for a focused JS hygiene pass.
+5. **Legacy JS dead code** — done: `assets/js/user_socket.js` and the `app.js`
+   chat-integration block were deleted (post-upgrade hygiene), and the senders of
+   `priv/static/game_socket.js` that GameChannel has no handler for (`sendDrawingSegment`,
+   `sendDrawingStroke`, `sendDrawingStrokeComplete`, `sendDrawingClear`, `sendDrawingUndo`,
+   `requestDrawingPath`, the `onDrawing*` stubs) were deleted with the gate below.
 6. **Phase 0 polish** — the broad `@impl true` sweep and `mix holo.gen.claude_md` AI-rules
    regen were skipped as low-value (the v0.9 compiler already validated the build).
 7. **Keyboard follow-ups** — undo / eraser / escape-clear shipped via JS interop (Phase 6);
    the bracket brush-size shortcut was skipped (needs current-width stepping). Swap the
    interop bridge for native `$key_down` bindings if/when a later Hologram release adds them.
+
+## Live stroke chunks: the measured gate
+
+Board task #21 (chunk-stream-migration), 2026-11-14. **Decision: no-go.** The live
+in-progress stroke chunks of the demo board and the game stay on the hardened Phoenix
+channels (`demo:board`, `game:*`), and with them `UserSocket`, `socket "/socket"`,
+`phoenix.min.js` and `game_socket.js`. Everything else is already on Hologram Realtime.
+
+### What was compared
+
+- **Realtime prototype** of the demo board, built next to the channel and switchable at
+  runtime (same stroke engine, same 50 ms minimum chunk interval, same store): each chunk
+  a `:demo_stroke_chunk` command dispatched from JS, **ack-paced** (the next chunk goes only
+  after `:demo_chunk_acked`, so one chunk command per drawer is in flight and a drawer's
+  chunks stay in order), validated and rate-limited per `Auth.actor_key/1` (ETS GenServer),
+  relayed with `put_broadcast_except({:instance, id}, :demo_board, :demo_chunk_in, ...)`;
+  completed strokes and clear as commands, `DemoBoardServer` broadcasting
+  `:demo_stroke_added` / `:demo_board_cleared`, the snapshot loaded by a command after
+  mount, an idle sweep for orphaned overlays. It worked end to end (live strokes,
+  completed strokes, clear and snapshot over SSE) and was removed again after the gate.
+- **Server:** a local prod release (`MIX_ENV=prod`) of the working tree. The dev server is
+  not usable for this: `Phoenix.CodeReloader` adds ~35-40 ms to every HTTP request (a
+  command round trip measured 35-42 ms there, 1.4-2 ms on the release), while WebSocket
+  frames skip the plug pipeline. On the dev server Realtime measured p50 93 / p95 122 ms
+  against the channel's 51 / 83 ms (N=2).
+- **Network:** (a) HTTP/1.1 direct; (b) TLS with HTTP/2 through a local reverse proxy
+  (page, commands and SSE on h2; the WebSocket on HTTP/1.1 through the same proxy);
+  (c), (d) the same behind a TCP proxy delaying every byte 50 ms each way (RTT +100 ms for
+  WebSocket frames, SSE events and POSTs alike, which DevTools throttling is not
+  guaranteed to do for frames of an already open stream).
+- **Clients:** headless Chromium 139, one browser process per client, real (CDP) mouse
+  input at 60 Hz. N=2: 1 drawer, 1 peer, 4 strokes of 150 moves. N=8: 3 drawers drawing at
+  the same time, 5 peers, 3 strokes of 150 moves each. Also peers on a 4x slower CPU
+  (CDP CPU throttling).
+- **Metrics:** latency from the drawer's `pointermove` that emits a segment to the
+  animation frame in which the peer's overlay path holds it (DOM probe; each browser's
+  clock aligned to the harness's). Peer cost: main-thread task time
+  (`Performance.TaskDuration`) during the session minus idle, per chunk received. Drawer
+  cost: the drawer's main-thread time over the session. Backlog: chunk commands in flight
+  (CDP Network), chunks per second, stroke-end lag (drawer commit to the peer's stored
+  stroke).
+
+### Results
+
+Latency in ms, p50 / p95 (third run, clock-aligned; the first run agrees within a few ms):
+
+| network | clients | channel | Realtime | added p50 / p95 |
+|---|---|---|---|---|
+| HTTP/1.1 | 2 | 46.4 / 64.0 | 46.3 / 78.9 | -0.1 / +14.9 |
+| TLS + HTTP/2 | 2 | 45.7 / 77.7 | 47.3 / 79.9 | +1.6 / +2.2 |
+| HTTP/1.1, RTT +100 | 2 | 146.4 / 176.9 | 179.9 / 229.6 | **+33.5** / +52.7 |
+| TLS + HTTP/2, RTT +100 | 2 | 146.6 / 178.4 | 181.8 / 230.5 | **+35.2** / +52.1 |
+| HTTP/1.1 | 8 | 56.7 / 86.7 | 73.4 / 158.3 | +16.7 / +71.6 |
+| TLS + HTTP/2 | 8 | 57.6 / 87.8 | 83.7 / 170.4 | +26.1 / +82.6 |
+| HTTP/1.1, RTT +100 | 8 | 159.0 / 190.0 | 214.5 / 279.5 | **+55.5** / +89.5 |
+| TLS + HTTP/2, RTT +100 | 8 | 161.3 / 192.1 | 219.8 / 283.0 | **+58.5** / +90.9 |
+
+Without added latency both are dominated by the 50 ms chunk interval (a local command
+round trip is 3-5 ms at N=2, 11-17 ms at N=8).
+
+Backlog and update rate, per drawer:
+
+| | channel | Realtime |
+|---|---|---|
+| chunk commands in flight (max) | - | 1 in every run |
+| chunks per second, no added latency | 16-18 | 17.3 (N=2), 14.5-14.9 (N=8) |
+| chunks per second, RTT +100 | 16-18 | **8.2 (N=2), 6.9-7.1 (N=8)** |
+| stroke-end lag, N=2 | 1-2.5 ms (103 ms at RTT +100) | 20 ms (123-125 ms at RTT +100) |
+
+There is no queue (ack pacing never lets one build up), but under latency a chunk waits
+for the previous one's ack, so peers get half as many updates, each about twice as long:
+the live line advances in coarser steps.
+
+Main-thread cost:
+
+| | channel | Realtime |
+|---|---|---|
+| peer, per chunk, home page, N=2 | 1.2-1.6 ms | 4.3-5.1 ms |
+| peer, per chunk, home page, N=8 (3 drawers) | 1.2-1.3 ms | 10.6-11.7 ms |
+| peer, per chunk, 4x slower CPU (N=2 / N=4) | 4.5 / 5.5 ms | 17.6 / 23.8 ms |
+| drawer, per session, N=2 | 1.2-1.6 s | 2.6 s |
+| drawer, per session, N=8 (also receives 2 drawers) | 1.9-2.0 s | 17.2-18.5 s |
+| one pushed action, game page viewer with 100 strokes | - | 5.2 ms (24.3 ms at 4x CPU) |
+
+Every pushed action runs a full `Hologram.render()` of the page (the action itself takes
+~0.3 ms), and every chunk costs the drawer a dispatched action plus its ack action, each
+with a render. On a game page at ~16 chunks/s that is ~8% of a desktop main thread and
+~40% of a 4x slower device's, per drawer; the channel writes one `d` attribute. Server
+side, every chunk is an HTTP request through the page middleware (home page: 2 SELECTs per
+chunk for a signed-in user; the game page's `:id_only` middleware: 1), where a channel
+frame costs none.
+
+### Decision
+
+The spec's threshold was: go if the added p50 is at most ~30 ms, with no backlog, a peer
+cost no higher than the channel's, and smooth drawing. Realtime matches the channel only
+without network latency. At a realistic RTT it adds 34-35 ms p50 (N=2) and 55-59 ms (N=8),
+halves the update rate, and costs peers 3-9x the channel's main-thread time per chunk.
+So **no-go**: the hardened channels stay (task #5's GameChannel membership and drawer
+checks, task #11's DemoBoardChannel validation and limits), and the dead senders of
+`game_socket.js` are gone. Worth revisiting when Hologram can deliver a pushed action to
+JS without a full page render, and pipeline commands without waiting for each reply.
+
+Measurement caveats: one machine (16 threads, WSL2) runs every client, so N=8 numbers
+include CPU contention (it inflates Realtime's render-heavy path more). A browser process
+there sometimes starts with its clock 0.7-1 s off; the harness aligns clocks (the second
+run had no alignment yet, and its three N=8 runs with such an offset are not used).
 
 ---
 

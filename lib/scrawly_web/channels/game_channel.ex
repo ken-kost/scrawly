@@ -1,6 +1,9 @@
 defmodule ScrawlyWeb.GameChannel do
   @moduledoc """
   Thin Phoenix channel — the one realtime path deliberately NOT on Hologram.
+  A measured gate (REALTIME_MIGRATION_REPORT.md, "Live stroke chunks: the
+  measured gate") kept it: over Hologram Realtime every chunk costs an HTTP
+  command, an ack before the next one, and a full page render on every peer.
 
   It carries only:
 
@@ -71,8 +74,8 @@ defmodule ScrawlyWeb.GameChannel do
     end
   end
 
-  # Unknown events (such as the legacy pushes priv/static/game_socket.js still
-  # exposes, or an old client) are ignored instead of crashing the channel.
+  # Unknown events (e.g. the legacy pushes of an old client) are ignored
+  # instead of crashing the channel.
   def handle_in(_event, _payload, socket), do: {:noreply, socket}
 
   @impl true

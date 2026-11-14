@@ -1,7 +1,8 @@
 defmodule ScrawlyWeb.DemoBoardChannel do
   @moduledoc """
   Real-time channel for the shared demo canvas on the home page.
-  Topic: `demo:board`.
+  Topic: `demo:board`. Kept over Hologram Realtime by a measured gate
+  (REALTIME_MIGRATION_REPORT.md, "Live stroke chunks: the measured gate").
 
   Inbound events:
     * `"stroke_chunk"` (`%{stroke_id, seq, delta, color, width}`) — live in-flight chunk
