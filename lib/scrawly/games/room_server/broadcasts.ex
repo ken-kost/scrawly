@@ -17,6 +17,14 @@ defmodule Scrawly.Games.RoomServer.Broadcasts do
 
   Only the room process calls these, so seqs are produced by one process and
   arrive in order; the seq exists to detect loss, not to fix ordering.
+
+  A room also keeps the home page's room list current on the `:lobby`
+  channel (`notify_lobby/1`), which `LobbyChatServer` shares for the lobby
+  chat: `:lobby_room_changed` with the room's `View.lobby_summary/1` while it
+  is in the lobby, `:lobby_room_removed` once it isn't (started, finished,
+  dissolved, stopped). These carry no seq: each one replaces what the list
+  holds for that room, so a lost one leaves that room stale until the next
+  change or a page load.
   """
 
   alias Scrawly.Games.RoomServer.View
@@ -28,6 +36,10 @@ defmodule Scrawly.Games.RoomServer.Broadcasts do
   @doc "`user_id`'s private channel in `room_id`."
   @spec player_channel(term, term) :: {:room_player, term, term}
   def player_channel(room_id, user_id), do: {:room_player, room_id, user_id}
+
+  @doc "The home page's channel: the room list and the lobby chat."
+  @spec lobby_channel() :: :lobby
+  def lobby_channel, do: :lobby
 
   @doc """
   Broadcasts `action` on the room's public channel with `params` plus the next
@@ -67,4 +79,31 @@ defmodule Scrawly.Games.RoomServer.Broadcasts do
   end
 
   def push_private_slice(state), do: state
+
+  @doc """
+  Tells the home pages about the room's current lobby status:
+  `:lobby_room_changed` (`%{room: View.lobby_summary(state)}`) while it is
+  `:lobby`, otherwise `:lobby_room_removed` (`%{room_id: id}`). Returns the
+  state unchanged.
+  """
+  @spec notify_lobby(map) :: map
+  def notify_lobby(%{status: :lobby} = state) do
+    Hologram.Realtime.broadcast_action(lobby_channel(), :lobby_room_changed, %{
+      room: View.lobby_summary(state)
+    })
+
+    state
+  end
+
+  def notify_lobby(state) do
+    lobby_room_removed(state.room_id)
+    state
+  end
+
+  @doc "Takes `room_id` off the home pages' room list (`:lobby_room_removed`)."
+  @spec lobby_room_removed(term) :: :ok
+  def lobby_room_removed(room_id) do
+    Hologram.Realtime.broadcast_action(lobby_channel(), :lobby_room_removed, %{room_id: room_id})
+    :ok
+  end
 end

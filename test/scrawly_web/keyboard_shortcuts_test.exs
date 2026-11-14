@@ -46,7 +46,8 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
         stash: %{current_user_id: user && user.id, current_user: user}
       }
 
-      HomePage.init(%{}, %Component{}, server)
+      {component, _server} = HomePage.init(%{}, %Component{}, server)
+      component
     end
 
     defp registered, do: %User{id: Ecto.UUID.generate(), username: "TESTreg", is_guest: false}

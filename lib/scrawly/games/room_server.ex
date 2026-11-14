@@ -6,7 +6,9 @@ defmodule Scrawly.Games.RoomServer do
   (`RoomServer.Broadcasts`): `:room_delta`, `:chat_appended`,
   `:stroke_completed`, `:drawing_cleared` and `:drawing_undone` on
   `{:room, room_id}`, and the drawer's word choices and word on their own
-  `{:room_player, room_id, user_id}` channel, after the public delta.
+  `{:room_player, room_id, user_id}` channel, after the public delta. The
+  home pages' room list gets the room's lobby summary (or its removal) on
+  `:lobby` whenever its lobby status or players change.
 
   Rounds run against monotonic deadlines (`round_deadline`, `choice_deadline`):
   the room broadcasts the remaining ms in its deltas and clients count down
@@ -433,15 +435,32 @@ defmodule Scrawly.Games.RoomServer do
     :exit, _ -> false
   end
 
-  def list_active_rooms do
-    Registry.select(@registry, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
-    |> Enum.reduce([], fn {room_id, _pid}, acc ->
-      case get_state(room_id) do
-        {:ok, state} -> [state | acc]
-        _ -> acc
+  @doc """
+  The home page's room list: `lobby_summary/1` of every running room that is
+  in the lobby. Each room replies with its summary only (no state copy); a
+  room that stops meanwhile is skipped.
+  """
+  @spec list_lobby_rooms() :: [map]
+  def list_lobby_rooms do
+    @registry
+    |> Registry.select([{{:_, :"$1", :_}, [], [:"$1"]}])
+    |> Enum.flat_map(fn pid ->
+      case lobby_summary_of(pid) do
+        %{} = summary -> [summary]
+        nil -> []
       end
     end)
   end
+
+  defp lobby_summary_of(pid) do
+    GenServer.call(pid, :lobby_summary)
+  catch
+    :exit, _ -> nil
+  end
+
+  @doc "What the home page's room list shows of a room (`View.lobby_summary/1`)."
+  @spec lobby_summary(struct) :: map
+  defdelegate lobby_summary(state), to: View
 
   # A dissolved room (`:ended` in the DB) is never started again: visiting its
   # URL must not resurrect a process nothing would stop. `{:stop, _}` (not
@@ -477,8 +496,7 @@ defmodule Scrawly.Games.RoomServer do
           seq: System.system_time(:microsecond)
         }
 
-        notify_lobby()
-        {:ok, resume_post_game(state)}
+        {:ok, state |> resume_post_game() |> notify_lobby()}
 
       {:error, _} ->
         {:stop, :room_not_found}
@@ -488,6 +506,10 @@ defmodule Scrawly.Games.RoomServer do
   @impl true
   def handle_call(:get_state, _from, state) do
     {:reply, {:ok, to_public(state)}, state}
+  end
+
+  def handle_call(:lobby_summary, _from, state) do
+    {:reply, if(state.status == :lobby, do: View.lobby_summary(state)), state}
   end
 
   def handle_call({:get_view, viewer_id}, _from, state) do
@@ -521,8 +543,8 @@ defmodule Scrawly.Games.RoomServer do
           %{state | players: state.players ++ [player]}
           |> add_sys_msg("#{player.username} joined the room")
           |> notify_waiters()
+          |> notify_lobby()
 
-        notify_lobby()
         {:reply, {:ok, to_public(new_state)}, new_state}
     end
   end
@@ -542,8 +564,8 @@ defmodule Scrawly.Games.RoomServer do
           %{state | players: Enum.reject(state.players, &(&1.id == player_id))}
           |> add_sys_msg("#{player_name} left the room")
           |> notify_waiters()
+          |> notify_lobby()
 
-        notify_lobby()
         {:reply, {:ok, to_public(new_state)}, new_state}
     end
   end
@@ -601,8 +623,7 @@ defmodule Scrawly.Games.RoomServer do
 
     with :ok <- authorize(state, actor_id, :start_game),
          {:ok, game} <- persist_game_start(state.room_id, total_rounds) do
-      new_state = begin_game(state, game.id, total_rounds, opts)
-      notify_lobby()
+      new_state = state |> begin_game(game.id, total_rounds, opts) |> notify_lobby()
       {:reply, {:ok, to_public(new_state)}, new_state}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -692,8 +713,7 @@ defmodule Scrawly.Games.RoomServer do
       }
       |> add_sys_msg("Game over! Final scores are in.")
       |> notify_waiters()
-
-    notify_lobby()
+      |> notify_lobby()
 
     {:reply, {:ok, to_public(new_state)}, new_state}
   end
@@ -860,8 +880,8 @@ defmodule Scrawly.Games.RoomServer do
         %{state | status: :lobby, players: [], post_game_deadline: nil}
         |> add_sys_msg("Room is back in the lobby. Start a new game!")
         |> notify_waiters()
+        |> notify_lobby()
 
-      notify_lobby()
       {:noreply, new_state}
     else
       {:noreply, state}
@@ -869,7 +889,7 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   def handle_info(:stop_self, state) do
-    notify_lobby()
+    Broadcasts.lobby_room_removed(state.room_id)
     {:stop, :normal, state}
   end
 
@@ -896,6 +916,16 @@ defmodule Scrawly.Games.RoomServer do
 
   def handle_info({:timer_stopped, _}, state), do: {:noreply, state}
   def handle_info(_msg, state), do: {:noreply, state}
+
+  # A crashed room (the child is :temporary) leaves the home pages' room list
+  # too. Normal stops have already said so (end_room/1, :stop_self).
+  @impl true
+  def terminate(reason, state) when reason not in [:normal, :shutdown] do
+    if state.status == :lobby, do: Broadcasts.lobby_room_removed(state.room_id)
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
 
   # ── Chat and guesses (submit_message/3) ───────────────────────────────────
 
@@ -1079,12 +1109,9 @@ defmodule Scrawly.Games.RoomServer do
   defp end_room(state) do
     if state.game_id, do: Phoenix.PubSub.unsubscribe(Scrawly.PubSub, "game:#{state.game_id}")
 
-    new_state =
-      %{state | players: [], status: :ended}
-      |> notify_waiters()
-
-    notify_lobby()
-    new_state
+    %{state | players: [], status: :ended}
+    |> notify_waiters()
+    |> notify_lobby()
   end
 
   # Marks the room as playing and creates its Game row. If the Game row can't be
@@ -1157,9 +1184,11 @@ defmodule Scrawly.Games.RoomServer do
   # so the deadline is set before its :room_delta goes out and a page reacting
   # to it reads the time left from get_state/1.
   defp auto_end_game(state) do
-    notify_lobby()
     state = %{state | post_game_deadline: schedule_return_to_lobby()}
-    GameFlow.auto_end_game(state, &notify_waiters/1)
+
+    state
+    |> GameFlow.auto_end_game(&notify_waiters/1)
+    |> notify_lobby()
   end
 
   # Schedules :return_to_lobby and returns the matching monotonic deadline.
@@ -1211,7 +1240,10 @@ defmodule Scrawly.Games.RoomServer do
 
   defp via(room_id), do: {:via, Registry, {@registry, room_id}}
   defp creator_present?(state), do: Enum.any?(state.players, &(&1.id == state.creator_id))
-  defp notify_lobby, do: Phoenix.PubSub.broadcast(Scrawly.PubSub, "lobby:rooms", :rooms_updated)
+
+  # The home pages' room list (`:lobby` channel): this room's summary while
+  # it is in the lobby, its removal otherwise.
+  defp notify_lobby(state), do: Broadcasts.notify_lobby(state)
 
   # The room's public state (View.delta/1: no chat, no strokes, no secrets) to
   # everyone on {:room, room_id}, sequenced.

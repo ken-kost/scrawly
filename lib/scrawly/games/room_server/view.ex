@@ -35,9 +35,9 @@ defmodule Scrawly.Games.RoomServer.View do
   alias Scrawly.Games.{RoomServer, WordHints}
   alias Scrawly.Games.RoomServer.GameFlow
 
-  # Read by GamePage init and :room_resynced, HomePage (name, code, players,
-  # max_players), fetch_room_game_settings (the room settings) and
-  # GameScorePage (status, post_game_remaining_ms).
+  # Read by GamePage init and :room_resynced, fetch_room_game_settings (the
+  # room settings) and GameScorePage (status, post_game_remaining_ms). The
+  # home page reads lobby_summary/1 instead.
   @public_keys [
     :room_id,
     :name,
@@ -148,6 +148,30 @@ defmodule Scrawly.Games.RoomServer.View do
       phase: state.phase,
       current_word: state.current_word,
       word_choices: state.word_choices || []
+    }
+  end
+
+  @doc """
+  What the home page's room list (`ScrawlyWeb.Components.RoomList`) shows of
+  a room, and nothing else: no chat, no past games, no creator or player ids.
+  Players are reduced to their avatars. Sent in `HomePage.init/3` and in the
+  `:lobby_room_changed` broadcast.
+  """
+  @spec lobby_summary(struct) :: map
+  def lobby_summary(state) do
+    %{
+      room_id: state.room_id,
+      name: state.name,
+      code: state.code,
+      status: state.status,
+      max_players: state.max_players,
+      word_source: state.word_source,
+      round_duration: state.round_duration,
+      round_multiplier: state.round_multiplier,
+      players:
+        Enum.map(state.players, fn player ->
+          %{avatar_id: Map.get(player, :avatar_id), avatar_color: Map.get(player, :avatar_color)}
+        end)
     }
   end
 

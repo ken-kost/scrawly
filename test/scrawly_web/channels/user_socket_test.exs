@@ -7,7 +7,7 @@ defmodule ScrawlyWeb.UserSocketTest do
 
   describe "id/1" do
     test "is nil for anonymous sockets, so they don't share one id" do
-      for params <- [%{"lobby" => "true"}, %{}, %{"token" => "not-a-jwt"}] do
+      for params <- [%{}, %{"token" => "not-a-jwt"}] do
         assert {:ok, socket} = connect(UserSocket, params)
         assert socket.assigns.user_id == nil
         assert UserSocket.id(socket) == nil

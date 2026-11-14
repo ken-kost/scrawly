@@ -2,10 +2,6 @@ defmodule ScrawlyWeb.Pages.HomePage do
   use ScrawlyWeb.Page
   use Hologram.JS
 
-  js_import :connectLobbyChannel, from: "./lobby_channel.mjs"
-  js_import :disconnectLobbyChannel, from: "./lobby_channel.mjs"
-  js_import :sendLobbyChat, from: "./lobby_channel.mjs"
-
   js_import :connectDemoBoard, from: "./demo_board.mjs"
   js_import :disconnectDemoBoard, from: "./demo_board.mjs"
   js_import :startStroke, from: "./demo_board.mjs"
@@ -21,10 +17,18 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   route "/"
 
+  alias Scrawly.Games.{LobbyChatServer, RoomServer}
+  alias Scrawly.Games.RoomServer.Broadcasts
   alias ScrawlyWeb.Components.RoomList
   alias ScrawlyWeb.Components.GameDemo
   alias ScrawlyWeb.Components.RecoveryCodePanel
 
+  # The lobby chat keeps this many lines (newest first in state).
+  @chat_lines 100
+
+  # The room list and the lobby chat are pushed on the `:lobby` Realtime
+  # channel (see "Lobby broadcasts" below); init loads the current ones and
+  # subscribes.
   def init(_params, component, server) do
     {authenticated, is_guest} =
       case ScrawlyWeb.Auth.current_user(server) do
@@ -32,57 +36,54 @@ defmodule ScrawlyWeb.Pages.HomePage do
         {:error, :unauthenticated} -> {false, false}
       end
 
-    lobby_rooms =
-      Scrawly.Games.RoomServer.list_active_rooms()
-      |> Enum.filter(&(&1.status == :lobby))
+    component =
+      component
+      |> put_state(:rooms, RoomServer.list_lobby_rooms())
+      |> put_state(:lobby_chat_messages, recent_chat_lines())
+      |> put_state(:lobby_chat_input, "")
+      |> put_state(:lobby_chat_notice, nil)
+      |> put_state(:lobby_chat_notice_gen, 0)
+      |> put_state(:mount_id, System.unique_integer([:positive]))
+      |> put_state(:page_shown?, false)
+      |> put_state(:show_create_room, false)
+      |> put_state(:new_room_name, "")
+      |> put_state(:new_max_players, "8")
+      |> put_state(:new_word_count, "1")
+      |> put_state(:new_word_source, "local")
+      |> put_state(:new_prompt, "")
+      |> put_state(:new_round_duration, "60")
+      |> put_state(:new_round_multiplier, "1")
+      |> put_state(:new_ai_tone, "fun")
+      |> put_state(:authenticated, authenticated)
+      |> put_state(:is_guest, is_guest)
+      |> put_state(:show_login_modal, false)
+      |> put_state(:login_email, "")
+      |> put_state(:login_password, "")
+      |> put_state(:login_error, "")
+      |> put_reset_defaults()
+      |> put_state(:recovery_code, nil)
+      |> put_state(:recovery_code_saved, false)
+      # Demo board tool state — sent down as props to GameDemo
+      |> put_state(:demo_color, "#000000")
+      |> put_state(:demo_width, 2)
+      |> put_state(:demo_eraser, false)
+      |> put_action(:connect_lobby)
 
-    token = get_session(server, :user_token) || ""
-
-    lobby_chat_messages =
-      Scrawly.Games.LobbyChatServer.list_messages()
-      |> Enum.map(fn m ->
-        %{
-          username: m["username"],
-          message: m["message"],
-          is_guest: m["is_guest"],
-          timestamp: m["timestamp"]
-        }
-      end)
-      |> Enum.reverse()
-
-    component
-    |> put_state(:rooms, lobby_rooms)
-    |> put_state(:lobby_chat_messages, lobby_chat_messages)
-    |> put_state(:lobby_chat_input, "")
-    |> put_state(:show_create_room, false)
-    |> put_state(:new_room_name, "")
-    |> put_state(:new_max_players, "8")
-    |> put_state(:new_word_count, "1")
-    |> put_state(:new_word_source, "local")
-    |> put_state(:new_prompt, "")
-    |> put_state(:new_round_duration, "60")
-    |> put_state(:new_round_multiplier, "1")
-    |> put_state(:new_ai_tone, "fun")
-    |> put_state(:authenticated, authenticated)
-    |> put_state(:is_guest, is_guest)
-    |> put_state(:show_login_modal, false)
-    |> put_state(:login_email, "")
-    |> put_state(:login_password, "")
-    |> put_state(:login_error, "")
-    |> put_reset_defaults()
-    |> put_state(:recovery_code, nil)
-    |> put_state(:recovery_code_saved, false)
-    |> put_state(:socket_token, token)
-    # Demo board tool state — sent down as props to GameDemo
-    |> put_state(:demo_color, "#000000")
-    |> put_state(:demo_width, 2)
-    |> put_state(:demo_eraser, false)
-    |> put_action(:connect_lobby)
+    {component, put_subscription(server, Broadcasts.lobby_channel())}
   end
 
+  # Server-side (init and :resync_lobby): the last chat lines, newest first.
+  defp recent_chat_lines do
+    LobbyChatServer.list_messages() |> Enum.reverse() |> Enum.take(@chat_lines)
+  end
+
+  # The inline script dispatches :page_shown whenever this page instance's
+  # markup is inserted (Hologram runs the inline scripts a patch inserts, and
+  # keys a script by its text, so @mount_id makes it run once per instance).
   def template do
     ~HOLO"""
     <div class="page">
+      <script>Hologram.dispatchAction("page_shown", "page", \{mount_id: "{@mount_id}"\});</script>
       <window $key_down.n="shortcut_new" />
       <section class="hero">
         <div>
@@ -151,10 +152,13 @@ defmodule ScrawlyWeb.Pages.HomePage do
               <input type="text" name="message" autocomplete="off" maxlength="240"
                      placeholder="message the lobby..."
                      value={@lobby_chat_input}
-                     $input={:update_lobby_chat_input} />
+                     $change={:update_lobby_chat_input} />
               <button type="submit" class="app-btn app-btn-sm"
                       disabled={String.trim(@lobby_chat_input) == ""}>send</button>
             </form>
+            {%if @lobby_chat_notice}
+              <div class="mono" style="font-size: 11px; color: var(--muted); padding: 6px 2px 0;">{@lobby_chat_notice}</div>
+            {/if}
           </div>
         </div>
         <div class="home-demo">
@@ -653,30 +657,79 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # ── Lobby & Room Actions ──────────────────────────────────────────
 
   def action(:connect_lobby, _params, component) do
-    token = Map.get(component.state, :socket_token, "")
-    JS.call(:connectLobbyChannel, [token])
     JS.call(:connectDemoBoard, [])
     component
   end
 
+  # Dispatched by the template's inline script each time this page instance's
+  # markup is put into the document: on its first render, and again when
+  # Back/Forward restores the page from Hologram's snapshot. A restore runs
+  # neither init nor its queued actions, brings back the lists the page was
+  # left with, and the connection no longer holds the page's `:lobby`
+  # subscription, so the second time round the page reloads both lists and
+  # subscribes again (:resync_lobby), and reconnects the demo board.
+  def action(:page_shown, _params, component) do
+    if component.state.page_shown? do
+      JS.call(:connectDemoBoard, [])
+      put_command(component, :resync_lobby)
+    else
+      put_state(component, :page_shown?, true)
+    end
+  end
+
   def action(:join_room_with_user, %{room_id: room_id}, component) do
-    JS.call(:disconnectLobbyChannel, [])
     JS.call(:disconnectDemoBoard, [])
     put_page(component, ScrawlyWeb.Pages.GamePage, room_id: room_id)
   end
 
   def action(:watch_room, %{room_id: room_id}, component) do
-    JS.call(:disconnectLobbyChannel, [])
     JS.call(:disconnectDemoBoard, [])
     put_command(component, :enter_watch_mode, room_id: room_id)
   end
 
-  def action(:refresh_rooms, _params, component) do
-    put_command(component, :refresh_rooms)
+  # ── Lobby broadcasts (`:lobby`) ───────────────────────────────────
+  # From the rooms (RoomServer, `Broadcasts.notify_lobby/1`) and from
+  # LobbyChatServer. Realtime is at-most-once: a lost room update leaves that
+  # row stale until its next change, a lost line stays missing until the next
+  # page load.
+
+  def action(:lobby_room_changed, %{room: room}, component) do
+    rooms = component.state.rooms
+
+    rooms =
+      if Enum.any?(rooms, &(&1.room_id == room.room_id)),
+        do: Enum.map(rooms, &if(&1.room_id == room.room_id, do: room, else: &1)),
+        else: rooms ++ [room]
+
+    put_state(component, :rooms, rooms)
   end
 
-  def action(:rooms_refreshed, %{rooms: rooms}, component) do
-    put_state(component, :rooms, rooms)
+  def action(:lobby_room_removed, %{room_id: room_id}, component) do
+    put_state(component, :rooms, Enum.reject(component.state.rooms, &(&1.room_id == room_id)))
+  end
+
+  # The sender sees its own line through this broadcast too (nothing is added
+  # optimistically). A line already held (a resync overlapping a broadcast)
+  # is not added twice.
+  def action(:lobby_chat_received, %{id: id} = line, component) do
+    messages = component.state.lobby_chat_messages
+
+    if Enum.any?(messages, &(&1.id == id)) do
+      component
+    else
+      line = Map.take(line, [:id, :username, :message, :is_guest, :timestamp])
+      put_state(component, :lobby_chat_messages, Enum.take([line | messages], @chat_lines))
+    end
+  end
+
+  def action(:lobby_chat_cleared, _params, component) do
+    put_state(component, :lobby_chat_messages, [])
+  end
+
+  def action(:lobby_resynced, %{rooms: rooms, messages: messages}, component) do
+    component
+    |> put_state(:rooms, rooms)
+    |> put_state(:lobby_chat_messages, messages)
   end
 
   # ── Lobby chat ────────────────────────────────────────────────────
@@ -685,48 +738,44 @@ defmodule ScrawlyWeb.Pages.HomePage do
     put_state(component, :lobby_chat_input, val)
   end
 
+  # The line appears when its :lobby_chat_received broadcast comes back.
   def action(:send_lobby_chat, _params, component) do
-    message = component.state.lobby_chat_input |> String.trim()
+    message = String.trim(component.state.lobby_chat_input)
 
     if message == "" do
       component
     else
-      JS.call(:sendLobbyChat, [message])
-      put_state(component, :lobby_chat_input, "")
+      component
+      |> put_state(:lobby_chat_input, "")
+      |> put_state(:lobby_chat_notice, nil)
+      |> put_command(:send_lobby_chat, message: message)
     end
   end
 
-  def action(:lobby_chat_received, params, component) do
-    msg = %{
-      username: params.username,
-      message: params.message,
-      is_guest: params.is_guest,
-      timestamp: params.timestamp
-    }
+  # The text comes back into the input unless the user has typed again. The
+  # notice clears itself after 4 s (only the latest one: `gen`).
+  def action(:lobby_chat_rejected, %{reason: reason} = params, component) do
+    gen = component.state.lobby_chat_notice_gen + 1
 
-    messages = [msg | component.state.lobby_chat_messages] |> Enum.take(100)
-    put_state(component, :lobby_chat_messages, messages)
+    component =
+      if component.state.lobby_chat_input == "",
+        do: put_state(component, :lobby_chat_input, Map.get(params, :message, "")),
+        else: component
+
+    component
+    |> put_state(:lobby_chat_notice, chat_notice(reason))
+    |> put_state(:lobby_chat_notice_gen, gen)
+    |> put_action(name: :clear_lobby_chat_notice, params: %{gen: gen}, delay: 4_000)
   end
 
-  def action(:lobby_chat_history_loaded, %{messages: messages}, component) do
-    history =
-      messages
-      |> Enum.map(fn m ->
-        %{
-          username: Map.get(m, :username) || Map.get(m, "username"),
-          message: Map.get(m, :message) || Map.get(m, "message"),
-          is_guest: Map.get(m, :is_guest) || Map.get(m, "is_guest"),
-          timestamp: Map.get(m, :timestamp) || Map.get(m, "timestamp")
-        }
-      end)
-      |> Enum.reverse()
-
-    put_state(component, :lobby_chat_messages, history)
+  def action(:clear_lobby_chat_notice, %{gen: gen}, component) do
+    if gen == component.state.lobby_chat_notice_gen,
+      do: put_state(component, :lobby_chat_notice, nil),
+      else: component
   end
 
-  def action(:lobby_chat_cleared, _params, component) do
-    put_state(component, :lobby_chat_messages, [])
-  end
+  defp chat_notice(:rate_limited), do: "slow down: at most 4 messages every 5 seconds."
+  defp chat_notice(_reason), do: "message not sent. reload the page and try again."
 
   # ── Commands ─────────────────────────────────────────────────────────
 
@@ -826,12 +875,18 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_action(:join_room_with_user, room_id: room_id)
   end
 
-  # Refresh room list — only show rooms with active RoomServers
-  def command(:refresh_rooms, _params, server) do
-    rooms =
-      Scrawly.Games.RoomServer.list_active_rooms()
-      |> Enum.filter(&(&1.status == :lobby))
+  def command(:send_lobby_chat, params, server) do
+    ScrawlyWeb.LobbyChat.send_message(params, server)
+  end
 
-    put_action(server, :rooms_refreshed, rooms: rooms)
+  # After a Back/Forward restore (:page_shown): the current lists, and the
+  # :lobby subscription again.
+  def command(:resync_lobby, _params, server) do
+    server
+    |> put_subscription(Broadcasts.lobby_channel())
+    |> put_action(:lobby_resynced,
+      rooms: RoomServer.list_lobby_rooms(),
+      messages: recent_chat_lines()
+    )
   end
 end

@@ -39,7 +39,7 @@ defmodule ScrawlyWeb.Pages.CurrentUserPagesTest do
         %Component{} = c -> {c, server}
       end
 
-    layout = AppLayout.init(%{}, %Component{}, server)
+    {layout, server} = AppLayout.init(%{}, %Component{}, server)
     %{page: page_component.state, layout: layout.state, server: server}
   end
 
@@ -181,15 +181,16 @@ defmodule ScrawlyWeb.Pages.CurrentUserPagesTest do
       assert selects(queries, "users") == 0
     end
 
-    test "AppLayout :read_online_count runs no users or tokens query" do
+    test "AppLayout :presence_ping (every 20 s per tab) runs one tokens lookup, no users query" do
       user = create_user()
 
       {_result, queries} =
         capture_queries(fn ->
-          AppLayout.command(:read_online_count, %{}, session_server(user))
+          server = Server.Middleware.run(session_server(user), AppLayout.__middleware__())
+          AppLayout.command(:presence_ping, %{}, server)
         end)
 
-      assert selects(queries, "tokens") == 0
+      assert selects(queries, "tokens") == 1
       assert selects(queries, "users") == 0
     end
 
@@ -216,7 +217,8 @@ defmodule ScrawlyWeb.Pages.CurrentUserPagesTest do
   describe "the header" do
     defp layout_state(server) do
       server = LoadCurrentUser.call(server, [])
-      AppLayout.init(%{}, %Component{}, server).state
+      {layout, _server} = AppLayout.init(%{}, %Component{}, server)
+      layout.state
     end
 
     defp with_theme(server, dark, accent) do

@@ -9,7 +9,6 @@ defmodule ScrawlyWeb.UserSocket do
   ## Channels
 
   channel "game:*", ScrawlyWeb.GameChannel
-  channel "lobby:*", ScrawlyWeb.LobbyChannel
   channel "demo:board", ScrawlyWeb.DemoBoardChannel
 
   # Socket params are passed from the client and can
@@ -41,15 +40,10 @@ defmodule ScrawlyWeb.UserSocket do
         end
 
       _ ->
-        # Token is invalid/expired — fall through so public channels (lobby)
-        # can still join as anonymous.
+        # Token is invalid/expired — fall through so public channels (the
+        # demo board) can still join as anonymous.
         connect(Map.delete(params, "token"), socket, connect_info)
     end
-  end
-
-  # Allow anonymous connections for lobby channel (room list is public)
-  def connect(%{"lobby" => "true"}, socket, _connect_info) do
-    {:ok, assign(socket, :user_id, nil)}
   end
 
   # Permit any other websocket attempt as anonymous; channel authorization

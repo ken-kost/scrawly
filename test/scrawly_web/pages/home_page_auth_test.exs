@@ -15,7 +15,7 @@ defmodule ScrawlyWeb.Pages.HomePageAuthTest do
       server = %Hologram.Server{session: %{}}
 
       # This should set authenticated to false when no user is in session
-      result = HomePage.init(%{}, component, server)
+      {result, _server} = HomePage.init(%{}, component, server)
 
       assert result.state.authenticated == false
       assert result.state.is_guest == false
@@ -34,7 +34,7 @@ defmodule ScrawlyWeb.Pages.HomePageAuthTest do
       component = %Hologram.Component{}
 
       # Initialize the page
-      result = HomePage.init(%{}, component, server)
+      {result, _server} = HomePage.init(%{}, component, server)
 
       # Should have user data in state
       assert result.state.authenticated == true
@@ -53,7 +53,7 @@ defmodule ScrawlyWeb.Pages.HomePageAuthTest do
           []
         )
 
-      result = HomePage.init(%{}, %Hologram.Component{}, server)
+      {result, _server} = HomePage.init(%{}, %Hologram.Component{}, server)
 
       assert result.state.authenticated == false
       assert result.state.is_guest == false

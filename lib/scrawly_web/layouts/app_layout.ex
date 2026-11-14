@@ -8,8 +8,20 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
   alias Hologram.UI.Runtime
   alias Hologram.UI.Link
   alias ScrawlyWeb.Components.{Avatar, AvatarDefs, RecoveryCodePanel}
+  alias ScrawlyWeb.OnlineTracker
+
+  # Runs before the layout's own commands only (component middleware never
+  # runs on render: the page's does). They get the same session check as page
+  # commands: a revoked session is signed out here too. :id_only, so
+  # :presence_ping (every 20 s per tab) costs one tokens lookup and no users
+  # query; :save_theme / :save_accent load the user lazily.
+  middleware ScrawlyWeb.Middleware.LoadCurrentUser, load: :id_only
 
   @accents [:purple, :yellow, :orange]
+
+  # The presence heartbeat (see "Online presence" below).
+  @ping_ms 20_000
+  @ping_dead_ms 30_000
 
   # The page's ScrawlyWeb.Middleware.LoadCurrentUser (use ScrawlyWeb.Page) has
   # checked the session and stashed the user; the struct a page's init returns
@@ -47,11 +59,22 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
           }
       end
 
-    component
-    |> put_state(identity)
-    |> put_auth_defaults()
-    |> put_state(:online_count, ScrawlyWeb.Presence.online_count())
-    |> put_action(name: :tick_online, delay: 5000)
+    OnlineTracker.touch(ScrawlyWeb.Auth.actor_key(server))
+    ping_gen = System.unique_integer([:positive])
+
+    component =
+      component
+      |> put_state(identity)
+      |> put_auth_defaults()
+      |> put_state(:online_count, OnlineTracker.count())
+      |> put_state(:ping_gen, ping_gen)
+      |> put_state(:last_ping_at, nil)
+      # Keys the template's inline script (:layout_shown) to this instance.
+      |> put_state(:mount_id, System.unique_integer([:positive]))
+      |> put_state(:layout_shown?, false)
+      |> put_action(name: :presence_ping, params: %{gen: ping_gen}, delay: @ping_ms)
+
+    {component, put_subscription(server, OnlineTracker.channel())}
   end
 
   defp ensure_current_user_loaded!(server) do
@@ -125,6 +148,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
         <Runtime />
       </head>
       <body>
+        <script>Hologram.dispatchAction("layout_shown", "layout", \{mount_id: "{@mount_id}"\});</script>
         <AvatarDefs />
         <header class="app-header">
           <div class="nav-glow" aria-hidden="true">
@@ -457,15 +481,54 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
   end
 
   # ── Online presence ──────────────────────────────────────────────
+  #
+  # "N online" is pushed (`:online_count_updated` on `:online`, from
+  # ScrawlyWeb.OnlineTracker); the tab only keeps itself counted: a
+  # `:presence_ping` command every 20 s, from a self-rescheduling chain that
+  # init starts. The chain carries the `ping_gen` it was started with and
+  # stops as soon as that is not the layout's current one, so a stale chain
+  # (one that outlived its layout state) can never run beside the current
+  # one. Hologram 0.12 drops a left page's queued actions anyway.
+  #
+  # A Back/Forward restore brings the layout back from a snapshot without init
+  # or queued actions, i.e. without a chain, and with the count it was left
+  # with. The template's inline script dispatches :layout_shown each time this
+  # layout instance's markup is put into the document (Hologram runs the
+  # inline scripts a patch inserts and keys them by their text, hence
+  # @mount_id): the first time it only marks the instance, a later one is a
+  # restore, which pings at once (the reply carries the current count) and
+  # starts a new chain.
+  #
+  # Fallback: `:online_count_updated` restarts the chain once the last ping
+  # (browser monotonic time) is over 30 s old, or newer than now (a snapshot
+  # from an earlier document). `last_ping_at` is nil until the first ping; a
+  # count update then records a baseline instead, so a chain that never fired
+  # is caught 30 s later too.
 
-  def action(:tick_online, _params, component) do
-    put_command(component, :read_online_count, %{})
+  def action(:layout_shown, _params, component) do
+    if component.state.layout_shown?,
+      do: ping(component, component.state.ping_gen + 1, resync: true),
+      else: put_state(component, :layout_shown?, true)
+  end
+
+  def action(:presence_ping, %{gen: gen}, component) do
+    if gen == component.state.ping_gen, do: ping(component, gen), else: component
   end
 
   def action(:online_count_updated, %{count: count}, component) do
-    component
-    |> put_state(:online_count, count)
-    |> put_action(name: :tick_online, delay: 5000)
+    component = put_state(component, :online_count, count)
+    now = System.monotonic_time(:millisecond)
+
+    case component.state.last_ping_at do
+      nil ->
+        put_state(component, :last_ping_at, now)
+
+      at when now - at > @ping_dead_ms or now < at ->
+        ping(component, component.state.ping_gen + 1)
+
+      _alive ->
+        component
+    end
   end
 
   # ── Theme & Accent actions ────────────────────────────────────────
@@ -700,14 +763,28 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     |> put_state(:avatar_color, Map.get(params, :avatar_color) || component.state.avatar_color)
   end
 
-  # ── Commands ─────────────────────────────────────────────────────
-
-  def command(:read_online_count, _params, server) do
-    put_action(server, :online_count_updated, count: ScrawlyWeb.Presence.online_count())
+  # Pings now and schedules the next ping of chain `gen`, which becomes the
+  # current one. `resync: true` asks the command to reply with the count.
+  defp ping(component, gen, params \\ []) do
+    component
+    |> put_state(:ping_gen, gen)
+    |> put_state(:last_ping_at, System.monotonic_time(:millisecond))
+    |> put_command(:presence_ping, params)
+    |> put_action(name: :presence_ping, params: %{gen: gen}, delay: @ping_ms)
   end
 
-  # Layout commands run no page middleware, so Auth falls back to the full
-  # session check here: a revoked cookie can't write to the account.
+  # ── Commands ─────────────────────────────────────────────────────
+
+  def command(:presence_ping, params, server) do
+    OnlineTracker.touch(ScrawlyWeb.Auth.actor_key(server))
+
+    if Map.get(params, :resync) == true,
+      do: put_action(server, :online_count_updated, count: OnlineTracker.count()),
+      else: server
+  end
+
+  # The layout's LoadCurrentUser has checked the session (a revoked cookie
+  # can't write to the account); Auth loads the user from the stashed id.
   def command(:save_theme, %{dark_mode: dark_mode}, server) do
     server = put_session(server, :dark_mode, dark_mode)
 

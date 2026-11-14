@@ -17,8 +17,8 @@ defmodule Scrawly.Application do
       {DynamicSupervisor, strategy: :one_for_one, name: Scrawly.RoomSupervisor},
       # Failed recovery-code attempts per email (in memory)
       Scrawly.Accounts.RecoveryThrottle,
-      # Presence tracking for game channels
-      ScrawlyWeb.Presence,
+      # Distinct visitors seen in the last 45 s (the header's "N online")
+      ScrawlyWeb.OnlineTracker,
       # Round timer for game flow management
       Scrawly.Games.RoundTimer,
       # Shared canvas for the home-page demo board
@@ -26,7 +26,8 @@ defmodule Scrawly.Application do
       # Start to serve requests, typically the last entry
       ScrawlyWeb.Endpoint,
       {AshAuthentication.Supervisor, [otp_app: :scrawly]},
-      # Weekly cleanup of persisted lobby chat (relies on Endpoint to broadcast)
+      # Lobby chat log + its Realtime broadcasts (Hologram.PubSub, started by
+      # the :hologram application) and the weekly wipe
       Scrawly.Games.LobbyChatServer
     ]
 
