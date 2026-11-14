@@ -21,6 +21,14 @@ defmodule Scrawly.Accounts do
       define :update_accent_color, action: :update_accent_color, args: [:accent_color]
       define :update_profile, action: :update_profile
       define :change_password, action: :change_password
+
+      define :reset_password_with_recovery_code,
+        action: :reset_password_with_recovery_code,
+        args: [:email, :recovery_code, :password, :password_confirmation]
+
+      define :regenerate_recovery_code,
+        action: :regenerate_recovery_code,
+        args: [:current_password]
     end
   end
 end

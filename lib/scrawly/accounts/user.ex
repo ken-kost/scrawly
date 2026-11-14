@@ -87,7 +87,14 @@ defmodule Scrawly.Accounts.User do
         end)
       end
 
+      # Last, so its after_action puts the code on the final record.
+      change Scrawly.Accounts.User.Changes.GenerateRecoveryCode
+
       metadata :token, :string do
+        allow_nil? false
+      end
+
+      metadata :recovery_code, :string do
         allow_nil? false
       end
     end
@@ -136,7 +143,89 @@ defmodule Scrawly.Accounts.User do
         end)
       end
 
+      change Scrawly.Accounts.User.Changes.GenerateRecoveryCode
+
       metadata :token, :string do
+        allow_nil? false
+      end
+
+      metadata :recovery_code, :string do
+        allow_nil? false
+      end
+    end
+
+    # Reset-only account recovery: the code can set a new password and nothing
+    # else. Every failure path returns the same error after exactly one bcrypt
+    # operation; see Actions.ResetPasswordWithRecoveryCode for the order.
+    action :reset_password_with_recovery_code, :struct do
+      constraints instance_of: __MODULE__
+      transaction? true
+
+      argument :email, :ci_string, allow_nil?: false, sensitive?: true
+
+      argument :recovery_code, :string,
+        allow_nil?: false,
+        sensitive?: true,
+        constraints: [max_length: 64]
+
+      argument :password, :string,
+        allow_nil?: false,
+        sensitive?: true,
+        constraints: [min_length: 8]
+
+      argument :password_confirmation, :string, allow_nil?: false, sensitive?: true
+
+      validate confirm(:password, :password_confirmation)
+
+      run Scrawly.Accounts.User.Actions.ResetPasswordWithRecoveryCode
+    end
+
+    # Only called by :reset_password_with_recovery_code after the code matched.
+    update :apply_recovery_reset do
+      public? false
+      require_atomic? false
+      accept []
+
+      argument :password, :string,
+        allow_nil?: false,
+        sensitive?: true,
+        constraints: [min_length: 8]
+
+      argument :password_confirmation, :string, allow_nil?: false, sensitive?: true
+
+      validate confirm(:password, :password_confirmation)
+
+      change {AshAuthentication.Strategy.Password.HashPasswordChange, strategy_name: :password}
+      change Scrawly.Accounts.User.Changes.GenerateRecoveryCode
+
+      metadata :recovery_code, :string do
+        allow_nil? false
+      end
+    end
+
+    update :regenerate_recovery_code do
+      require_atomic? false
+      accept []
+      argument :current_password, :string, sensitive?: true, allow_nil?: false
+
+      # Guests (and accounts created without a password) have no hashed_password,
+      # and PasswordValidation would crash on nil, so these must run (and fail) first.
+      validate attribute_equals(:is_guest, false) do
+        message "register an account to get a recovery code"
+      end
+
+      validate present(:hashed_password) do
+        message "this account has no password"
+      end
+
+      validate {AshAuthentication.Strategy.Password.PasswordValidation,
+                strategy_name: :password, password_argument: :current_password} do
+        only_when_valid? true
+      end
+
+      change Scrawly.Accounts.User.Changes.GenerateRecoveryCode
+
+      metadata :recovery_code, :string do
         allow_nil? false
       end
     end
@@ -228,6 +317,16 @@ defmodule Scrawly.Accounts.User do
     attribute :hashed_password, :string do
       allow_nil? true
       sensitive? true
+    end
+
+    # bcrypt hash of the normalized recovery code (Scrawly.Accounts.RecoveryCode).
+    attribute :hashed_recovery_code, :string do
+      allow_nil? true
+      sensitive? true
+    end
+
+    attribute :recovery_code_generated_at, :utc_datetime_usec do
+      allow_nil? true
     end
 
     # Player-specific attributes

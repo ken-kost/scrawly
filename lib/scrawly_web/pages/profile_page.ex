@@ -1,10 +1,14 @@
 defmodule ScrawlyWeb.Pages.ProfilePage do
   use Hologram.Page
+  use Hologram.JS
+
+  js_import :copyRecoveryCode, from: "../components/recovery_code.mjs"
+  js_import :downloadRecoveryCode, from: "../components/recovery_code.mjs"
 
   route "/profile"
   layout ScrawlyWeb.Layouts.AppLayout
 
-  alias ScrawlyWeb.Components.{Avatar, AvatarDefs}
+  alias ScrawlyWeb.Components.{Avatar, AvatarDefs, RecoveryCodePanel}
 
   def init(_params, component, server) do
     case get_session(server, :user_id) do
@@ -30,6 +34,16 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
             |> put_state(:password_error, nil)
             |> put_state(:avatars, AvatarDefs.avatars())
             |> put_state(:color_choices, Enum.map(1..24, &Integer.to_string/1))
+            |> put_state(:recovery_status, ScrawlyWeb.Recovery.status(user))
+            |> put_state(
+              :recovery_generated_label,
+              ScrawlyWeb.Recovery.generated_label(user.recovery_code_generated_at)
+            )
+            |> put_state(:recovery_password, "")
+            |> put_state(:recovery_error, nil)
+            |> put_state(:recovery_message, nil)
+            |> put_state(:recovery_code, nil)
+            |> put_state(:recovery_code_saved, false)
 
           _ ->
             put_page(component, ScrawlyWeb.Pages.HomePage)
@@ -167,7 +181,63 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
             </div>
           </form>
         </section>
+
+        <section class="surface profile-card profile-card-wide">
+          <div class="section-header" style="border-bottom: 1px solid var(--hairline); padding-bottom: 12px; margin-bottom: 18px;">
+            <h2>recovery code</h2>
+            <span class="mono" style="font-size: 11px; color: var(--muted);">
+              {%if @recovery_status == :active}set up{%else}{%if @recovery_status == :guest}guest{%else}not set up{/if}{/if}
+            </span>
+          </div>
+
+          {%if @recovery_status == :guest}
+            <p class="sub" style="font-size: 13px; margin: 0;">
+              register to get a recovery code. it lets you set a new password if you forget yours.
+            </p>
+          {%else}
+            {%if @recovery_status == :active}
+              <p class="sub" style="font-size: 13px; margin: 0 0 14px;">
+                your recovery code was generated <span class="mono">{@recovery_generated_label}</span>.
+                it can only set a new password. lost it? generate a new one and the old code stops working.
+              </p>
+            {%else}
+              <p class="sub" style="font-size: 13px; margin: 0 0 14px;">
+                set up a recovery code: it is the only way to reset a forgotten password,
+                since scrawly sends no email.
+              </p>
+            {/if}
+
+            <form $submit={:regenerate_recovery_code}>
+              <label class="field-label">current password</label>
+              <div class="row" style="gap: 8px; align-items: stretch; flex-wrap: wrap;">
+                <input
+                  class="app-input"
+                  style="flex: 1; min-width: 200px;"
+                  type="password"
+                  name="recovery_current_password"
+                  autocomplete="current-password"
+                  value={@recovery_password}
+                  placeholder="••••••••"
+                  $input={:update_recovery_password} />
+                <button type="submit" class="app-btn app-btn-primary">
+                  {%if @recovery_status == :active}generate a new code{%else}set up a recovery code{/if}
+                </button>
+              </div>
+
+              {%if @recovery_error}
+                <div class="form-error">{@recovery_error}</div>
+              {/if}
+              {%if @recovery_message}
+                <div class="form-success">{@recovery_message}</div>
+              {/if}
+            </form>
+          {/if}
+        </section>
       </div>
+
+      {%if @recovery_code}
+        <RecoveryCodePanel code={@recovery_code} saved={@recovery_code_saved} />
+      {/if}
     </div>
     """
   end
@@ -261,7 +331,62 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
     |> put_state(:password_message, nil)
   end
 
+  # ── Recovery code actions ───────────────────────────────────────────
+
+  def action(:update_recovery_password, %{event: %{value: val}}, component) do
+    put_state(component, :recovery_password, val)
+  end
+
+  def action(:regenerate_recovery_code, _params, component) do
+    component
+    |> put_state(:recovery_error, nil)
+    |> put_state(:recovery_message, nil)
+    |> put_command(:regenerate_recovery_code, %{
+      current_password: component.state.recovery_password
+    })
+  end
+
+  def action(:recovery_code_failed, %{message: message}, component) do
+    component
+    |> put_state(:recovery_error, message)
+    |> put_state(:recovery_message, nil)
+  end
+
+  def action(:show_recovery_code, %{code: code} = params, component) do
+    component
+    |> put_state(:recovery_password, "")
+    |> put_state(:recovery_status, :active)
+    |> put_state(:recovery_generated_label, Map.get(params, :generated_label, ""))
+    |> put_state(:recovery_code, code)
+    |> put_state(:recovery_code_saved, false)
+  end
+
+  def action(:copy_recovery_code, _params, component) do
+    JS.call(:copyRecoveryCode, [component.state.recovery_code])
+    component
+  end
+
+  def action(:download_recovery_code, _params, component) do
+    JS.call(:downloadRecoveryCode, [component.state.recovery_code])
+    component
+  end
+
+  def action(:set_recovery_code_saved, %{event: %{value: saved}}, component) do
+    put_state(component, :recovery_code_saved, saved == true)
+  end
+
+  def action(:close_recovery_code, _params, component) do
+    component
+    |> put_state(:recovery_code, nil)
+    |> put_state(:recovery_code_saved, false)
+    |> put_state(:recovery_message, "recovery code saved. any older code no longer works.")
+  end
+
   # ── Commands ────────────────────────────────────────────────────────
+
+  def command(:regenerate_recovery_code, params, server) do
+    ScrawlyWeb.Recovery.regenerate(params, server)
+  end
 
   def command(:save_profile, params, server) do
     user_id = get_session(server, :user_id)

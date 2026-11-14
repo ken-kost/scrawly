@@ -1584,6 +1584,21 @@ html, body {
   background: color-mix(in oklch, var(--success) 12%, transparent);
 }
 
+/* ─── Recovery code ─────────────────────────────────────────────── */
+.recovery-code {
+  font-size: 17px;
+  letter-spacing: 0.06em;
+  text-align: center;
+  padding: 14px 12px;
+  border: 1px dashed var(--hairline-2);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  user-select: all;
+  word-break: break-all;
+}
+.profile-card-wide { grid-column: 1 / -1; }
+
 @media (max-width: 880px) {
   .profile-grid { grid-template-columns: 1fr; }
   .avatar-grid { grid-template-columns: repeat(5, 1fr); }

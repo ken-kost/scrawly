@@ -1,9 +1,13 @@
 defmodule ScrawlyWeb.Layouts.AppLayout do
   use Hologram.Component
+  use Hologram.JS
+
+  js_import :copyRecoveryCode, from: "../components/recovery_code.mjs"
+  js_import :downloadRecoveryCode, from: "../components/recovery_code.mjs"
 
   alias Hologram.UI.Runtime
   alias Hologram.UI.Link
-  alias ScrawlyWeb.Components.{Avatar, AvatarDefs}
+  alias ScrawlyWeb.Components.{Avatar, AvatarDefs, RecoveryCodePanel}
 
   @accents [:purple, :yellow, :orange]
 
@@ -87,6 +91,20 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     |> put_state(:register_email, "")
     |> put_state(:register_password, "")
     |> put_state(:auth_error, nil)
+    |> put_reset_defaults()
+    |> put_state(:recovery_code, nil)
+    |> put_state(:recovery_code_saved, false)
+    |> put_state(:pending_auth, nil)
+  end
+
+  defp put_reset_defaults(component) do
+    component
+    |> put_state(:show_reset_modal, false)
+    |> put_state(:reset_email, "")
+    |> put_state(:reset_code, "")
+    |> put_state(:reset_password, "")
+    |> put_state(:reset_password_confirmation, "")
+    |> put_state(:reset_error, nil)
   end
 
   def template do
@@ -269,10 +287,92 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                 </button>
                 <div class="mono" style="font-size: 11px; color: var(--muted); text-align: center;">
                   no account? <button type="button" style="background: none; border: 0; color: var(--ink); cursor: pointer; font: inherit;" $click={action: :switch_to_register, target: "layout"}>register</button>
+                  · <button type="button" style="background: none; border: 0; color: var(--ink); cursor: pointer; font: inherit;" $click={action: :show_reset, target: "layout"}>forgot password?</button>
                 </div>
               </div>
             </form>
           </div>
+        {/if}
+
+        {%if @show_reset_modal}
+          <div class="scrim">
+            <form
+              class="app-modal"
+              style="max-width: 400px;"
+              $submit={action: :submit_reset, target: "layout"}>
+              <div class="app-modal-head">
+                <div>
+                  <h3>reset password</h3>
+                  <div class="sub">use the recovery code you saved when you registered.</div>
+                </div>
+                <button type="button" class="icon-btn" $click={action: :hide_auth_modal, target: "layout"}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" /></svg>
+                </button>
+              </div>
+              <div class="app-modal-body">
+                {%if @reset_error}
+                  <div style="color: var(--danger); font-size: 12px;">{@reset_error}</div>
+                {/if}
+                <div>
+                  <label class="field-label">email</label>
+                  <input
+                    type="email"
+                    name="email"
+                    autocomplete="email"
+                    placeholder="you@example.com"
+                    class="app-input"
+                    value={@reset_email}
+                    $input={action: :update_reset_email, target: "layout"} />
+                </div>
+                <div>
+                  <label class="field-label">recovery code</label>
+                  <input
+                    type="text"
+                    name="recovery_code"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"
+                    class="app-input mono"
+                    value={@reset_code}
+                    $input={action: :update_reset_code, target: "layout"} />
+                </div>
+                <div>
+                  <label class="field-label">new password</label>
+                  <input
+                    type="password"
+                    name="new_password"
+                    autocomplete="new-password"
+                    placeholder="at least 8 characters"
+                    class="app-input"
+                    value={@reset_password}
+                    $input={action: :update_reset_password, target: "layout"} />
+                </div>
+                <div>
+                  <label class="field-label">confirm new password</label>
+                  <input
+                    type="password"
+                    name="new_password_confirmation"
+                    autocomplete="new-password"
+                    placeholder="repeat new password"
+                    class="app-input"
+                    value={@reset_password_confirmation}
+                    $input={action: :update_reset_password_confirmation, target: "layout"} />
+                </div>
+              </div>
+              <div class="app-modal-foot" style="flex-direction: column; align-items: stretch;">
+                <button type="submit" class="app-btn app-btn-primary" style="width: 100%;">
+                  set new password
+                </button>
+                <div class="mono" style="font-size: 11px; color: var(--muted); text-align: center;">
+                  remembered it? <button type="button" style="background: none; border: 0; color: var(--ink); cursor: pointer; font: inherit;" $click={action: :switch_to_login, target: "layout"}>log in</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        {/if}
+
+        {%if @recovery_code}
+          <RecoveryCodePanel code={@recovery_code} saved={@recovery_code_saved} />
         {/if}
 
         {%if @show_register_modal}
@@ -418,6 +518,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     |> put_state(:register_email, "")
     |> put_state(:register_password, "")
     |> put_state(:auth_error, nil)
+    |> put_reset_defaults()
   end
 
   def action(:switch_to_register, _params, component) do
@@ -429,6 +530,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
 
   def action(:switch_to_login, _params, component) do
     component
+    |> put_reset_defaults()
     |> put_state(:show_register_modal, false)
     |> put_state(:show_login_modal, true)
     |> put_state(:auth_error, nil)
@@ -482,6 +584,91 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
 
   def action(:auth_error, %{message: message}, component) do
     put_state(component, :auth_error, message)
+  end
+
+  # ── Forgot password (recovery code) ────────────────────────────
+
+  def action(:show_reset, _params, component) do
+    component
+    |> put_reset_defaults()
+    |> put_state(:show_login_modal, false)
+    |> put_state(:show_register_modal, false)
+    |> put_state(:show_reset_modal, true)
+    |> put_state(:reset_email, component.state.login_email)
+    |> put_state(:login_password, "")
+    |> put_state(:auth_error, nil)
+  end
+
+  def action(:update_reset_email, %{event: %{value: val}}, component) do
+    put_state(component, :reset_email, val)
+  end
+
+  def action(:update_reset_code, %{event: %{value: val}}, component) do
+    put_state(component, :reset_code, val)
+  end
+
+  def action(:update_reset_password, %{event: %{value: val}}, component) do
+    put_state(component, :reset_password, val)
+  end
+
+  def action(:update_reset_password_confirmation, %{event: %{value: val}}, component) do
+    put_state(component, :reset_password_confirmation, val)
+  end
+
+  def action(:submit_reset, _params, component) do
+    component
+    |> put_state(:reset_error, nil)
+    |> put_command(:reset_password, %{
+      email: component.state.reset_email,
+      recovery_code: component.state.reset_code,
+      password: component.state.reset_password,
+      password_confirmation: component.state.reset_password_confirmation
+    })
+  end
+
+  def action(:recovery_reset_failed, %{message: message}, component) do
+    put_state(component, :reset_error, message)
+  end
+
+  # ── Recovery code panel (after register or reset) ───────────────
+  # The session is already signed in; :auth_success (header + navigation)
+  # waits until the user has seen the code and pressed continue.
+
+  def action(:show_recovery_code, %{code: code} = params, component) do
+    component
+    |> put_auth_defaults()
+    |> put_state(:recovery_code, code)
+    |> put_state(:pending_auth, %{
+      username: Map.get(params, :username),
+      avatar_id: Map.get(params, :avatar_id),
+      avatar_color: Map.get(params, :avatar_color)
+    })
+  end
+
+  def action(:copy_recovery_code, _params, component) do
+    JS.call(:copyRecoveryCode, [component.state.recovery_code])
+    component
+  end
+
+  def action(:download_recovery_code, _params, component) do
+    JS.call(:downloadRecoveryCode, [component.state.recovery_code])
+    component
+  end
+
+  def action(:set_recovery_code_saved, %{event: %{value: saved}}, component) do
+    put_state(component, :recovery_code_saved, saved == true)
+  end
+
+  def action(:close_recovery_code, _params, component) do
+    pending = component.state.pending_auth
+
+    component =
+      component
+      |> put_state(:recovery_code, nil)
+      |> put_state(:recovery_code_saved, false)
+      |> put_state(:pending_auth, nil)
+
+    if pending, do: put_action(component, :auth_success, pending), else: component
   end
 
   # Receives live updates from the profile page so the navbar reflects
@@ -559,10 +746,12 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
            password: password
          }) do
       {:ok, user} ->
+        # :auth_success follows once the code has been seen (:close_recovery_code).
         server
         |> put_session(:user_id, user.id)
         |> put_session(:user_token, user.__metadata__.token)
-        |> put_action(:auth_success,
+        |> put_action(:show_recovery_code,
+          code: user.__metadata__.recovery_code,
           username: user.username,
           avatar_id: user.avatar_id,
           avatar_color: user.avatar_color
@@ -573,5 +762,9 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
           message: "Registration failed. Email may already be in use."
         )
     end
+  end
+
+  def command(:reset_password, params, server) do
+    ScrawlyWeb.Recovery.reset_password(params, server)
   end
 end

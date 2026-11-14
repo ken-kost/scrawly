@@ -15,6 +15,8 @@ defmodule Scrawly.Application do
       # Registry and DynamicSupervisor for RoomServer processes
       {Registry, keys: :unique, name: Scrawly.RoomRegistry},
       {DynamicSupervisor, strategy: :one_for_one, name: Scrawly.RoomSupervisor},
+      # Failed recovery-code attempts per email (in memory)
+      Scrawly.Accounts.RecoveryThrottle,
       # Presence tracking for game channels
       ScrawlyWeb.Presence,
       # Round timer for game flow management

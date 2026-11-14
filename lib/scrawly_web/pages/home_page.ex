@@ -18,12 +18,16 @@ defmodule ScrawlyWeb.Pages.HomePage do
   js_import :setWidth, from: "./demo_board.mjs"
   js_import :setEraser, from: "./demo_board.mjs"
 
+  js_import :copyRecoveryCode, from: "../components/recovery_code.mjs"
+  js_import :downloadRecoveryCode, from: "../components/recovery_code.mjs"
+
   route "/"
 
   layout ScrawlyWeb.Layouts.AppLayout
 
   alias ScrawlyWeb.Components.RoomList
   alias ScrawlyWeb.Components.GameDemo
+  alias ScrawlyWeb.Components.RecoveryCodePanel
 
   def init(_params, component, server) do
     {authenticated, is_guest} =
@@ -75,6 +79,9 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_state(:login_email, "")
     |> put_state(:login_password, "")
     |> put_state(:login_error, "")
+    |> put_reset_defaults()
+    |> put_state(:recovery_code, nil)
+    |> put_state(:recovery_code_saved, false)
     |> put_state(:socket_token, token)
     # Demo board tool state — sent down as props to GameDemo
     |> put_state(:demo_color, "#000000")
@@ -285,14 +292,78 @@ defmodule ScrawlyWeb.Pages.HomePage do
               </div>
             </div>
             <div class="app-modal-foot">
+              <button type="button" class="app-btn app-btn-ghost" style="margin-right: auto;" $click={:show_reset}>forgot password?</button>
               <button type="button" class="app-btn app-btn-ghost" $click={:submit_sign_in}>sign in</button>
               <button type="submit" class="app-btn app-btn-primary">create account</button>
             </div>
           </form>
         </div>
       {/if}
+
+      {%if @show_reset_modal}
+        <div class="scrim">
+          <form class="app-modal" style="max-width: 420px;" $submit="submit_reset">
+            <div class="app-modal-head">
+              <div>
+                <h3>reset your password</h3>
+                <div class="sub">use the recovery code you saved when you registered.</div>
+              </div>
+              <button type="button" class="icon-btn" $click={:hide_reset}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="18" height="18"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg>
+              </button>
+            </div>
+            <div class="app-modal-body">
+              {%if @reset_error != ""}
+                <div style="color: var(--danger); font-size: 13px; margin-bottom: 4px;">{@reset_error}</div>
+              {/if}
+              <div>
+                <label class="field-label">email</label>
+                <input class="app-input" type="email" name="email" autocomplete="email"
+                       placeholder="you@example.com"
+                       value={@reset_email} $input={:update_reset_email} />
+              </div>
+              <div>
+                <label class="field-label">recovery code</label>
+                <input class="app-input mono" type="text" name="recovery_code" autocomplete="off"
+                       spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"
+                       value={@reset_code} $input={:update_reset_code} />
+              </div>
+              <div>
+                <label class="field-label">new password</label>
+                <input class="app-input" type="password" name="new_password" autocomplete="new-password"
+                       placeholder="at least 8 characters"
+                       value={@reset_password} $input={:update_reset_password} />
+              </div>
+              <div>
+                <label class="field-label">confirm new password</label>
+                <input class="app-input" type="password" name="new_password_confirmation" autocomplete="new-password"
+                       placeholder="repeat new password"
+                       value={@reset_password_confirmation} $input={:update_reset_password_confirmation} />
+              </div>
+            </div>
+            <div class="app-modal-foot">
+              <button type="button" class="app-btn app-btn-ghost" $click={:hide_reset}>cancel</button>
+              <button type="submit" class="app-btn app-btn-primary">set new password</button>
+            </div>
+          </form>
+        </div>
+      {/if}
+
+      {%if @recovery_code}
+        <RecoveryCodePanel code={@recovery_code} saved={@recovery_code_saved} />
+      {/if}
     </div>
     """
+  end
+
+  defp put_reset_defaults(component) do
+    component
+    |> put_state(:show_reset_modal, false)
+    |> put_state(:reset_email, "")
+    |> put_state(:reset_code, "")
+    |> put_state(:reset_password, "")
+    |> put_state(:reset_password_confirmation, "")
+    |> put_state(:reset_error, "")
   end
 
   # ── Create-room modal actions ──────────────────────────────────────
@@ -349,6 +420,83 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   def action(:login_failed, %{message: message}, component) do
     put_state(component, :login_error, message)
+  end
+
+  # ── Forgot password (recovery code) ────────────────────────────────
+
+  def action(:show_reset, _params, component) do
+    component
+    |> put_reset_defaults()
+    |> put_state(:show_login_modal, false)
+    |> put_state(:show_reset_modal, true)
+    |> put_state(:reset_email, component.state.login_email)
+  end
+
+  def action(:hide_reset, _params, component) do
+    put_reset_defaults(component)
+  end
+
+  def action(:update_reset_email, %{event: %{value: val}}, component) do
+    put_state(component, :reset_email, val)
+  end
+
+  def action(:update_reset_code, %{event: %{value: val}}, component) do
+    put_state(component, :reset_code, val)
+  end
+
+  def action(:update_reset_password, %{event: %{value: val}}, component) do
+    put_state(component, :reset_password, val)
+  end
+
+  def action(:update_reset_password_confirmation, %{event: %{value: val}}, component) do
+    put_state(component, :reset_password_confirmation, val)
+  end
+
+  def action(:submit_reset, _params, component) do
+    component
+    |> put_state(:reset_error, "")
+    |> put_command(:reset_password,
+      email: component.state.reset_email,
+      recovery_code: component.state.reset_code,
+      password: component.state.reset_password,
+      password_confirmation: component.state.reset_password_confirmation
+    )
+  end
+
+  def action(:recovery_reset_failed, %{message: message}, component) do
+    put_state(component, :reset_error, message)
+  end
+
+  # ── Recovery code panel (after register or reset) ──────────────────
+
+  def action(:show_recovery_code, %{code: code}, component) do
+    component
+    |> put_reset_defaults()
+    |> put_state(:show_login_modal, false)
+    |> put_state(:login_password, "")
+    |> put_state(:recovery_code, code)
+    |> put_state(:recovery_code_saved, false)
+  end
+
+  def action(:copy_recovery_code, _params, component) do
+    JS.call(:copyRecoveryCode, [component.state.recovery_code])
+    component
+  end
+
+  def action(:download_recovery_code, _params, component) do
+    JS.call(:downloadRecoveryCode, [component.state.recovery_code])
+    component
+  end
+
+  def action(:set_recovery_code_saved, %{event: %{value: saved}}, component) do
+    put_state(component, :recovery_code_saved, saved == true)
+  end
+
+  def action(:close_recovery_code, _params, component) do
+    component
+    |> put_state(:recovery_code, nil)
+    |> put_state(:recovery_code_saved, false)
+    |> put_action(:reload_home)
   end
 
   def action(:reload_home, _params, component) do
@@ -603,16 +751,22 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
     case result do
       {:ok, user} ->
+        # The page reloads only after the user has seen the code (:close_recovery_code).
         server
         |> put_session(:user_id, user.id)
         |> put_session(:user_token, user.__metadata__[:token])
-        |> put_action(:reload_home)
+        |> put_action(:show_recovery_code, code: user.__metadata__[:recovery_code])
 
       {:error, _} ->
         put_action(server, :login_failed,
-          message: "could not create account — use a valid email and a password of at least 8 characters"
+          message:
+            "could not create account — use a valid email and a password of at least 8 characters"
         )
     end
+  end
+
+  def command(:reset_password, params, server) do
+    ScrawlyWeb.Recovery.reset_password(params, server)
   end
 
   def command(:sign_in, %{email: email, password: password}, server) do
