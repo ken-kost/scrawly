@@ -115,7 +115,9 @@ defmodule Scrawly.MixProject do
       # use a regex to match multiple deps, or atoms/strings for specific ones
       # usage_rules: [:ash, ~r/^ash_/],
       # If your CLAUDE.md is getting too big, link instead of inlining:
-      usage_rules: [:ash, {~r/^ash_/, link: :markdown}],
+      # :hologram first keeps its section at the top of CLAUDE.md.
+      # re-run mix usage_rules.sync after every Hologram (or Ash) bump
+      usage_rules: [:hologram, :ash, {~r/^ash_/, link: :markdown}],
       # or use skills
       skills: [
         location: ".claude/skills",
