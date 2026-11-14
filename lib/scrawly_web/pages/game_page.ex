@@ -33,7 +33,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
       {:ok, _pid} ->
         case RoomServer.get_state(room_id) do
           {:ok, rs} ->
-            user_id = get_session(server, :user_id)
+            user_id = ScrawlyWeb.Auth.user_id(server)
             is_creator = user_id == rs.creator_id
             game_active = rs.game_id != nil
             is_drawer = rs.current_drawer_id == user_id
@@ -173,20 +173,14 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   def action(:do_join_room, _params, component) do
-    put_command(component, :join_room,
-      room_id: component.state.room_id,
-      user_id: component.state.current_user_id
-    )
+    put_command(component, :join_room, room_id: component.state.room_id)
   end
 
   def action(:poll_room, _params, component) do
     if component.state.leaving? do
       component
     else
-      put_command(component, :poll_room_state,
-        room_id: component.state.room_id,
-        user_id: component.state.current_user_id
-      )
+      put_command(component, :poll_room_state, room_id: component.state.room_id)
     end
   end
 
@@ -274,10 +268,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
           )
 
         if transition? do
-          put_command(component, :poll_room_state,
-            room_id: component.state.room_id,
-            user_id: component.state.current_user_id
-          )
+          put_command(component, :poll_room_state, room_id: component.state.room_id)
         else
           component
           |> put_state(:time_left, Map.get(params, :time_left) || 0)
@@ -287,11 +278,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   def action(:do_join_as_watcher, _params, component) do
-    put_command(component, :join_as_watcher,
-      room_id: component.state.room_id,
-      user_id: component.state.current_user_id,
-      username: component.state.current_user_username
-    )
+    put_command(component, :join_as_watcher, room_id: component.state.room_id)
   end
 
   def action(:switch_to_watcher, _params, component) do
@@ -301,22 +288,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   def action(:leave_room, _params, component) do
-    if component.state.watching? do
-      component
-      |> put_state(:leaving?, true)
-      |> put_command(:leave_watcher,
-        room_id: component.state.room_id,
-        watcher_id: component.state.current_user_id
-      )
-    else
-      component
-      |> put_state(:leaving?, true)
-      |> put_command(:leave_room,
-        user_id: component.state.current_user_id,
-        room_id: component.state.room_id,
-        is_creator: component.state.is_creator
-      )
-    end
+    command = if component.state.watching?, do: :leave_watcher, else: :leave_room
+
+    component
+    |> put_state(:leaving?, true)
+    |> put_command(command, room_id: component.state.room_id)
   end
 
   def action(:room_dissolved, _params, component) do
@@ -327,8 +303,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
     put_page(component, ScrawlyWeb.Pages.HomePage)
   end
 
-  def action(:past_games_loaded, %{games: games}, component) do
-    put_state(component, :past_games, games)
+  # A command was rejected server-side (see ScrawlyWeb.Auth.deny/3): nothing
+  # changed, so resync from the room.
+  def action(:command_denied, _params, component) do
+    component
+    |> put_state(:leaving?, false)
+    |> put_action(:poll_room)
   end
 
   def action(:choose_word, %{word: word}, component) do
@@ -546,7 +526,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def command(:join_as_watcher, params, server), do: Commands.join_as_watcher(params, server)
   def command(:leave_watcher, params, server), do: Commands.leave_watcher(params, server)
   def command(:start_game, params, server), do: Commands.start_game(params, server)
-  def command(:end_game, params, server), do: Commands.end_game(params, server)
   def command(:leave_room, params, server), do: Commands.leave_room(params, server)
   def command(:send_chat_message, params, server), do: Commands.send_chat_message(params, server)
 
@@ -558,9 +537,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def command(:complete_stroke, params, server), do: Commands.complete_stroke(params, server)
   def command(:clear_drawing_cmd, params, server), do: Commands.clear_drawing_cmd(params, server)
   def command(:undo_drawing_cmd, params, server), do: Commands.undo_drawing_cmd(params, server)
-
-  def command(:fetch_past_games, params, server),
-    do: Commands.fetch_past_games(params, server)
 
   defp handle_game_state_changes(component, params) do
     old_started = component.state.game_started
@@ -810,7 +786,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
             {%if @is_creator}
               <button class="app-btn app-btn-primary app-btn-lg" style="flex: 1;"
                       disabled={!@can_start_game}
-                      $click={command: :start_game, params: %{room_id: @room_id, players: @players}}>
+                      $click={command: :start_game, params: %{room_id: @room_id}}>
                 {%if @can_start_game}start game{%else}need 2+ players{/if}
               </button>
             {/if}

@@ -14,6 +14,7 @@ defmodule Scrawly.Games.RoomServer do
 
   @registry Scrawly.RoomRegistry
   @supervisor Scrawly.RoomSupervisor
+  @max_watchers 50
 
   defstruct [
     :room_id,
@@ -100,12 +101,6 @@ defmodule Scrawly.Games.RoomServer do
     :exit, _ -> {:error, :not_found}
   end
 
-  def set_ai_words(room_id, words) when is_list(words) do
-    GenServer.call(via(room_id), {:set_ai_words, words})
-  catch
-    :exit, _ -> {:error, :not_found}
-  end
-
   def leave_watcher(room_id, watcher_id) do
     GenServer.call(via(room_id), {:leave_watcher, watcher_id})
   catch
@@ -118,8 +113,19 @@ defmodule Scrawly.Games.RoomServer do
     :exit, _ -> {:error, :not_found}
   end
 
-  def start_game(room_id, params) do
-    GenServer.call(via(room_id), {:start_game, params})
+  @doc """
+  Starts a game on behalf of `actor_id`.
+
+  Re-checks `authorize/3` inside the room process, so two concurrent starts
+  cannot both pass. The drawer (first player) and the round count come from the
+  room's own player list, never from the caller. Persists the room status and
+  the Game row before touching room state.
+
+  `opts` may carry `:word_choices` (first round's choices) and `:ai_words` (the
+  remaining AI pool). Returns `{:ok, public_state}` or `{:error, reason}`.
+  """
+  def start_game(room_id, actor_id, opts \\ %{}) do
+    GenServer.call(via(room_id), {:start_game, actor_id, Map.new(opts)})
   catch
     :exit, _ -> {:error, :not_found}
   end
@@ -142,11 +148,47 @@ defmodule Scrawly.Games.RoomServer do
     :exit, _ -> {:error, :not_found}
   end
 
-  def dissolve_room(room_id) do
-    GenServer.call(via(room_id), :dissolve_room)
+  @doc """
+  Dissolves the room when `actor_id` is its creator; `{:error, :not_creator}`
+  otherwise.
+  """
+  def dissolve_room(room_id, actor_id) do
+    GenServer.call(via(room_id), {:dissolve_room, actor_id})
   catch
     :exit, _ -> {:error, :not_found}
   end
+
+  @doc """
+  Pure authorization check for room commands against a room state (the struct
+  or the map returned by `get_state/1`).
+
+    * `:start_game` - the actor is the creator, the room is in `:lobby` with no
+      game, and there are at least 2 players.
+    * `:dissolve` - the actor is the creator.
+    * `:leave` - the actor is a player or the creator.
+  """
+  @spec authorize(map, term, :start_game | :dissolve | :leave) :: :ok | {:error, atom}
+  def authorize(state, actor_id, :start_game) do
+    cond do
+      not creator?(state, actor_id) -> {:error, :not_creator}
+      state.status != :lobby or state.game_id != nil -> {:error, :wrong_state}
+      length(state.players) < 2 -> {:error, :not_enough_players}
+      true -> :ok
+    end
+  end
+
+  def authorize(state, actor_id, :dissolve) do
+    if creator?(state, actor_id), do: :ok, else: {:error, :not_creator}
+  end
+
+  def authorize(state, actor_id, :leave) do
+    if creator?(state, actor_id) or player?(state, actor_id),
+      do: :ok,
+      else: {:error, :not_member}
+  end
+
+  defp creator?(state, actor_id), do: actor_id != nil and actor_id == state.creator_id
+  defp player?(state, actor_id), do: Enum.any?(state.players, &(&1.id == actor_id))
 
   def room_exists?(room_id) do
     case Registry.lookup(@registry, room_id) do
@@ -259,63 +301,62 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   def handle_call({:leave, player_id}, _from, state) do
-    player = Enum.find(state.players, &(&1.id == player_id))
-    player_name = if player, do: player.username, else: "Unknown"
+    cond do
+      authorize(state, player_id, :leave) != :ok ->
+        {:reply, {:error, :not_member}, state}
 
-    if player_id == state.creator_id do
-      if state.game_id, do: Phoenix.PubSub.unsubscribe(Scrawly.PubSub, "game:#{state.game_id}")
+      player_id == state.creator_id ->
+        {:stop, :normal, {:ok, :dissolved}, end_room(state)}
 
-      new_state =
-        %{state | players: [], status: :ended}
-        |> bump_version()
-        |> notify_waiters()
+      true ->
+        player_name = get_player_name(state.players, player_id)
 
-      notify_lobby()
-      {:stop, :normal, {:ok, :dissolved}, new_state}
-    else
-      new_state =
-        %{state | players: Enum.reject(state.players, &(&1.id == player_id))}
-        |> add_sys_msg("#{player_name} left the room")
-        |> bump_version()
-        |> notify_waiters()
+        new_state =
+          %{state | players: Enum.reject(state.players, &(&1.id == player_id))}
+          |> add_sys_msg("#{player_name} left the room")
+          |> bump_version()
+          |> notify_waiters()
 
-      notify_lobby()
-      {:reply, {:ok, to_public(new_state)}, new_state}
+        notify_lobby()
+        {:reply, {:ok, to_public(new_state)}, new_state}
     end
   end
 
   def handle_call({:join_watcher, watcher}, _from, state) do
     already_watching = Enum.any?(state.watchers, &(&1.id == watcher.id))
 
-    if already_watching do
-      {:reply, {:ok, to_public(state)}, state}
-    else
-      new_state =
-        %{state | watchers: state.watchers ++ [watcher]}
-        |> add_sys_msg("#{watcher.username} is now watching")
-        |> bump_version()
-        |> notify_waiters()
+    cond do
+      already_watching ->
+        {:reply, {:ok, to_public(state)}, state}
 
-      {:reply, {:ok, to_public(new_state)}, new_state}
+      length(state.watchers) >= @max_watchers ->
+        {:reply, {:error, :room_full}, state}
+
+      true ->
+        new_state =
+          %{state | watchers: state.watchers ++ [watcher]}
+          |> add_sys_msg("#{watcher.username} is now watching")
+          |> bump_version()
+          |> notify_waiters()
+
+        {:reply, {:ok, to_public(new_state)}, new_state}
     end
   end
 
-  def handle_call({:set_ai_words, words}, _from, state) do
-    new_state = %{state | ai_words: words}
-    {:reply, :ok, new_state}
-  end
-
   def handle_call({:leave_watcher, watcher_id}, _from, state) do
-    watcher = Enum.find(state.watchers, &(&1.id == watcher_id))
-    watcher_name = if watcher, do: watcher.username, else: "Unknown"
+    case Enum.find(state.watchers, &(&1.id == watcher_id)) do
+      nil ->
+        {:reply, {:ok, to_public(state)}, state}
 
-    new_state =
-      %{state | watchers: Enum.reject(state.watchers, &(&1.id == watcher_id))}
-      |> add_sys_msg("#{watcher_name} stopped watching")
-      |> bump_version()
-      |> notify_waiters()
+      watcher ->
+        new_state =
+          %{state | watchers: Enum.reject(state.watchers, &(&1.id == watcher_id))}
+          |> add_sys_msg("#{watcher.username} stopped watching")
+          |> bump_version()
+          |> notify_waiters()
 
-    {:reply, {:ok, to_public(new_state)}, new_state}
+        {:reply, {:ok, to_public(new_state)}, new_state}
+    end
   end
 
   def handle_call({:update_player_score, player_id, points}, _from, state) do
@@ -332,42 +373,17 @@ defmodule Scrawly.Games.RoomServer do
     {:reply, {:ok, to_public(new_state)}, new_state}
   end
 
-  def handle_call({:start_game, params}, _from, state) do
-    Phoenix.PubSub.subscribe(Scrawly.PubSub, "game:#{params.game_id}")
-    drawer_name = get_player_name(state.players, params.drawer_id)
-    reset_players = Enum.map(state.players, fn p -> %{p | score: 0} end)
+  def handle_call({:start_game, actor_id, opts}, _from, state) do
+    total_rounds = length(state.players) * (state.round_multiplier || 1)
 
-    base_state = %{
-      state
-      | players: reset_players,
-        status: :playing,
-        last_game_id: nil,
-        game_id: params.game_id,
-        current_round: params.round,
-        total_rounds: params.total_rounds,
-        current_drawer_id: params.drawer_id,
-        current_word: nil,
-        time_left: state.round_duration,
-        round_active: false,
-        correct_guessers: [],
-        drawing_strokes: [],
-        chat_messages: [],
-        round_results: [],
-        used_words: [],
-        round_guesser_points: [],
-        round_start_scores:
-          Enum.reduce(reset_players, %{}, fn p, acc -> Map.put(acc, p.id, 0) end)
-    }
-
-    new_state =
-      base_state
-      |> add_sys_msg("Game started! #{drawer_name} is choosing a word \u2026")
-      |> GameFlow.enter_word_choice(params.word_choices || [], &schedule_word_choice_timeout/2)
-      |> bump_version()
-      |> notify_waiters()
-
-    notify_lobby()
-    {:reply, {:ok, to_public(new_state)}, new_state}
+    with :ok <- authorize(state, actor_id, :start_game),
+         {:ok, game} <- persist_game_start(state.room_id, total_rounds) do
+      new_state = begin_game(state, game.id, total_rounds, opts)
+      notify_lobby()
+      {:reply, {:ok, to_public(new_state)}, new_state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:choose_word, player_id, word}, _from, state) do
@@ -506,16 +522,11 @@ defmodule Scrawly.Games.RoomServer do
     {:reply, {:ok, to_public(new_state)}, new_state}
   end
 
-  def handle_call(:dissolve_room, _from, state) do
-    if state.game_id, do: Phoenix.PubSub.unsubscribe(Scrawly.PubSub, "game:#{state.game_id}")
-
-    new_state =
-      %{state | players: [], status: :ended}
-      |> bump_version()
-      |> notify_waiters()
-
-    notify_lobby()
-    {:stop, :normal, :ok, new_state}
+  def handle_call({:dissolve_room, actor_id}, _from, state) do
+    case authorize(state, actor_id, :dissolve) do
+      :ok -> {:stop, :normal, :ok, end_room(state)}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   @chat_max_messages 3
@@ -737,6 +748,72 @@ defmodule Scrawly.Games.RoomServer do
 
   def handle_info({:timer_stopped, _}, state), do: {:noreply, state}
   def handle_info(_msg, state), do: {:noreply, state}
+
+  defp end_room(state) do
+    if state.game_id, do: Phoenix.PubSub.unsubscribe(Scrawly.PubSub, "game:#{state.game_id}")
+
+    new_state =
+      %{state | players: [], status: :ended}
+      |> bump_version()
+      |> notify_waiters()
+
+    notify_lobby()
+    new_state
+  end
+
+  # Marks the room as playing and creates its Game row. If the Game row can't be
+  # created, the room is put back in the lobby so no half-started game remains.
+  defp persist_game_start(room_id, total_rounds) do
+    with {:ok, _room} <- Games.start_game(room_id) do
+      case Games.create_game(room_id, total_rounds) do
+        {:ok, game} ->
+          {:ok, game}
+
+        {:error, _} ->
+          Games.return_room_to_lobby(room_id)
+          {:error, :start_failed}
+      end
+    else
+      {:error, _} -> {:error, :start_failed}
+    end
+  end
+
+  defp begin_game(state, game_id, total_rounds, opts) do
+    Phoenix.PubSub.subscribe(Scrawly.PubSub, "game:#{game_id}")
+    drawer_id = hd(state.players).id
+    drawer_name = get_player_name(state.players, drawer_id)
+    reset_players = Enum.map(state.players, fn p -> %{p | score: 0} end)
+
+    %{
+      state
+      | players: reset_players,
+        status: :playing,
+        last_game_id: nil,
+        game_id: game_id,
+        current_round: 1,
+        total_rounds: total_rounds,
+        current_drawer_id: drawer_id,
+        current_word: nil,
+        time_left: state.round_duration,
+        round_active: false,
+        correct_guessers: [],
+        drawing_strokes: [],
+        chat_messages: [],
+        round_results: [],
+        used_words: [],
+        ai_words: Map.get(opts, :ai_words, state.ai_words),
+        round_guesser_points: [],
+        round_start_scores:
+          Enum.reduce(reset_players, %{}, fn p, acc -> Map.put(acc, p.id, 0) end)
+    }
+    |> add_sys_msg("Game started! #{drawer_name} is choosing a word \u2026")
+    |> GameFlow.enter_word_choice(
+      Map.get(opts, :word_choices) || [],
+      &schedule_word_choice_timeout/2
+    )
+    |> bump_version()
+    |> notify_waiters()
+  end
 
   defp auto_next_round(state) do
     GameFlow.start_word_choice(

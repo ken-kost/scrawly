@@ -6,7 +6,7 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   param :game_id, :string
 
   def init(%{game_id: game_id}, component, server) do
-    user_id = get_session(server, :user_id)
+    user_id = ScrawlyWeb.Auth.user_id(server)
 
     results =
       case Scrawly.Games.get_game_results_for_game(game_id) do
@@ -143,10 +143,7 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   # ── Host Controls ──────────────────────────────────────────────────
 
   def action(:leave_room, _params, component) do
-    put_command(component, :leave_room,
-      room_id: component.state.room_id,
-      user_id: component.state.current_user_id
-    )
+    put_command(component, :leave_room, room_id: component.state.room_id)
   end
 
   def action(:left_room, _params, component) do
@@ -161,6 +158,9 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
     put_page(component, ScrawlyWeb.Pages.HomePage)
   end
 
+  # A command was rejected server-side (see ScrawlyWeb.Auth.deny/3); nothing changed.
+  def action(:command_denied, _params, component), do: component
+
   # ── Drawing Modal ──────────────────────────────────────────────────
 
   def action(:open_drawing_modal, params, component) do
@@ -172,6 +172,8 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   end
 
   # ── Commands ───────────────────────────────────────────────────────
+
+  alias ScrawlyWeb.Pages.GamePage.Commands
 
   def command(:tick, %{room_id: room_id, countdown: countdown}, server) do
     Process.sleep(1000)
@@ -189,23 +191,11 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
     put_action(server, :do_go_home)
   end
 
-  def command(:leave_room, %{room_id: room_id, user_id: user_id}, server) do
-    Scrawly.Games.RoomServer.leave(room_id, user_id)
+  def command(:leave_room, params, server),
+    do: Commands.leave_room(params, server, :left_room)
 
-    if user_id do
-      with {:ok, user} <- Ash.get(Scrawly.Accounts.User, user_id) do
-        Scrawly.Accounts.leave_room(user)
-      end
-    end
-
-    put_action(server, :left_room)
-  end
-
-  def command(:dissolve_room, %{room_id: room_id}, server) do
-    Scrawly.Games.RoomServer.dissolve_room(room_id)
-    Scrawly.Games.dissolve_room(room_id)
-    put_action(server, :room_dissolved_confirmed)
-  end
+  def command(:dissolve_room, params, server),
+    do: Commands.dissolve_room(params, server, :room_dissolved_confirmed)
 
   def template do
     ~HOLO"""

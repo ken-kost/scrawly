@@ -4,104 +4,101 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
   All functions here run exclusively on the server — never compiled to JS by Hologram.
   They receive a `%Hologram.Server{}` struct and return one (possibly with a next_action).
+
+  The acting user always comes from the session via `ScrawlyWeb.Auth`, never from
+  params. Rejected commands reply with `:command_denied` (see `Auth.deny/3`).
   """
 
   import Hologram.Component, only: [put_action: 2, put_action: 3, put_broadcast_except: 5]
 
-  alias Scrawly.Games
+  alias Scrawly.{Accounts, Games}
   alias Scrawly.Games.{WordHints, RoomServer}
   alias Scrawly.Games.RoomServer.GameFlow
+  alias ScrawlyWeb.Auth
 
-  def poll_room_state(%{room_id: room_id, user_id: user_id}, server) do
-    poll_and_enrich(server, room_id, user_id)
+  def poll_room_state(%{room_id: room_id}, server) do
+    poll_and_enrich(server, room_id, Auth.user_id(server))
   end
 
-  def join_room(%{room_id: room_id, user_id: user_id}, server) do
-    with {:ok, user} <- Ash.get(Scrawly.Accounts.User, user_id) do
-      player = %{
-        id: user.id,
-        username: user.username,
-        score: user.score || 0,
-        avatar_id: user.avatar_id || "a-mushroom",
-        avatar_color: user.avatar_color || "3"
-      }
+  def join_room(%{room_id: room_id}, server) do
+    case Auth.current_user(server) do
+      {:ok, user} ->
+        player = %{
+          id: user.id,
+          username: user.username,
+          score: user.score || 0,
+          avatar_id: user.avatar_id || "a-mushroom",
+          avatar_color: user.avatar_color || "3"
+        }
 
-      case RoomServer.join(room_id, player) do
-        {:ok, _state} ->
-          Scrawly.Accounts.join_room(user_id, room_id)
-          Games.join_room(room_id, user_id)
+        case RoomServer.join(room_id, player) do
+          {:ok, _state} ->
+            Accounts.join_room(user, room_id)
+            Games.join_room(room_id, user.id)
 
-          poll_and_enrich(server, room_id, user_id)
+            poll_and_enrich(server, room_id, user.id)
 
-        {:error, :room_full} ->
-          put_action(server, :switch_to_watcher)
+          {:error, :room_full} ->
+            put_action(server, :switch_to_watcher)
 
-        {:error, _} ->
-          server
-      end
-    else
-      {:error, _} -> server
+          {:error, _} ->
+            server
+        end
+
+      {:error, reason} ->
+        Auth.deny(server, :join_room, reason)
     end
   end
 
-  def join_as_watcher(%{room_id: room_id, user_id: user_id, username: username}, server) do
-    watcher_name = if username == "" or username == nil, do: "Guest", else: username
-    watcher = %{id: user_id || "guest-#{:rand.uniform(100_000)}", username: watcher_name}
+  def join_as_watcher(%{room_id: room_id}, server) do
+    case Auth.actor_key(server) do
+      nil ->
+        Auth.deny(server, :join_as_watcher, :unauthenticated)
 
-    case RoomServer.join_as_watcher(room_id, watcher) do
-      {:ok, state} -> put_action(server, :room_refreshed, state)
-      {:error, _} -> server
+      key ->
+        username =
+          case Auth.current_user(server) do
+            {:ok, user} -> user.username || "Guest"
+            {:error, _} -> "Guest"
+          end
+
+        case RoomServer.join_as_watcher(room_id, %{id: key, username: username}) do
+          {:ok, state} -> put_action(server, :room_refreshed, state)
+          {:error, :room_full} -> Auth.deny(server, :join_as_watcher, :room_full)
+          {:error, _} -> server
+        end
     end
   end
 
-  def leave_watcher(%{room_id: room_id, watcher_id: watcher_id}, server) do
-    RoomServer.leave_watcher(room_id, watcher_id)
+  def leave_watcher(%{room_id: room_id}, server) do
+    if key = Auth.actor_key(server), do: RoomServer.leave_watcher(room_id, key)
     put_action(server, :go_home)
   end
 
-  def start_game(%{room_id: room_id, players: players}, server) do
-    first_drawer_id = List.first(players).id
+  def start_game(%{room_id: room_id}, server) do
+    with {:ok, uid} <- session_user_id(server),
+         {:ok, state} <- RoomServer.get_state(room_id),
+         :ok <- RoomServer.authorize(state, uid, :start_game) do
+      # Only reached by an authorized creator: this may make an AI call.
+      {word_count, ai_words, ai_status} = fetch_room_game_settings(state)
 
-    {word_count, _word_source, ai_words, round_duration, total_rounds, ai_status} =
-      fetch_room_game_settings(room_id, players)
+      {choices, remaining_ai, _used_from_ai} =
+        GameFlow.pick_word_choices(ai_words, [], word_count, 3)
 
-    {choices, remaining_ai, _used_from_ai} =
-      GameFlow.pick_word_choices(ai_words, [], word_count, 3)
+      case RoomServer.start_game(room_id, uid, %{word_choices: choices, ai_words: remaining_ai}) do
+        {:ok, _state} ->
+          if ai_status, do: RoomServer.send_chat_message(room_id, system_message(ai_status))
 
-    if remaining_ai != [] do
-      RoomServer.set_ai_words(room_id, remaining_ai)
-    end
+          case RoomServer.get_state(room_id) do
+            {:ok, state} -> put_action(server, :room_refreshed, enrich_state(state, uid))
+            _ -> server
+          end
 
-    with {:ok, _room} <- Games.start_game(room_id),
-         {:ok, game} <- Games.create_game(room_id, total_rounds) do
-      RoomServer.start_game(room_id, %{
-        game_id: game.id,
-        round: 1,
-        total_rounds: total_rounds,
-        drawer_id: first_drawer_id,
-        word_choices: choices,
-        round_duration: round_duration
-      })
-
-      if ai_status do
-        sys_msg = %{
-          id: :rand.uniform(100_000),
-          player_name: "System",
-          message: ai_status,
-          timestamp: DateTime.utc_now(),
-          type: :system
-        }
-
-        RoomServer.send_chat_message(room_id, sys_msg)
+        {:error, reason} ->
+          Auth.deny(server, :start_game, reason)
       end
-    end
-
-    case RoomServer.get_state(room_id) do
-      {:ok, state} ->
-        put_action(server, :room_refreshed, enrich_state(state, get_user_id(server)))
-
-      _ ->
-        server
+    else
+      {:error, reason} -> Auth.deny(server, :start_game, reason)
     end
   end
 
@@ -121,28 +118,50 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
   end
 
-  def end_game(%{game_id: game_id, room_id: room_id}, server) do
-    if game_id do
-      Games.stop_round_timer(game_id)
-      Games.end_current_game(game_id)
-      Games.end_game(room_id)
-      RoomServer.end_game(room_id)
+  @doc """
+  Leaves `room_id` as the session user, then puts `done_action` (`:go_home` on
+  GamePage, `:left_room` on GameScorePage). Shared by both pages.
+
+  The creator leaving dissolves the room. Leaving is idempotent: a user who is
+  no longer in the RoomServer (e.g. after `:return_to_lobby` emptied `players`)
+  still gets their DB membership for this room cleared, without a denial.
+  Visitors without an account just navigate.
+  """
+  def leave_room(%{room_id: room_id}, server, done_action \\ :go_home) do
+    with {:ok, user} <- Auth.current_user(server) do
+      case RoomServer.leave(room_id, user.id) do
+        {:ok, :dissolved} ->
+          Games.dissolve_room(room_id)
+
+        {:ok, _state} ->
+          Accounts.leave_room(user)
+
+        {:error, :not_member} ->
+          clear_membership(user, room_id)
+
+        {:error, :not_found} ->
+          if db_creator?(room_id, user.id),
+            do: Games.dissolve_room(room_id),
+            else: clear_membership(user, room_id)
+      end
     end
 
-    server
+    put_action(server, done_action)
   end
 
-  def leave_room(%{user_id: user_id, room_id: room_id, is_creator: is_creator}, server) do
-    RoomServer.leave(room_id, user_id)
-
-    if is_creator do
+  @doc """
+  Dissolves `room_id` if the session user is its creator, then puts
+  `done_action`. Anyone else is denied and nothing changes. When the RoomServer
+  is already gone, the DB room is dissolved only if its `creator_id` matches.
+  """
+  def dissolve_room(%{room_id: room_id}, server, done_action) do
+    with {:ok, uid} <- session_user_id(server),
+         :ok <- dissolve_room_server(room_id, uid) do
       Games.dissolve_room(room_id)
+      put_action(server, done_action)
     else
-      with {:ok, user} <- Ash.get(Scrawly.Accounts.User, user_id),
-           do: Scrawly.Accounts.leave_room(user)
+      {:error, reason} -> Auth.deny(server, :dissolve_room, reason)
     end
-
-    put_action(server, :go_home)
   end
 
   def send_chat_message(%{room_id: room_id, message: message}, server) do
@@ -228,29 +247,48 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
   end
 
-  def fetch_past_games(%{room_id: room_id}, server) do
-    games =
-      case Games.get_games_for_room(room_id) do
-        {:ok, games} ->
-          Enum.map(games, fn g ->
-            winner =
-              case Games.get_game_results_for_game(g.id) do
-                {:ok, results} when results != [] ->
-                  top = Enum.max_by(results, & &1.score, fn -> nil end)
-                  if top, do: %{username: top.player_username, score: top.score}, else: nil
+  defp dissolve_room_server(room_id, uid) do
+    case RoomServer.dissolve_room(room_id, uid) do
+      :ok ->
+        :ok
 
-                _ ->
-                  nil
-              end
+      {:error, :not_found} ->
+        case Games.get_room_by_id(room_id) do
+          {:ok, %{creator_id: ^uid}} -> :ok
+          {:ok, _room} -> {:error, :not_creator}
+          {:error, _} -> {:error, :not_found}
+        end
 
-            %{id: g.id, created_at: g.created_at, total_rounds: g.total_rounds, winner: winner}
-          end)
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
-        _ ->
-          []
-      end
+  defp db_creator?(room_id, uid) do
+    match?({:ok, %{creator_id: ^uid}}, Games.get_room_by_id(room_id))
+  end
 
-    put_action(server, :past_games_loaded, games: games)
+  # Only clear the account's room membership if it points at this room, so a
+  # stale "leave" can't pull the user out of a room they have since joined.
+  defp clear_membership(user, room_id) do
+    if user.current_room_id == room_id, do: Accounts.leave_room(user)
+  end
+
+  defp session_user_id(server) do
+    case Auth.user_id(server) do
+      nil -> {:error, :unauthenticated}
+      uid -> {:ok, uid}
+    end
+  end
+
+  defp system_message(text) do
+    %{
+      id: :rand.uniform(100_000),
+      player_name: "System",
+      message: text,
+      timestamp: DateTime.utc_now(),
+      type: :system
+    }
   end
 
   defp poll_and_enrich(server, room_id, user_id) do
@@ -325,46 +363,32 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     |> Map.put(:drawing_strokes, [])
   end
 
-  defp get_user_id(server) do
-    case server do
-      %{session: %{user_id: id}} -> id
-      _ -> nil
-    end
-  end
+  # Word settings for a new game, from the room state snapshot the caller already
+  # authorized against. Makes the AI call for AI rooms.
+  defp fetch_room_game_settings(rs) do
+    wc = rs.word_count || 1
+    p = rs.prompt
+    tone = rs.ai_tone || :fun
+    total_rounds = length(rs.players) * (rs.round_multiplier || 1)
+    ai_num_words = min(max(total_rounds * 3, 9), 60)
 
-  defp fetch_room_game_settings(room_id, players) do
-    case RoomServer.get_state(room_id) do
-      {:ok, rs} ->
-        wc = rs.word_count || 1
-        ws = rs.word_source || :local
-        p = rs.prompt
-        rd = rs.round_duration || 60
-        rm = rs.round_multiplier || 1
-        tone = rs.ai_tone || :fun
-        tr = length(players) * rm
-        ai_num_words = min(max(tr * 3, 9), 60)
+    {generated, status} =
+      if rs.word_source == :ai and p != nil and p != "" do
+        case Games.generate_ai_words(p, wc, %{num_words: ai_num_words, tone: to_string(tone)}) do
+          {:ok, words} when is_list(words) ->
+            unique_words = Enum.uniq(words)
+            {unique_words, "AI generated #{length(unique_words)}/#{ai_num_words} words"}
 
-        {generated, status} =
-          if ws == :ai and p != nil and p != "" do
-            case Games.generate_ai_words(p, wc, %{num_words: ai_num_words, tone: to_string(tone)}) do
-              {:ok, words} when is_list(words) ->
-                unique_words = Enum.uniq(words)
-                {unique_words, "AI generated #{length(unique_words)}/#{ai_num_words} words"}
+          {:error, reason} ->
+            {[], "AI failed: #{inspect(reason)} — falling back to local words"}
 
-              {:error, reason} ->
-                {[], "AI failed: #{inspect(reason)} — falling back to local words"}
+          _ ->
+            {[], "AI returned unexpected response — falling back to local words"}
+        end
+      else
+        {[], nil}
+      end
 
-              _ ->
-                {[], "AI returned unexpected response — falling back to local words"}
-            end
-          else
-            {[], nil}
-          end
-
-        {wc, ws, generated, rd, tr, status}
-
-      _ ->
-        {1, :local, [], 60, length(players), nil}
-    end
+    {wc, generated, status}
   end
 end

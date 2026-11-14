@@ -9,6 +9,7 @@ defmodule Scrawly.Accounts do
     resource Scrawly.Accounts.Token
 
     resource Scrawly.Accounts.User do
+      define :get_user_by_id, action: :read, get_by: [:id], not_found_error?: false
       define :register_with_password, action: :register_with_password, args: [:email, :password]
       define :register_as_guest, action: :register_as_guest
       define :upgrade_guest, action: :upgrade_guest
