@@ -39,9 +39,10 @@ defmodule Scrawly.Accounts.GuestTest do
   describe "guests cannot create rooms" do
     test "the create_room command rejects a guest" do
       guest = Accounts.register_as_guest!()
-      server = %Hologram.Server{session: %{"user_id" => guest.id}}
+      server = Scrawly.SessionTestHelpers.signed_in_server(guest)
+      assert server.stash.current_user.id == guest.id
 
-      result = ScrawlyWeb.Pages.HomePage.command(:create_room, %{}, server)
+      result = ScrawlyWeb.Pages.HomePage.command(:create_room, %{name: "TEST guest"}, server)
 
       assert result.next_action == nil
     end
@@ -58,7 +59,12 @@ defmodule Scrawly.Accounts.GuestTest do
       assert upgraded.is_guest == false
       assert to_string(upgraded.email) == email
       assert is_binary(upgraded.hashed_password)
-      assert match?({:ok, _, _}, AshAuthentication.Jwt.verify(upgraded.__metadata__[:token], User))
+
+      assert match?(
+               {:ok, _, _},
+               AshAuthentication.Jwt.verify(upgraded.__metadata__[:token], User)
+             )
+
       assert match?({:ok, _}, Accounts.sign_in_with_password(email, "password123"))
     end
 

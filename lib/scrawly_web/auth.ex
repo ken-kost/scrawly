@@ -1,48 +1,152 @@
 defmodule ScrawlyWeb.Auth do
   @moduledoc """
-  Server-side identity for Hologram commands and server inits.
+  Server-side identity for Hologram middleware, inits and commands.
 
-  Hologram 0.9.2 hands `command/3` its params straight from the request body, so
-  identity must never come from params. Every command that acts on behalf of a
-  user reads that user through this module, which only trusts the signed
-  session (`"user_id"`, written at sign-in / guest creation).
+  Identity never comes from params. A session is signed in only while its
+  `"user_token"` is a stored, unrevoked, unexpired sign-in token of its
+  `"user_id"` (`verified_session/1`), so revoking tokens (sign-out,
+  `log_out_everywhere`, a password change or a recovery reset) signs other
+  browsers out on their next request.
 
-  Server-only: call it from `init/3` and `command/3`, never from `action/3`.
+  Every page runs `ScrawlyWeb.Middleware.LoadCurrentUser` (via
+  `use ScrawlyWeb.Page`), which makes that check once per request and stashes
+  `:current_user_id` (and, in its default mode, `:current_user`). `user_id/1`
+  and `current_user/1` read the stash first and fall back to the session check
+  only where no page middleware ran, i.e. AppLayout's commands.
+
+  Server-only: call it from middleware, `init/3` and `command/3`, never from
+  `action/3`.
   """
 
   require Logger
 
   import Hologram.Component, only: [put_action: 3]
 
+  alias AshAuthentication.Jwt
+  alias AshAuthentication.TokenResource
   alias Hologram.Server
   alias Scrawly.Accounts
+  alias Scrawly.Accounts.{Token, User}
 
   @doc """
-  The session user's id, or `nil` when the visitor has no account.
+  The session user's id, or `nil` when the visitor has no (valid) account.
+
+  Reads the stash's `:current_user_id` when page middleware set it, otherwise
+  runs `verified_session/1`.
   """
-  @spec user_id(Server.t()) :: term | nil
-  def user_id(%Server{} = server), do: Server.get_session(server, :user_id)
+  @spec user_id(Server.t()) :: String.t() | nil
+  def user_id(%Server{} = server) do
+    case Server.get_stash(server, :current_user_id, :not_loaded) do
+      :not_loaded ->
+        case verified_session(server) do
+          {:ok, id, _token} -> id
+          :error -> nil
+        end
+
+      id ->
+        id
+    end
+  end
 
   @doc """
   Loads the session user. Never raises.
 
-  A missing session entry, an unknown id, and an id that isn't a valid UUID all
-  count as `{:error, :unauthenticated}`.
+  Reads the stash's `:current_user` when page middleware set it (a stashed
+  `nil` means signed out), otherwise loads the user `user_id/1` names. A
+  missing or invalid session, an unknown id and an id that isn't a valid UUID
+  all count as `{:error, :unauthenticated}`.
   """
-  @spec current_user(Server.t()) :: {:ok, %Accounts.User{}} | {:error, :unauthenticated}
+  @spec current_user(Server.t()) :: {:ok, User.t()} | {:error, :unauthenticated}
   def current_user(%Server{} = server) do
-    case user_id(server) do
-      nil ->
-        {:error, :unauthenticated}
+    case Server.get_stash(server, :current_user, :not_loaded) do
+      %User{} = user -> {:ok, user}
+      :not_loaded -> load_user(user_id(server))
+      _nil -> {:error, :unauthenticated}
+    end
+  end
 
-      id ->
-        case Accounts.get_user_by_id(id) do
-          {:ok, %Accounts.User{} = user} -> {:ok, user}
-          _nil_or_error -> {:error, :unauthenticated}
-        end
+  @doc """
+  Loads a user by id for the session. `{:error, :unauthenticated}` for nil,
+  unknown and malformed ids. Never raises.
+  """
+  @spec load_user(term) :: {:ok, User.t()} | {:error, :unauthenticated}
+  def load_user(id) when is_binary(id) do
+    case Accounts.get_user_by_id(id) do
+      {:ok, %User{} = user} -> {:ok, user}
+      _nil_or_error -> {:error, :unauthenticated}
     end
   rescue
     _ -> {:error, :unauthenticated}
+  end
+
+  def load_user(_id), do: {:error, :unauthenticated}
+
+  @doc """
+  The one session check: `{:ok, user_id, token}` when the session's
+  `"user_id"` and `"user_token"` are both binaries and the token is a stored,
+  unrevoked, unexpired `"user"` token whose subject is that user. Never raises.
+  """
+  @spec verified_session(Server.t()) :: {:ok, String.t(), Token.t()} | :error
+  def verified_session(%Server{} = server) do
+    verify_session_token(
+      Server.get_session(server, :user_id),
+      Server.get_session(server, :user_token)
+    )
+  end
+
+  @doc """
+  `verified_session/1` for a raw `user_id` / `token` pair (the Phoenix
+  controllers read their own `Plug.Conn` session).
+
+  The claims are only peeked: the session cookie is signed by Plug.Session, and
+  the stored token row is the authority. It costs one primary-key lookup.
+  Revocation rewrites a row's purpose to `"revocation"`, so a revoked, expired
+  or unknown token finds no row.
+  """
+  @spec verify_session_token(term, term) :: {:ok, String.t(), Token.t()} | :error
+  def verify_session_token(user_id, token)
+      when is_binary(user_id) and user_id != "" and is_binary(token) do
+    subject = AshAuthentication.user_to_subject(%User{id: user_id})
+
+    with {:ok, %{"sub" => ^subject, "jti" => jti}} when is_binary(jti) <- Jwt.peek(token),
+         {:ok, [%Token{subject: ^subject} = row]} <-
+           TokenResource.Actions.get_token(Token, %{"jti" => jti, "purpose" => "user"}) do
+      {:ok, user_id, row}
+    else
+      _ -> :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  def verify_session_token(_user_id, _token), do: :error
+
+  @doc """
+  Signs `user` in on this session: writes `"user_id"` and `"user_token"`,
+  records the Hologram identity (`put_user_id/2`) and updates the stash, so the
+  rest of the request sees the new user. Every identity writer that runs as a
+  Hologram command goes through here.
+  """
+  @spec put_session_user(Server.t(), User.t(), String.t()) :: Server.t()
+  def put_session_user(%Server{} = server, %User{id: id} = user, token) when is_binary(token) do
+    server
+    |> Server.put_session(:user_id, id)
+    |> Server.put_session(:user_token, token)
+    |> Server.put_user_id(id)
+    |> Server.put_stash(:current_user_id, id)
+    |> Server.put_stash(:current_user, user)
+  end
+
+  @doc """
+  Mints a fresh sign-in token for `user` (stored, like a sign-in's) and puts
+  the user on the session with it. `:error` when no token could be minted.
+  """
+  @spec put_fresh_token(Server.t(), User.t()) :: {:ok, Server.t()} | :error
+  def put_fresh_token(%Server{} = server, %User{} = user) do
+    case Jwt.token_for_user(user, %{"purpose" => "user"}) do
+      {:ok, token, _claims} -> {:ok, put_session_user(server, user, token)}
+      _error -> :error
+    end
   end
 
   @doc """

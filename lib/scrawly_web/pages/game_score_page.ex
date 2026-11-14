@@ -1,8 +1,7 @@
 defmodule ScrawlyWeb.Pages.GameScorePage do
-  use Hologram.Page
+  use ScrawlyWeb.Page
 
   route "/game-results/:game_id"
-  layout ScrawlyWeb.Layouts.AppLayout
   param :game_id, :string
 
   alias Scrawly.Games.RoomServer

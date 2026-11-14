@@ -1,5 +1,5 @@
 defmodule ScrawlyWeb.Pages.HomePage do
-  use Hologram.Page
+  use ScrawlyWeb.Page
   use Hologram.JS
 
   js_import :connectLobbyChannel, from: "./lobby_channel.mjs"
@@ -23,23 +23,15 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   route "/"
 
-  layout ScrawlyWeb.Layouts.AppLayout
-
   alias ScrawlyWeb.Components.RoomList
   alias ScrawlyWeb.Components.GameDemo
   alias ScrawlyWeb.Components.RecoveryCodePanel
 
   def init(_params, component, server) do
     {authenticated, is_guest} =
-      case get_session(server, "user_id") do
-        nil ->
-          {false, false}
-
-        user_id ->
-          case Ash.get(Scrawly.Accounts.User, user_id) do
-            {:ok, user} -> {true, user.is_guest}
-            _ -> {false, false}
-          end
+      case ScrawlyWeb.Auth.current_user(server) do
+        {:ok, user} -> {true, user.is_guest}
+        {:error, :unauthenticated} -> {false, false}
       end
 
     lobby_rooms =
@@ -741,9 +733,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # Non-guest authenticated user creates room — they become creator and auto-join.
   # Guests are rejected here (the UI also hides the button for them).
   def command(:create_room, params, server) do
-    user_id = get_session(server, :user_id)
-
-    with {:ok, %{is_guest: false}} <- Ash.get(Scrawly.Accounts.User, user_id),
+    with {:ok, %{is_guest: false, id: user_id}} <- ScrawlyWeb.Auth.current_user(server),
          attrs = Map.put(room_attrs(params), :creator_id, user_id),
          {:ok, room} <- Scrawly.Games.create_room(attrs),
          {:ok, _user} <- Scrawly.Accounts.join_room(user_id, room.id),
@@ -756,10 +746,8 @@ defmodule ScrawlyWeb.Pages.HomePage do
   end
 
   def command(:register, %{email: email, password: password}, server) do
-    user_id = get_session(server, :user_id)
-
     result =
-      case user_id && Ash.get(Scrawly.Accounts.User, user_id) do
+      case ScrawlyWeb.Auth.current_user(server) do
         {:ok, %{is_guest: true} = guest} ->
           Scrawly.Accounts.upgrade_guest(guest, %{email: email, password: password})
 
@@ -771,8 +759,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
       {:ok, user} ->
         # The page reloads only after the user has seen the code (:close_recovery_code).
         server
-        |> put_session(:user_id, user.id)
-        |> put_session(:user_token, user.__metadata__[:token])
+        |> ScrawlyWeb.Auth.put_session_user(user, user.__metadata__.token)
         |> put_action(:show_recovery_code, code: user.__metadata__[:recovery_code])
 
       {:error, _} ->
@@ -791,8 +778,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
     case Scrawly.Accounts.sign_in_with_password(email, password) do
       {:ok, user} ->
         server
-        |> put_session(:user_id, user.id)
-        |> put_session(:user_token, user.__metadata__[:token])
+        |> ScrawlyWeb.Auth.put_session_user(user, user.__metadata__.token)
         |> put_action(:reload_home)
 
       {:error, _} ->

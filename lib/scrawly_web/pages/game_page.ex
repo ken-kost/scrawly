@@ -1,5 +1,7 @@
 defmodule ScrawlyWeb.Pages.GamePage do
-  use Hologram.Page
+  # :id_only - stroke and chat commands need only the session user's id, so
+  # the middleware runs no users query per command; init loads the record once.
+  use ScrawlyWeb.Page, load: :id_only
   use Hologram.JS
 
   js_import :connectGameChannel, from: "./game_channel.mjs"
@@ -25,7 +27,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :applyRejectedStrokes, from: "./drawing_manager.mjs"
 
   route "/game/:room_id"
-  layout ScrawlyWeb.Layouts.AppLayout
   param :room_id, :string
 
   alias ScrawlyWeb.Components.{ChatBox, ScoreBoard, DrawingCanvas}
@@ -38,9 +39,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # `room_id` is the page param, so it is a prop: actions read
   # `component.props.room_id` and the template `@room_id`. It is never copied
   # into state (a same-named state key would shadow the prop).
+  #
+  # The session user is loaded once here and stashed for AppLayout's init.
   def init(%{room_id: room_id}, component, server) do
     watch_mode = get_session(server, :watch_mode) == "yes"
     user_id = ScrawlyWeb.Auth.user_id(server)
+    user = current_user_or_nil(server)
+    server = put_stash(server, :current_user, user)
 
     case RoomServer.ensure_started(room_id) do
       {:ok, _pid} ->
@@ -62,7 +67,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:creator_id, rs.creator_id)
               |> put_state(:version, rs.version)
               |> put_state(:current_user_id, user_id)
-              |> put_state(:current_user_username, "")
+              |> put_state(:current_user_username, (user && user.username) || "")
               |> put_state(:new_message, "")
               |> put_state(:rate_limited, false)
               |> put_state(:message_timestamps, [])
@@ -110,7 +115,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:socket_token, get_session(server, :user_token) || "")
               |> put_state(:channel_connected, false)
               |> put_state(:past_games, rs.past_games || [])
-              |> load_user_data(user_id)
 
             already_watching =
               user_id != nil and Enum.any?(rs.watchers || [], &(&1.id == user_id))
@@ -153,12 +157,19 @@ defmodule ScrawlyWeb.Pages.GamePage do
             {component, server}
 
           {:error, _} ->
-            room_missing(component)
+            {room_missing(component), server}
         end
 
       # :room_not_found, :room_ended (dissolved rooms are never restarted)
       {:error, _} ->
-        room_missing(component)
+        {room_missing(component), server}
+    end
+  end
+
+  defp current_user_or_nil(server) do
+    case ScrawlyWeb.Auth.current_user(server) do
+      {:ok, user} -> user
+      {:error, :unauthenticated} -> nil
     end
   end
 
@@ -174,16 +185,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   defp put_mounted(component, next, delay \\ 0) do
     put_action(component, name: :mounted, params: [next: next, delay: delay])
-  end
-
-  defp load_user_data(component, user_id) do
-    case Ash.get(Scrawly.Accounts.User, user_id) do
-      {:ok, user} ->
-        put_state(component, :current_user_username, user.username)
-
-      {:error, _} ->
-        component
-    end
   end
 
   # First action after every page load, once the DOM exists. Restores the

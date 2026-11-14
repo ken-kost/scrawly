@@ -11,59 +11,54 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
 
   @accents [:purple, :yellow, :orange]
 
+  # The page's ScrawlyWeb.Middleware.LoadCurrentUser (use ScrawlyWeb.Page) has
+  # checked the session and stashed the user; the struct a page's init returns
+  # is threaded in here, so the layout never queries the user itself when the
+  # stash holds it. Only copied fields reach the state (it is sent to the
+  # browser; the record carries hashed_password).
   def init(_props, component, server) do
-    user_id = get_session(server, :user_id)
+    ensure_current_user_loaded!(server)
+
     session_dark = get_session(server, :dark_mode) == true
     session_accent = get_session(server, :accent_color) |> accent_or_default()
 
-    case user_id do
-      nil ->
-        component
-        |> put_state(:authenticated, false)
-        |> put_state(:username, nil)
-        |> put_state(:user_id, nil)
-        |> put_state(:avatar_id, AvatarDefs.default_id())
-        |> put_state(:avatar_color, AvatarDefs.default_color())
-        |> put_state(:dark_mode, session_dark)
-        |> put_state(:accent, session_accent)
-        |> put_auth_defaults()
-        |> put_state(:online_count, ScrawlyWeb.Presence.online_count())
-        |> put_action(name: :tick_online, delay: 5000)
+    identity =
+      case ScrawlyWeb.Auth.current_user(server) do
+        {:ok, user} ->
+          %{
+            authenticated: true,
+            username: user.username,
+            user_id: user.id,
+            avatar_id: user.avatar_id || AvatarDefs.default_id(),
+            avatar_color: user.avatar_color || AvatarDefs.default_color(),
+            dark_mode: user.dark_mode || session_dark,
+            accent: if(user.accent_color in @accents, do: user.accent_color, else: session_accent)
+          }
 
-      id ->
-        case Ash.get(Scrawly.Accounts.User, id) do
-          {:ok, user} ->
-            user_accent =
-              case user.accent_color do
-                a when a in @accents -> a
-                _ -> session_accent
-              end
+        {:error, :unauthenticated} ->
+          %{
+            authenticated: false,
+            username: nil,
+            user_id: nil,
+            avatar_id: AvatarDefs.default_id(),
+            avatar_color: AvatarDefs.default_color(),
+            dark_mode: session_dark,
+            accent: session_accent
+          }
+      end
 
-            component
-            |> put_state(:authenticated, true)
-            |> put_state(:username, user.username)
-            |> put_state(:user_id, id)
-            |> put_state(:avatar_id, user.avatar_id || AvatarDefs.default_id())
-            |> put_state(:avatar_color, user.avatar_color || AvatarDefs.default_color())
-            |> put_state(:dark_mode, user.dark_mode || session_dark)
-            |> put_state(:accent, user_accent)
-            |> put_auth_defaults()
-            |> put_state(:online_count, ScrawlyWeb.Presence.online_count())
-            |> put_action(name: :tick_online, delay: 5000)
+    component
+    |> put_state(identity)
+    |> put_auth_defaults()
+    |> put_state(:online_count, ScrawlyWeb.Presence.online_count())
+    |> put_action(name: :tick_online, delay: 5000)
+  end
 
-          {:error, _} ->
-            component
-            |> put_state(:authenticated, false)
-            |> put_state(:username, nil)
-            |> put_state(:user_id, nil)
-            |> put_state(:avatar_id, AvatarDefs.default_id())
-            |> put_state(:avatar_color, AvatarDefs.default_color())
-            |> put_state(:dark_mode, session_dark)
-            |> put_state(:accent, session_accent)
-            |> put_auth_defaults()
-            |> put_state(:online_count, ScrawlyWeb.Presence.online_count())
-            |> put_action(name: :tick_online, delay: 5000)
-        end
+  defp ensure_current_user_loaded!(server) do
+    if get_stash(server, :current_user_id, :not_loaded) == :not_loaded do
+      raise ArgumentError,
+            "#{inspect(__MODULE__)} needs ScrawlyWeb.Middleware.LoadCurrentUser to run " <>
+              "before it: build the page with `use ScrawlyWeb.Page` (or attach the middleware)"
     end
   end
 
@@ -686,16 +681,14 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     put_action(server, :online_count_updated, count: ScrawlyWeb.Presence.online_count())
   end
 
+  # Layout commands run no page middleware, so Auth falls back to the full
+  # session check here: a revoked cookie can't write to the account.
   def command(:save_theme, %{dark_mode: dark_mode}, server) do
     server = put_session(server, :dark_mode, dark_mode)
 
-    user_id = get_session(server, :user_id)
-
-    if user_id do
-      case Ash.get(Scrawly.Accounts.User, user_id) do
-        {:ok, user} -> Scrawly.Accounts.update_dark_mode(user, dark_mode)
-        _ -> :ok
-      end
+    case ScrawlyWeb.Auth.current_user(server) do
+      {:ok, user} -> Scrawly.Accounts.update_dark_mode(user, dark_mode)
+      {:error, :unauthenticated} -> :ok
     end
 
     server
@@ -705,13 +698,9 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     atom = String.to_existing_atom(accent)
     server = put_session(server, :accent_color, accent)
 
-    user_id = get_session(server, :user_id)
-
-    if user_id do
-      case Ash.get(Scrawly.Accounts.User, user_id) do
-        {:ok, user} -> Scrawly.Accounts.update_accent_color(user, atom)
-        _ -> :ok
-      end
+    case ScrawlyWeb.Auth.current_user(server) do
+      {:ok, user} -> Scrawly.Accounts.update_accent_color(user, atom)
+      {:error, :unauthenticated} -> :ok
     end
 
     server
@@ -723,8 +712,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     case AshAuthentication.Strategy.action(strategy, :sign_in, %{email: email, password: password}) do
       {:ok, user} ->
         server
-        |> put_session(:user_id, user.id)
-        |> put_session(:user_token, user.__metadata__.token)
+        |> ScrawlyWeb.Auth.put_session_user(user, user.__metadata__.token)
         |> put_session(:dark_mode, user.dark_mode)
         |> put_session(:accent_color, to_string(user.accent_color || :purple))
         |> put_action(:auth_success,
@@ -748,8 +736,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
       {:ok, user} ->
         # :auth_success follows once the code has been seen (:close_recovery_code).
         server
-        |> put_session(:user_id, user.id)
-        |> put_session(:user_token, user.__metadata__.token)
+        |> ScrawlyWeb.Auth.put_session_user(user, user.__metadata__.token)
         |> put_action(:show_recovery_code,
           code: user.__metadata__.recovery_code,
           username: user.username,

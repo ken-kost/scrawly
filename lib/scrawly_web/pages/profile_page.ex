@@ -1,54 +1,50 @@
 defmodule ScrawlyWeb.Pages.ProfilePage do
-  use Hologram.Page
+  use ScrawlyWeb.Page
   use Hologram.JS
 
   js_import :copyRecoveryCode, from: "../components/recovery_code.mjs"
   js_import :downloadRecoveryCode, from: "../components/recovery_code.mjs"
 
   route "/profile"
-  layout ScrawlyWeb.Layouts.AppLayout
 
+  # Signed out (or a revoked session): 302 / page data to the home page, for
+  # the page and its commands alike.
+  middleware ScrawlyWeb.Middleware.RequireUser
+
+  alias ScrawlyWeb.Auth
   alias ScrawlyWeb.Components.{Avatar, AvatarDefs, RecoveryCodePanel}
 
+  # RequireUser guarantees the stashed user. Only copied fields reach the
+  # state (it is sent to the browser).
   def init(_params, component, server) do
-    case get_session(server, :user_id) do
-      nil ->
-        put_page(component, ScrawlyWeb.Pages.HomePage)
+    {:ok, user} = Auth.current_user(server)
 
-      user_id ->
-        case Ash.get(Scrawly.Accounts.User, user_id) do
-          {:ok, user} ->
-            component
-            |> put_state(:authenticated, true)
-            |> put_state(:user_id, user.id)
-            |> put_state(:email, to_string(user.email))
-            |> put_state(:username, user.username || "")
-            |> put_state(:avatar_id, user.avatar_id || AvatarDefs.default_id())
-            |> put_state(:avatar_color, user.avatar_color || AvatarDefs.default_color())
-            |> put_state(:current_password, "")
-            |> put_state(:new_password, "")
-            |> put_state(:new_password_confirmation, "")
-            |> put_state(:profile_message, nil)
-            |> put_state(:profile_error, nil)
-            |> put_state(:password_message, nil)
-            |> put_state(:password_error, nil)
-            |> put_state(:avatars, AvatarDefs.avatars())
-            |> put_state(:color_choices, Enum.map(1..24, &Integer.to_string/1))
-            |> put_state(:recovery_status, ScrawlyWeb.Recovery.status(user))
-            |> put_state(
-              :recovery_generated_label,
-              ScrawlyWeb.Recovery.generated_label(user.recovery_code_generated_at)
-            )
-            |> put_state(:recovery_password, "")
-            |> put_state(:recovery_error, nil)
-            |> put_state(:recovery_message, nil)
-            |> put_state(:recovery_code, nil)
-            |> put_state(:recovery_code_saved, false)
-
-          _ ->
-            put_page(component, ScrawlyWeb.Pages.HomePage)
-        end
-    end
+    component
+    |> put_state(:authenticated, true)
+    |> put_state(:user_id, user.id)
+    |> put_state(:email, to_string(user.email))
+    |> put_state(:username, user.username || "")
+    |> put_state(:avatar_id, user.avatar_id || AvatarDefs.default_id())
+    |> put_state(:avatar_color, user.avatar_color || AvatarDefs.default_color())
+    |> put_state(:current_password, "")
+    |> put_state(:new_password, "")
+    |> put_state(:new_password_confirmation, "")
+    |> put_state(:profile_message, nil)
+    |> put_state(:profile_error, nil)
+    |> put_state(:password_message, nil)
+    |> put_state(:password_error, nil)
+    |> put_state(:avatars, AvatarDefs.avatars())
+    |> put_state(:color_choices, Enum.map(1..24, &Integer.to_string/1))
+    |> put_state(:recovery_status, ScrawlyWeb.Recovery.status(user))
+    |> put_state(
+      :recovery_generated_label,
+      ScrawlyWeb.Recovery.generated_label(user.recovery_code_generated_at)
+    )
+    |> put_state(:recovery_password, "")
+    |> put_state(:recovery_error, nil)
+    |> put_state(:recovery_message, nil)
+    |> put_state(:recovery_code, nil)
+    |> put_state(:recovery_code_saved, false)
   end
 
   def template do
@@ -389,9 +385,7 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
   end
 
   def command(:save_profile, params, server) do
-    user_id = get_session(server, :user_id)
-
-    with {:ok, user} <- Ash.get(Scrawly.Accounts.User, user_id),
+    with {:ok, user} <- Auth.current_user(server),
          {:ok, updated} <-
            Scrawly.Accounts.update_profile(user, %{
              username: params.username,
@@ -413,17 +407,26 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
     end
   end
 
+  # :change_password revokes every stored token of the account, this
+  # session's included, so other browsers are signed out on their next
+  # request. A token minted after the action keeps this browser signed in.
   def command(:save_password, params, server) do
-    user_id = get_session(server, :user_id)
-
-    with {:ok, user} <- Ash.get(Scrawly.Accounts.User, user_id),
-         {:ok, _updated} <-
+    with {:ok, user} <- Auth.current_user(server),
+         {:ok, updated} <-
            Scrawly.Accounts.change_password(user, %{
              current_password: params.current_password,
              password: params.password,
              password_confirmation: params.password_confirmation
            }) do
-      put_action(server, :password_saved, message: "password changed.")
+      case Auth.put_fresh_token(server, updated) do
+        {:ok, server} ->
+          put_action(server, :password_saved,
+            message: "password changed. other devices have been signed out."
+          )
+
+        :error ->
+          put_action(server, :password_saved, message: "password changed. sign in again.")
+      end
     else
       {:error, %Ash.Error.Invalid{errors: errors}} ->
         put_action(server, :password_failed, message: format_errors(errors))

@@ -18,7 +18,8 @@ defmodule ScrawlyWeb.Pages.RecoveryCodeCommandsTest do
   end
 
   defp anon_server, do: %Server{session: %{}}
-  defp server_for(user), do: %Server{session: %{"user_id" => user.id}}
+  # A real stored token through the page middleware (ProfilePage's :user mode).
+  defp server_for(user), do: Scrawly.SessionTestHelpers.signed_in_server(user)
 
   defp session_puts(server) do
     for {key, {:put, value}} <- Server.get_session_ops(server), into: %{}, do: {key, value}
@@ -115,6 +116,9 @@ defmodule ScrawlyWeb.Pages.RecoveryCodeCommandsTest do
         assert verifies?(session["user_token"])
         refute verifies?(user.__metadata__.token)
         refute_code_in_session(result, new_code)
+        # Hologram's identity follows the session (put_user_id).
+        assert result.user_id == user.id
+        assert Scrawly.SessionTestHelpers.token_valid?(user, session["user_token"])
 
         assert {:error, _} = Accounts.sign_in_with_password(email, "old-password-1")
         assert {:ok, _} = Accounts.sign_in_with_password(email, "new-password-1")

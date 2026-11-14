@@ -1,13 +1,12 @@
 defmodule ScrawlyWeb.Pages.PastGamesPage do
-  use Hologram.Page
+  use ScrawlyWeb.Page
 
   route "/past-games"
-  layout ScrawlyWeb.Layouts.AppLayout
 
   alias Hologram.UI.Link
 
   def init(_params, component, server) do
-    user_id = get_session(server, :user_id)
+    user_id = ScrawlyWeb.Auth.user_id(server)
 
     if user_id do
       results =

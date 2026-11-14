@@ -90,9 +90,20 @@ defmodule Scrawly.RoomTestHelpers do
     end
   end
 
-  @doc "A command server struct for `user`'s session."
+  @doc """
+  A command server struct for `user`'s session, as page middleware leaves it
+  in `load: :id_only` mode (`:current_user_id` stashed, Hologram identity set;
+  `ScrawlyWeb.Auth.current_user/1` loads the record when asked). For a real
+  session token run through the middleware, see
+  `Scrawly.SessionTestHelpers.signed_in_server/2`.
+  """
   def server_for(user) do
-    %Hologram.Server{session: %{"user_id" => user.id}, session_id: "s-#{user.id}"}
+    %Hologram.Server{
+      session: %{"user_id" => user.id},
+      session_id: "s-#{user.id}",
+      stash: %{current_user_id: user.id},
+      user_id: user.id
+    }
   end
 
   @doc "A command server struct for a visitor with a session but no account."

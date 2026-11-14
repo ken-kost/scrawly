@@ -22,9 +22,12 @@ defmodule ScrawlyWeb.AuthController do
     |> redirect(to: "/")
   end
 
-  # Keeps a session that already has a valid account (registered or guest):
-  # the cookie is SameSite=Lax, so a plain link here must not switch a signed-in
-  # user to a new guest, and repeat visits must not create rows.
+  # Keeps a session that is already signed in (registered or guest): the
+  # cookie is SameSite=Lax, so a plain link here must not switch a signed-in
+  # user to a new guest, and repeat visits must not create rows. A session the
+  # pages would sign out (revoked, expired or missing token) gets a new guest.
+  # Hologram's identity (put_user_id) is synced by the page middleware on the
+  # next request.
   def guest(conn, params) do
     if session_user?(conn) do
       redirect(conn, to: guest_return_to(params))
@@ -38,14 +41,15 @@ defmodule ScrawlyWeb.AuthController do
     end
   end
 
-  # An unknown or malformed id (not a UUID) is no session user.
+  # The pages' session check (ScrawlyWeb.Auth.verify_session_token/2) plus an
+  # existing row: an unknown or malformed id is no session user.
   defp session_user?(conn) do
-    case get_session(conn, :user_id) do
-      id when is_binary(id) ->
-        match?({:ok, %Scrawly.Accounts.User{}}, Scrawly.Accounts.get_user_by_id(id))
-
-      _ ->
-        false
+    case ScrawlyWeb.Auth.verify_session_token(
+           get_session(conn, :user_id),
+           get_session(conn, :user_token)
+         ) do
+      {:ok, id, _token} -> match?({:ok, _user}, ScrawlyWeb.Auth.load_user(id))
+      :error -> false
     end
   end
 

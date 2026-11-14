@@ -70,6 +70,14 @@ defmodule Scrawly.Accounts.User do
                 strategy_name: :password, password_argument: :current_password}
 
       change {AshAuthentication.Strategy.Password.HashPasswordChange, strategy_name: :password}
+
+      # Signs every browser out: revokes all stored tokens of the account (in
+      # an after_action, inside the transaction). The log_out_everywhere
+      # add-on's global password-change hook never fires here: its
+      # `changing(:hashed_password)` condition is checked before
+      # HashPasswordChange's before_action sets the hash. Callers that keep the
+      # acting browser signed in mint a new token after the action returns.
+      change AshAuthentication.AddOn.LogOutEverywhere.OnPasswordChange
     end
 
     create :register_with_password do

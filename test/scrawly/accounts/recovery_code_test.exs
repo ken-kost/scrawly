@@ -421,12 +421,11 @@ defmodule Scrawly.Accounts.RecoveryCodeTest do
   end
 
   describe "change_password and stored tokens" do
-    # Records a known gap rather than desired behaviour: the log_out_everywhere
-    # add-on's OnPasswordChange hook is conditioned on `changing(:hashed_password)`,
-    # which Ash evaluates before the non-atomic HashPasswordChange sets the hash,
-    # so :change_password revokes nothing. Tracked on the middleware-current-user
-    # task; flip these assertions when that is fixed.
-    test "changing the password does not revoke previously stored tokens (known gap)" do
+    # The log_out_everywhere add-on's own password-change hook never fires for
+    # :change_password (its `changing(:hashed_password)` condition is checked
+    # before the non-atomic HashPasswordChange sets the hash), so the action
+    # revokes explicitly (OnPasswordChange as an action change).
+    test "changing the password revokes every previously stored token" do
       {email, user} = register!("old-password-1")
 
       {:ok, %{__metadata__: %{token: token}}} =
@@ -440,6 +439,23 @@ defmodule Scrawly.Accounts.RecoveryCodeTest do
           password: "new-password-1",
           password_confirmation: "new-password-1"
         })
+
+      refute verifies?(token)
+      refute verifies?(user.__metadata__.token)
+    end
+
+    test "a failed password change revokes nothing" do
+      {email, user} = register!("old-password-1")
+
+      {:ok, %{__metadata__: %{token: token}}} =
+        Accounts.sign_in_with_password(email, "old-password-1")
+
+      assert {:error, _} =
+               Accounts.change_password(user, %{
+                 current_password: "wrong-password-1",
+                 password: "new-password-1",
+                 password_confirmation: "new-password-1"
+               })
 
       assert verifies?(token)
       assert verifies?(user.__metadata__.token)

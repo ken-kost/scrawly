@@ -28,12 +28,8 @@ defmodule ScrawlyWeb.Pages.HomePageAuthTest do
           authorize?: false
         )
 
-      # Mock server with authenticated user in session
-      server = %Hologram.Server{
-        session: %{
-          "user_id" => user.id
-        }
-      }
+      # A real stored session token, run through the page middleware.
+      server = Scrawly.SessionTestHelpers.signed_in_server(user)
 
       component = %Hologram.Component{}
 
@@ -42,6 +38,24 @@ defmodule ScrawlyWeb.Pages.HomePageAuthTest do
 
       # Should have user data in state
       assert result.state.authenticated == true
+      assert result.state.is_guest == false
+    end
+
+    test "a session user_id without a valid token is signed out" do
+      {:ok, user} =
+        Ash.create(User, %{email: "test-#{System.unique_integer([:positive])}@example.com"},
+          authorize?: false
+        )
+
+      server =
+        ScrawlyWeb.Middleware.LoadCurrentUser.call(
+          %Hologram.Server{session: %{"user_id" => user.id}},
+          []
+        )
+
+      result = HomePage.init(%{}, %Hologram.Component{}, server)
+
+      assert result.state.authenticated == false
       assert result.state.is_guest == false
     end
 

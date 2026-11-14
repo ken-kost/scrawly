@@ -28,6 +28,8 @@ defmodule ScrawlyWeb.Recovery do
   @doc """
   Resets the password with an email + recovery code. On success the session
   is signed in with the token the reset minted (as `:sign_in` / `:login` do).
+  The reset revoked every older token, so other browsers signed in to the
+  account are signed out on their next request.
   """
   @spec reset_password(map, Server.t()) :: Server.t()
   def reset_password(params, %Server{} = server) do
@@ -42,8 +44,7 @@ defmodule ScrawlyWeb.Recovery do
     case result do
       {:ok, user} ->
         server
-        |> Server.put_session(:user_id, user.id)
-        |> Server.put_session(:user_token, user.__metadata__.token)
+        |> ScrawlyWeb.Auth.put_session_user(user, user.__metadata__.token)
         |> Server.put_session(:dark_mode, user.dark_mode)
         |> Server.put_session(:accent_color, to_string(user.accent_color || :purple))
         |> put_action(:show_recovery_code,

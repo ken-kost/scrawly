@@ -74,10 +74,12 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
     test "an unknown room renders the placeholder and goes home", %{creator: creator} do
       for room_id <- [Ecto.UUID.generate(), "not-a-room-id"],
           server <- [server_for(creator), anon_server()] do
-        component = GamePage.init(%{room_id: room_id}, %Hologram.Component{}, server)
+        {component, server} = GamePage.init(%{room_id: room_id}, %Hologram.Component{}, server)
 
         assert %Hologram.Component{state: state} = component
         assert state == %{room_missing?: true}
+        # The user (or nil) is stashed for AppLayout on this branch too.
+        assert Map.has_key?(server.stash, :current_user)
         assert component.next_action.name == :go_home
         assert component.next_page == nil
         refute RoomServer.room_exists?(room_id)
@@ -92,8 +94,10 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       kill_room!(room)
       {:ok, %{status: :ended}} = Games.dissolve_room(room.id)
 
-      component = GamePage.init(%{room_id: room.id}, %Hologram.Component{}, server_for(creator))
+      {component, server} =
+        GamePage.init(%{room_id: room.id}, %Hologram.Component{}, server_for(creator))
 
+      assert server.stash.current_user.id == creator.id
       assert component.state == %{room_missing?: true}
       assert component.next_action.name == :go_home
       assert component.next_page == nil
