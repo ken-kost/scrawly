@@ -141,6 +141,33 @@ defmodule Scrawly.Games.RoomViewTest do
     end
   end
 
+  describe "post_game_remaining_ms" do
+    test "is the ms left before a :post_game room returns to the lobby" do
+      now = System.monotonic_time(:millisecond)
+      post_game = room(status: :post_game, phase: :idle, post_game_deadline: now + 12_000)
+
+      remaining = View.public(post_game).post_game_remaining_ms
+      assert remaining > 11_000 and remaining <= 12_000
+      assert View.for_viewer(post_game, @p1).post_game_remaining_ms == remaining
+
+      overdue = %{post_game | post_game_deadline: now - 500}
+      assert View.public(overdue).post_game_remaining_ms == 0
+    end
+
+    test "is nil outside :post_game and never sends the deadline itself" do
+      deadline = System.monotonic_time(:millisecond) + 12_000
+
+      for state <- [lobby(), room([]), room(status: :post_game, post_game_deadline: nil)] do
+        assert View.public(state).post_game_remaining_ms == nil
+      end
+
+      post_game = room(status: :post_game, post_game_deadline: deadline)
+      refute Map.has_key?(View.public(post_game), :post_game_deadline)
+      refute Map.has_key?(View.delta(post_game), :post_game_deadline)
+      refute dump(View.public(post_game)) =~ Integer.to_string(deadline)
+    end
+  end
+
   describe "for_viewer/2" do
     test "gives guessers, watchers and visitors no word and no choices" do
       for state <- [room([]), choosing(), room(phase: :round_end, time_left: 0)],

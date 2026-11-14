@@ -19,6 +19,9 @@ defmodule Scrawly.Games.RoomServer do
   @max_message_length 240
   @chat_max_messages 3
   @chat_window_ms 5_000
+  # How long a finished game's score page shows before the room returns to the
+  # lobby (`:return_to_lobby`).
+  @post_game_ms 30_000
 
   defstruct [
     :room_id,
@@ -51,6 +54,9 @@ defmodule Scrawly.Games.RoomServer do
     phase: :idle,
     word_choices: [],
     choice_deadline: nil,
+    # Monotonic ms (node-local, like choice_deadline) at which a :post_game
+    # room returns to the lobby; nil in every other status.
+    post_game_deadline: nil,
     round_guesser_points: [],
     round_results: [],
     round_start_scores: %{},
@@ -75,6 +81,13 @@ defmodule Scrawly.Games.RoomServer do
         end
     end
   end
+
+  @doc """
+  How long, in ms, a room stays in `:post_game` (the score page's countdown)
+  before it returns to the lobby.
+  """
+  @spec post_game_ms() :: pos_integer
+  def post_game_ms, do: @post_game_ms
 
   def start_link(room_id), do: GenServer.start_link(__MODULE__, room_id, name: via(room_id))
 
@@ -386,7 +399,7 @@ defmodule Scrawly.Games.RoomServer do
         }
 
         notify_lobby()
-        {:ok, state}
+        {:ok, resume_post_game(state)}
 
       {:error, _} ->
         {:stop, :room_not_found}
@@ -599,14 +612,14 @@ defmodule Scrawly.Games.RoomServer do
           used_words: [],
           ai_words: [],
           chat_messages: [],
-          past_games: [game_entry | state.past_games]
+          past_games: [game_entry | state.past_games],
+          post_game_deadline: schedule_return_to_lobby()
       }
       |> add_sys_msg("Game over! Final scores are in.")
       |> bump_version()
       |> notify_waiters()
 
     notify_lobby()
-    Process.send_after(self(), :return_to_lobby, 30_000)
 
     {:reply, {:ok, to_public(new_state)}, new_state}
   end
@@ -758,7 +771,7 @@ defmodule Scrawly.Games.RoomServer do
       Games.return_room_to_lobby(state.room_id)
 
       new_state =
-        %{state | status: :lobby, players: []}
+        %{state | status: :lobby, players: [], post_game_deadline: nil}
         |> add_sys_msg("Room is back in the lobby. Start a new game!")
         |> bump_version()
         |> notify_waiters()
@@ -1027,11 +1040,28 @@ defmodule Scrawly.Games.RoomServer do
     )
   end
 
+  # GameFlow.auto_end_game/3 keeps this field (it updates with %{state | ...}),
+  # so the deadline is set before its :room_delta goes out and a page reacting
+  # to it reads the time left from get_state/1.
   defp auto_end_game(state) do
     notify_lobby()
-    Process.send_after(self(), :return_to_lobby, 30_000)
+    state = %{state | post_game_deadline: schedule_return_to_lobby()}
     GameFlow.auto_end_game(state, &bump_version/1, &notify_waiters/1)
   end
+
+  # Schedules :return_to_lobby and returns the matching monotonic deadline.
+  defp schedule_return_to_lobby do
+    Process.send_after(self(), :return_to_lobby, @post_game_ms)
+    System.monotonic_time(:millisecond) + @post_game_ms
+  end
+
+  # A room restarted while the DB says :post_game (e.g. after a crash; the
+  # child is :temporary) gets a fresh full window, otherwise nothing would
+  # ever return it to the lobby.
+  defp resume_post_game(%{status: :post_game} = state),
+    do: %{state | post_game_deadline: schedule_return_to_lobby()}
+
+  defp resume_post_game(state), do: state
 
   defp schedule_word_choice_timeout(game_id, round) do
     Process.send_after(self(), {:word_choice_timeout, game_id, round}, 15_000)

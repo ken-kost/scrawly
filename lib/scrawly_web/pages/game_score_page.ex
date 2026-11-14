@@ -5,6 +5,13 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   layout ScrawlyWeb.Layouts.AppLayout
   param :game_id, :string
 
+  alias Scrawly.Games.RoomServer
+  alias ScrawlyWeb.Pages.{GamePage, HomePage}
+
+  @tick_ms 1_000
+  @recheck_delay_ms 500
+  @max_rechecks 10
+
   def init(%{game_id: game_id}, component, server) do
     user_id = ScrawlyWeb.Auth.user_id(server)
 
@@ -64,17 +71,11 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
 
     is_host = user_id != nil and user_id == creator_id
 
-    # Only show countdown if room is actively in post_game state
-    room_active =
-      if room_id do
-        case Scrawly.Games.RoomServer.get_state(room_id) do
-          {:ok, %{status: :post_game}} -> true
-          _ -> false
-        end
-      else
-        false
-      end
+    # The countdown shows only while the room is actually in :post_game.
+    countdown_ms = post_game_remaining_ms(room_id)
+    room_active = countdown_ms != nil
 
+    # Every key in every branch: the countdown actions read them all.
     component =
       component
       |> put_state(:game_id, game_id)
@@ -85,60 +86,138 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
       |> put_state(:round_details, round_details)
       |> put_state(:game_date, game_date)
       |> put_state(:modal_round, nil)
-      |> put_state(:countdown, if(room_active, do: 30, else: 0))
+      |> put_state(:countdown_ms, countdown_ms || 0)
+      |> put_state(:countdown, seconds_left(countdown_ms || 0))
+      |> put_state(:countdown_total, div(RoomServer.post_game_ms(), 1000))
+      |> put_state(:countdown_ends_at, nil)
+      |> put_state(:lobby_ready, false)
+      |> put_state(:leaving, false)
+      |> put_state(:recheck_attempts, 0)
+      |> put_state(:tick_gen, System.unique_integer([:positive]))
       |> put_state(:is_host, is_host)
       |> put_state(:room_dissolved, not room_active)
 
-    component =
-      if room_active do
-        put_action(component, :start_countdown)
-      else
-        component
-      end
-
-    {component, server}
-  end
-
-  # ── Countdown Timer ──────────────────────────────────────────────────
-
-  def action(:start_countdown, _params, component) do
-    put_command(component, :tick,
-      room_id: component.state.room_id,
-      countdown: component.state.countdown
-    )
-  end
-
-  def action(:tick_update, params, component) do
-    new_count = params.countdown
-
-    if new_count <= 0 do
-      if component.state.room_id do
-        put_page(component, ScrawlyWeb.Pages.GamePage, room_id: component.state.room_id)
-      else
-        put_page(component, ScrawlyWeb.Pages.HomePage)
-      end
+    if room_active do
+      {put_action(component, :start_countdown), put_subscription(server, {:room, room_id})}
     else
-      component
-      |> put_state(:countdown, new_count)
-      |> put_command(:tick, room_id: component.state.room_id, countdown: new_count)
+      {component, server}
     end
   end
 
-  # ── Room Dissolution Check (non-host polling) ──────────────────────
+  # ms before the room returns to the lobby (View.public/1), or nil when it is
+  # not running or not in :post_game.
+  defp post_game_remaining_ms(nil), do: nil
 
-  def action(:go_home, _params, component) do
-    put_command(component, :navigate_home)
+  defp post_game_remaining_ms(room_id) do
+    case RoomServer.get_state(room_id) do
+      {:ok, %{status: :post_game} = rs} -> Map.get(rs, :post_game_remaining_ms) || 0
+      _ -> nil
+    end
   end
 
-  def action(:do_go_home, _params, component) do
-    put_page(component, ScrawlyWeb.Pages.HomePage)
-  end
+  # ── Countdown ────────────────────────────────────────────────────────
+  #
+  # A deadline-anchored client countdown (Hologram 0.9.2). GamePage's round
+  # countdowns follow the same rules:
+  #
+  #   * init (server) puts every countdown key in every branch, the time left
+  #     as ms from the server (never its monotonic deadline or a wall-clock
+  #     time) and a `tick_gen` unique to this page instance.
+  #   * :start_countdown (browser) anchors `countdown_ends_at` on the client's
+  #     monotonic clock and puts the first :countdown_tick. Each tick
+  #     recomputes the time left from the anchor, never decrements (background
+  #     tabs throttle timers), and re-puts itself always with `delay:` (an
+  #     action re-putting itself without one never yields on 0.12).
+  #   * Ticks carry the gen. On 0.9.2 a delayed action or a command reply is a
+  #     bare setTimeout with no page identity: one still pending when the page
+  #     is left runs once on the next page. The gen check turns one that lands
+  #     on another GameScorePage (or GamePage) instance into a no-op, and
+  #     `leaving` / `room_dissolved` end the chain.
+  #   * Navigate only from :countdown_tick, :recheck_countdown or
+  #     :countdown_done, where nothing else of the chain is pending, and set
+  #     `leaving` first. :room_delta only records what happened.
+  #   * Go to GamePage only once the server has left :post_game (`lobby_ready`
+  #     from a :room_delta, or :countdown_finished confirming it): GamePage
+  #     would send a viewer of a :post_game room back here. The confirmation
+  #     is retried at most @max_rechecks times, @recheck_delay_ms apart, then
+  #     the page shows "back to home".
 
-  def action(:room_gone, _params, component) do
+  def action(:start_countdown, _params, component) do
+    ends_at = System.monotonic_time(:millisecond) + component.state.countdown_ms
+
     component
-    |> put_state(:countdown, 0)
-    |> put_state(:room_dissolved, true)
+    |> put_state(:countdown_ends_at, ends_at)
+    |> put_tick()
   end
+
+  def action(:countdown_tick, %{gen: gen}, component) do
+    cond do
+      stale?(component, gen) ->
+        component
+
+      component.state.lobby_ready ->
+        go_to_room(component)
+
+      true ->
+        now = System.monotonic_time(:millisecond)
+        left_ms = max(0, component.state.countdown_ends_at - now)
+        component = put_state(component, :countdown, seconds_left(left_ms))
+
+        if left_ms > 0,
+          do: put_tick(component),
+          else: put_countdown_finished(component, gen)
+    end
+  end
+
+  # Reply to :countdown_finished while the room is still in :post_game.
+  def action(:recheck_countdown, %{gen: gen}, component) do
+    cond do
+      stale?(component, gen) ->
+        component
+
+      component.state.lobby_ready ->
+        go_to_room(component)
+
+      component.state.recheck_attempts >= @max_rechecks ->
+        put_state(component, :room_dissolved, true)
+
+      true ->
+        component
+        |> put_state(:recheck_attempts, component.state.recheck_attempts + 1)
+        |> put_countdown_finished(gen)
+    end
+  end
+
+  # Reply to :countdown_finished once the room has left :post_game.
+  def action(:countdown_done, %{gen: gen}, component) do
+    if stale?(component, gen), do: component, else: go_to_room(component)
+  end
+
+  # Reply to :countdown_finished when the room is gone or ended.
+  def action(:room_gone, %{gen: gen}, component) do
+    if gen == component.state.tick_gen, do: room_gone(component), else: component
+  end
+
+  # ── Room broadcasts ({:room, room_id}, subscribed while :post_game) ──
+  # Only :status is read: the rest of the payload belongs to GamePage. Never
+  # navigate from here (a tick may be pending). Every {:room} action needs a
+  # clause here; there is deliberately no catch-all.
+
+  def action(:room_delta, %{status: :ended}, component), do: room_gone(component)
+
+  def action(:room_delta, %{status: :lobby}, component),
+    do: put_state(component, :lobby_ready, true)
+
+  def action(:room_delta, _params, component), do: component
+
+  def action(:chat_appended, _params, component), do: component
+  def action(:stroke_completed, _params, component), do: component
+  def action(:drawing_cleared, _params, component), do: component
+  def action(:drawing_undone, _params, component), do: component
+
+  # ── Navigation ──────────────────────────────────────────────────────
+
+  def action(:go_home, _params, component), do: leave_for_home(component)
 
   # ── Host Controls ──────────────────────────────────────────────────
 
@@ -146,17 +225,13 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
     put_command(component, :leave_room, room_id: component.state.room_id)
   end
 
-  def action(:left_room, _params, component) do
-    put_page(component, ScrawlyWeb.Pages.HomePage)
-  end
+  def action(:left_room, _params, component), do: leave_for_home(component)
 
   def action(:end_room, _params, component) do
     put_command(component, :dissolve_room, room_id: component.state.room_id)
   end
 
-  def action(:room_dissolved_confirmed, _params, component) do
-    put_page(component, ScrawlyWeb.Pages.HomePage)
-  end
+  def action(:room_dissolved_confirmed, _params, component), do: leave_for_home(component)
 
   # A command was rejected server-side (see ScrawlyWeb.Auth.deny/3); nothing changed.
   def action(:command_denied, _params, component), do: component
@@ -174,24 +249,73 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
     put_state(component, :modal_round, nil)
   end
 
+  # ── Countdown helpers (client) ─────────────────────────────────────
+
+  defp stale?(component, gen) do
+    gen != component.state.tick_gen or component.state.leaving or
+      component.state.room_dissolved
+  end
+
+  defp seconds_left(ms), do: div(ms + 999, 1000)
+
+  defp put_tick(component) do
+    put_action(component,
+      name: :countdown_tick,
+      params: %{gen: component.state.tick_gen},
+      delay: @tick_ms
+    )
+  end
+
+  defp put_countdown_finished(component, gen) do
+    put_command(component, :countdown_finished, room_id: component.state.room_id, gen: gen)
+  end
+
+  defp room_gone(component) do
+    component
+    |> put_state(:countdown, 0)
+    |> put_state(:room_dissolved, true)
+  end
+
+  defp go_to_room(component) do
+    component
+    |> put_state(:leaving, true)
+    |> put_page(GamePage, room_id: component.state.room_id)
+  end
+
+  defp leave_for_home(component) do
+    component
+    |> put_state(:leaving, true)
+    |> put_page(HomePage)
+  end
+
   # ── Commands ───────────────────────────────────────────────────────
 
   alias ScrawlyWeb.Pages.GamePage.Commands
 
-  def command(:tick, %{room_id: room_id, countdown: countdown}, server) do
-    Process.sleep(1000)
-    new_count = countdown - 1
+  # Sent once the client countdown reaches zero. Replies :countdown_done when
+  # the room has left :post_game (normally for :lobby), :recheck_countdown
+  # (after @recheck_delay_ms) while it is still in :post_game, and :room_gone
+  # when it is ended or not running. Every reply carries the tick's gen.
+  def command(:countdown_finished, params, server) do
+    gen = Map.get(params, :gen)
 
-    # Check if room was dissolved — stop countdown but stay on page
-    if not Scrawly.Games.RoomServer.room_exists?(room_id) do
-      put_action(server, :room_gone)
-    else
-      put_action(server, :tick_update, countdown: new_count)
+    case RoomServer.get_state(Map.get(params, :room_id)) do
+      {:ok, %{status: :post_game}} ->
+        put_action(server,
+          name: :recheck_countdown,
+          params: %{gen: gen},
+          delay: @recheck_delay_ms
+        )
+
+      {:ok, %{status: :ended}} ->
+        put_action(server, :room_gone, gen: gen)
+
+      {:ok, _} ->
+        put_action(server, :countdown_done, gen: gen)
+
+      {:error, _} ->
+        put_action(server, :room_gone, gen: gen)
     end
-  end
-
-  def command(:navigate_home, _params, server) do
-    put_action(server, :do_go_home)
   end
 
   def command(:leave_room, params, server),
@@ -225,7 +349,7 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
             <div class="surface" style="padding: 16px; min-width: 240px;">
               <div class="section-label">next round in</div>
               <div class="timer-big mono" style="font-size: 36px; margin: 6px 0;">{@countdown}s</div>
-              <div class="bar accent"><div style={"width: " <> Integer.to_string(min(100, round(@countdown / 30 * 100))) <> "%;"}></div></div>
+              <div class="bar accent"><div style={"width: " <> Integer.to_string(min(100, round(@countdown / @countdown_total * 100))) <> "%;"}></div></div>
               <div class="row" style="gap: 8px; margin-top: 12px;">
                 {%if @is_host}
                   <button class="app-btn app-btn-primary app-btn-sm" style="flex: 1;" $click={:end_room}>end room</button>

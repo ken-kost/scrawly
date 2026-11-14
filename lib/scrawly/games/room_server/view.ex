@@ -24,7 +24,7 @@ defmodule Scrawly.Games.RoomServer.View do
 
   # Read by GamePage init and room_refreshed, HomePage (name, code, players,
   # max_players), fetch_room_game_settings (the room settings) and
-  # GameScorePage (status).
+  # GameScorePage (status, post_game_remaining_ms).
   @public_keys [
     :room_id,
     :name,
@@ -79,12 +79,17 @@ defmodule Scrawly.Games.RoomServer.View do
   @doc """
   The room as anyone may see it: no word, no word choices, no choice deadline.
   Used for `get_state/1` and the RoomServer call replies.
+
+  Also carries `post_game_remaining_ms`: the ms left before a `:post_game`
+  room returns to the lobby (never negative), `nil` in any other status. The
+  deadline itself is node-local monotonic time and is never sent.
   """
   @spec public(struct) :: map
   def public(state) do
     state
     |> Map.take(@public_keys)
     |> Map.merge(derived_fields(state))
+    |> Map.put(:post_game_remaining_ms, post_game_remaining_ms(state))
   end
 
   @doc "The `:room_delta` payload: `public/1`'s live fields, also word-free."
@@ -147,4 +152,10 @@ defmodule Scrawly.Games.RoomServer.View do
   end
 
   defp choice_time_left(_state), do: 0
+
+  defp post_game_remaining_ms(%{status: :post_game, post_game_deadline: deadline})
+       when is_integer(deadline),
+       do: max(0, deadline - System.monotonic_time(:millisecond))
+
+  defp post_game_remaining_ms(_state), do: nil
 end
