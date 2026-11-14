@@ -2,7 +2,8 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
   @moduledoc """
   `stroke_complete` replies so the sender can confirm or roll back the stroke
   it committed optimistically; a rejected stroke is not stored and peers get
-  `stroke_abandon` for it.
+  `stroke_abandon` for it. Colours and widths are validated and every event is
+  rate-limited per socket (the board is open to visitors without an account).
 
   DemoBoardServer is a global singleton, hence `async: false`.
   """
@@ -34,6 +35,52 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
   end
 
   defp path_of_length(n), do: String.pad_trailing("M 1 1", n, " L 2 2")
+
+  defp chunk(id, overrides \\ %{}) do
+    Map.merge(
+      %{
+        "stroke_id" => id,
+        "seq" => 1,
+        "delta" => "M 1 1 L 2 2",
+        "color" => "#000000",
+        "width" => 2
+      },
+      overrides
+    )
+  end
+
+  # Events are handled in order: once this stroke is acked, everything pushed
+  # before it has been handled too.
+  defp sync!(socket) do
+    id = "d-sync-#{System.unique_integer([:positive])}"
+    ref = push(socket, "stroke_complete", stroke(id))
+    assert_reply ref, :ok
+    assert_push "stroke", %{stroke_id: ^id}
+    id
+  end
+
+  # Moves this socket's recorded events for `event` `ms` into the past.
+  defp age_rate_events(socket, event, ms) do
+    :sys.replace_state(socket.channel_pid, fn state ->
+      events =
+        Map.update!(state.assigns.rate_events, event, fn ts -> Enum.map(ts, &(&1 - ms)) end)
+
+      Phoenix.Socket.assign(state, :rate_events, events)
+    end)
+  end
+
+  @bad_colors ["red", "#fff", "#GGGGGG", "#0000000", "000000", "#00000 ", 123, nil, %{}]
+  @bad_widths ["4", 4.0, 0, 41, -2, nil, [4]]
+  @palette [
+    "#000000",
+    "#EF4444",
+    "#F97316",
+    "#EAB308",
+    "#22C55E",
+    "#3B82F6",
+    "#A855F7",
+    "#EC4899"
+  ]
 
   test "a valid stroke is acked, echoed to its sender and stored", %{socket: socket} do
     ref = push(socket, "stroke_complete", stroke("d-ok-1"))
@@ -122,7 +169,7 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
   end
 
   test "an accepted stroke is no longer open", %{socket: socket} do
-    push(socket, "stroke_chunk", %{"stroke_id" => "d-open-2", "delta" => "M 1 1"})
+    push(socket, "stroke_chunk", chunk("d-open-2", %{"delta" => "M 1 1"}))
     assert_broadcast "stroke_chunk", %{"stroke_id" => "d-open-2"}
 
     ref = push(socket, "stroke_complete", stroke("d-open-2"))
@@ -149,5 +196,154 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
 
     {:ok, _reply, _other} = join_board()
     assert_push "strokes", %{strokes: [%{stroke_id: "d-snap-1", path: "M 10 20 L 30 40"}]}
+  end
+
+  describe "colour and width" do
+    test "a stroke with a non-hex colour or a bad width is rejected, abandoned and not stored",
+         %{socket: socket} do
+      payloads =
+        Enum.map(@bad_colors, &Map.put(stroke("d-c"), "color", &1)) ++
+          Enum.map(@bad_widths, &Map.put(stroke("d-w"), "width", &1)) ++
+          [Map.delete(stroke("d-nc"), "color"), Map.delete(stroke("d-nw"), "width")]
+
+      for {payload, i} <- Enum.with_index(payloads) do
+        id = "d-style-#{i}"
+        ref = push(socket, "stroke_complete", Map.put(payload, "stroke_id", id))
+
+        assert_reply ref, :error, %{reason: "invalid_stroke"}
+        assert_broadcast "stroke_abandon", %{"stroke_id" => ^id}
+      end
+
+      refute_push "stroke", _
+      assert DemoBoardServer.get_strokes() == []
+    end
+
+    test "chunks with a non-hex colour or a bad width are not relayed or opened",
+         %{socket: socket} do
+      payloads =
+        Enum.map(@bad_colors, &chunk("d-bad-chunk", %{"color" => &1})) ++
+          Enum.map(@bad_widths, &chunk("d-bad-chunk", %{"width" => &1})) ++
+          [Map.delete(chunk("d-bad-chunk"), "color"), Map.delete(chunk("d-bad-chunk"), "width")]
+
+      for payload <- payloads, do: push(socket, "stroke_chunk", payload)
+
+      sync!(socket)
+      refute_broadcast "stroke_chunk", _
+      assert :sys.get_state(socket.channel_pid).assigns.open_stroke_ids == MapSet.new()
+    end
+
+    test "palette colours, widths 2/4/8 and the eraser still work", %{socket: socket} do
+      styles =
+        for(color <- @palette, width <- [2, 4, 8], do: {color, width}) ++ [{"#ffffff", 18}]
+
+      for {{color, width}, i} <- Enum.with_index(styles) do
+        # Stay under the per-second stroke limit.
+        if rem(i, 20) == 19, do: age_rate_events(socket, :stroke_complete, 1_000)
+
+        id = "d-pal-#{i}"
+        push(socket, "stroke_chunk", chunk(id, %{"color" => color, "width" => width}))
+
+        assert_broadcast "stroke_chunk", %{
+          "stroke_id" => ^id,
+          "color" => ^color,
+          "width" => ^width
+        }
+
+        ref =
+          push(socket, "stroke_complete", %{stroke(id) | "color" => color, "width" => width})
+
+        assert_reply ref, :ok
+        assert_push "stroke", %{stroke_id: ^id, color: ^color, width: ^width}
+      end
+
+      assert length(DemoBoardServer.get_strokes()) == length(styles)
+    end
+
+    test "a relayed chunk carries only the normalized keys", %{socket: socket} do
+      push(socket, "stroke_chunk", chunk("d-norm", %{"seq" => "x", "extra" => "<script>"}))
+
+      assert_broadcast "stroke_chunk", relayed
+
+      assert relayed == %{
+               "stroke_id" => "d-norm",
+               "seq" => 0,
+               "delta" => "M 1 1 L 2 2",
+               "color" => "#000000",
+               "width" => 2
+             }
+    end
+
+    test "a non-map payload is ignored", %{socket: socket} do
+      push(socket, "stroke_complete", ["not", "a", "map"])
+      push(socket, "clear", "nope")
+      sync!(socket)
+
+      refute_push "cleared", _
+      assert [_] = DemoBoardServer.get_strokes()
+    end
+  end
+
+  describe "rate limits" do
+    test "a second clear within 5 s is ignored", %{socket: socket} do
+      sync!(socket)
+      push(socket, "clear", %{})
+      assert_push "cleared", %{}
+
+      id = sync!(socket)
+      push(socket, "clear", %{})
+      sync!(socket)
+
+      refute_push "cleared", _
+      assert [%{stroke_id: ^id}, _] = DemoBoardServer.get_strokes()
+
+      age_rate_events(socket, :clear, 5_000)
+      push(socket, "clear", %{})
+      assert_push "cleared", %{}
+    end
+
+    test "the 21st stroke within a second is rejected as rate_limited and abandoned",
+         %{socket: socket} do
+      for i <- 1..20 do
+        ref = push(socket, "stroke_complete", stroke("d-rate-#{i}"))
+        assert_reply ref, :ok
+      end
+
+      ref = push(socket, "stroke_complete", stroke("d-rate-21"))
+      assert_reply ref, :error, %{reason: "rate_limited"}
+      assert_broadcast "stroke_abandon", %{"stroke_id" => "d-rate-21"}
+
+      assert length(DemoBoardServer.get_strokes()) == 20
+      refute Enum.any?(DemoBoardServer.get_strokes(), &(&1.stroke_id == "d-rate-21"))
+
+      # Over-limit strokes don't count, so the window frees up on time.
+      age_rate_events(socket, :stroke_complete, 1_000)
+      ref = push(socket, "stroke_complete", stroke("d-rate-22"))
+      assert_reply ref, :ok
+    end
+
+    test "chunks over 40 per second are dropped", %{socket: socket} do
+      for i <- 1..41, do: push(socket, "stroke_chunk", chunk("d-chunks", %{"seq" => i}))
+
+      for i <- 1..40, do: assert_broadcast("stroke_chunk", %{"seq" => ^i})
+      sync!(socket)
+      refute_broadcast "stroke_chunk", _
+
+      age_rate_events(socket, :stroke_chunk, 1_000)
+      push(socket, "stroke_chunk", chunk("d-chunks", %{"seq" => 42}))
+      assert_broadcast "stroke_chunk", %{"seq" => 42}
+    end
+
+    test "limits are per socket", %{socket: socket} do
+      push(socket, "clear", %{})
+      assert_push "cleared", %{}
+
+      {:ok, _reply, other} = join_board()
+      assert_push "strokes", %{strokes: []}
+
+      push(other, "clear", %{})
+      # Both sockets receive the second clear.
+      assert_push "cleared", %{}
+      assert_push "cleared", %{}
+    end
   end
 end

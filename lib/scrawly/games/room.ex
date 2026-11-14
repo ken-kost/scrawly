@@ -182,6 +182,7 @@ defmodule Scrawly.Games.Room do
 
       argument :prompt, :string do
         allow_nil? false
+        constraints max_length: 200
 
         description "The theme or category for word generation, e.g. 'ocean animals' or 'things in a kitchen'"
       end
@@ -240,6 +241,7 @@ defmodule Scrawly.Games.Room do
     attribute :name, :string do
       allow_nil? false
       public? true
+      constraints max_length: 40
     end
 
     attribute :code, :string do
@@ -287,8 +289,11 @@ defmodule Scrawly.Games.Room do
       constraints one_of: [:local, :ai]
     end
 
+    # Interpolated into the AI word prompt: the cap bounds cost, it does not
+    # defend against prompt injection.
     attribute :prompt, :string do
       public? true
+      constraints max_length: 200
     end
 
     attribute :round_duration, :integer do

@@ -84,6 +84,37 @@ defmodule Scrawly.Games.RoomTest do
     end
   end
 
+  describe "field limits" do
+    test "names up to 40 characters are accepted, longer ones rejected", %{creator: creator} do
+      assert {:ok, _} =
+               Scrawly.Games.create_room(%{
+                 name: String.duplicate("n", 40),
+                 creator_id: creator.id
+               })
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Scrawly.Games.create_room(%{
+                 name: String.duplicate("n", 41),
+                 creator_id: creator.id
+               })
+    end
+
+    test "prompts up to 200 characters are accepted, longer ones rejected", %{creator: creator} do
+      attrs = %{name: "TEST prompt", creator_id: creator.id, word_source: :ai}
+
+      assert {:ok, _} =
+               Scrawly.Games.create_room(Map.put(attrs, :prompt, String.duplicate("p", 200)))
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Scrawly.Games.create_room(Map.put(attrs, :prompt, String.duplicate("p", 201)))
+    end
+
+    test "generate_ai_words rejects a prompt over 200 characters before calling the model" do
+      assert {:error, %Ash.Error.Invalid{}} =
+               Scrawly.Games.generate_ai_words(String.duplicate("p", 201), 1)
+    end
+  end
+
   describe "Room management functionality" do
     test "create_room action generates unique code and sets defaults", %{creator: creator} do
       assert {:ok, room} = Ash.create(Room, %{name: "Test Room", creator_id: creator.id})

@@ -6,6 +6,8 @@ defmodule Scrawly.Accounts.User do
     authorizers: [Ash.Policy.Authorizer],
     extensions: [AshAuthentication]
 
+  alias Scrawly.Accounts.User.Validations.NotReservedUsername
+
   authentication do
     add_ons do
       log_out_everywhere do
@@ -36,10 +38,18 @@ defmodule Scrawly.Accounts.User do
   end
 
   actions do
-    defaults [:read, update: [:username]]
+    defaults [:read]
+
+    # Every action that accepts :username checks NotReservedUsername.
+    update :update do
+      primary? true
+      accept [:username]
+      validate NotReservedUsername
+    end
 
     update :update_profile do
       accept [:username, :avatar_id, :avatar_color]
+      validate NotReservedUsername
     end
 
     update :change_password do
@@ -233,6 +243,7 @@ defmodule Scrawly.Accounts.User do
     create :create do
       accept [:email, :username]
       primary? true
+      validate NotReservedUsername
     end
 
     read :get_by_subject do
@@ -256,6 +267,7 @@ defmodule Scrawly.Accounts.User do
     # Player-specific actions
     update :join_room do
       accept [:current_room_id, :username]
+      validate NotReservedUsername
       change set_attribute(:player_state, :connected)
     end
 
@@ -396,11 +408,24 @@ defmodule Scrawly.Accounts.User do
     identity :unique_email, [:email]
   end
 
+  # The email's local part, trimmed and cut to 20 characters. One that is
+  # shorter than 2 characters (`a@x.com`) or reserved (`system@...`) gets a
+  # `_NNNN` suffix instead, so registration never fails on the username.
   defp generate_username(%{email: email}) do
-    email
-    |> to_string()
-    |> String.split("@")
-    |> List.first()
-    |> String.slice(0, 20)
+    base =
+      email
+      |> to_string()
+      |> String.split("@")
+      |> List.first()
+      |> String.trim()
+      |> String.slice(0, 20)
+      |> String.trim()
+
+    if String.length(base) < 2 or NotReservedUsername.reserved?(base) do
+      suffix = Integer.to_string(1000 + :rand.uniform(9000) - 1)
+      String.slice(base, 0, 15) <> "_" <> suffix
+    else
+      base
+    end
   end
 end

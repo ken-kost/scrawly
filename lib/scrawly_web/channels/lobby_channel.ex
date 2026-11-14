@@ -113,15 +113,16 @@ defmodule ScrawlyWeb.LobbyChannel do
 
   defp resolve_username(_user_id, payload), do: guest_username(payload)
 
-  defp guest_username(%{"guest_nickname" => nick})
-       when is_binary(nick) and byte_size(nick) > 0 do
-    nick
-    |> String.trim()
-    |> String.slice(0, 32)
-    |> case do
-      "" -> generate_guest_nickname()
-      n -> n
-    end
+  # Stopgap until lobby-realtime assigns names on the server: the client's
+  # nickname is used only when it has the shape the client generates
+  # (`guest_<digits>`), so nobody can chat as "System" or as a registered
+  # player. It can still repeat another guest's `guest_N`.
+  @guest_nickname ~r/\Aguest_\d{1,10}\z/
+
+  defp guest_username(%{"guest_nickname" => nick}) when is_binary(nick) do
+    nick = String.trim(nick)
+
+    if Regex.match?(@guest_nickname, nick), do: nick, else: generate_guest_nickname()
   end
 
   defp guest_username(_), do: generate_guest_nickname()

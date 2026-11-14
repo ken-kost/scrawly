@@ -67,7 +67,11 @@ defmodule ScrawlyWeb.UserSocket do
   #
   #     Elixir.ScrawlyWeb.Endpoint.broadcast("user_socket:#{user.id}", "disconnect", %{})
   #
-  # Returning `nil` makes this socket anonymous.
+  # Returning `nil` makes this socket anonymous: account-less sockets must not
+  # share one "user_socket:" id (a disconnect broadcast to it would hit them all).
   @impl true
-  def id(socket), do: "user_socket:#{socket.assigns.user_id}"
+  def id(%{assigns: %{user_id: user_id}}) when is_binary(user_id) and user_id != "",
+    do: "user_socket:#{user_id}"
+
+  def id(_socket), do: nil
 end

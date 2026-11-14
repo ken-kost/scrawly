@@ -198,7 +198,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
             <div class="app-modal-body">
               <div>
                 <label class="field-label">name</label>
-                <input class="app-input" placeholder="e.g. late night doodles" name="room_name" value={@new_room_name} $input={:update_room_name} />
+                <input class="app-input" placeholder="e.g. late night doodles" name="room_name" maxlength="40" value={@new_room_name} $input={:update_room_name} />
               </div>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
                 <div>
@@ -224,7 +224,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
               {%if @new_word_source == "ai"}
                 <div>
                   <label class="field-label">theme prompt</label>
-                  <input class="app-input" placeholder="ocean animals, things in a kitchen..." value={@new_prompt} $input={:update_prompt} />
+                  <input class="app-input" placeholder="ocean animals, things in a kitchen..." maxlength="200" value={@new_prompt} $input={:update_prompt} />
                 </div>
                 <div>
                   <label class="field-label">tone</label>
@@ -701,24 +701,38 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   # ── Commands ─────────────────────────────────────────────────────────
 
+  @ai_tones %{"fun" => :fun, "creative" => :creative, "weird" => :weird}
+
+  # Total over any params map: forged values (`word_count: "abc"`, an unknown
+  # tone) become invalid inputs that the Room's constraints reject, never an
+  # exception. Missing (nil) values are left out, so the Room's defaults apply.
   defp room_attrs(params) do
-    word_source = if params.word_source == "ai", do: :ai, else: :local
-    word_count = String.to_integer(params.word_count || "1")
-    round_duration = String.to_integer(params.round_duration || "60")
-    round_multiplier = String.to_integer(params.round_multiplier || "1")
-    ai_tone = String.to_existing_atom(params.ai_tone || "fun")
+    word_source = if Map.get(params, :word_source) == "ai", do: :ai, else: :local
 
     %{
-      name: params.name,
-      max_players: params.max_players,
-      word_count: word_count,
+      name: Map.get(params, :name),
+      max_players: parse_int(Map.get(params, :max_players)),
+      word_count: parse_int(Map.get(params, :word_count)),
       word_source: word_source,
-      prompt: if(word_source == :ai, do: params.prompt, else: nil),
-      round_duration: round_duration,
-      round_multiplier: round_multiplier,
-      ai_tone: if(word_source == :ai, do: ai_tone, else: :fun)
+      prompt: if(word_source == :ai, do: Map.get(params, :prompt)),
+      round_duration: parse_int(Map.get(params, :round_duration)),
+      round_multiplier: parse_int(Map.get(params, :round_multiplier)),
+      ai_tone: if(word_source == :ai, do: ai_tone(Map.get(params, :ai_tone)))
     }
+    |> Map.reject(fn {_key, value} -> is_nil(value) end)
   end
+
+  # An unparsable value goes through as is, so the attribute's cast rejects it.
+  defp parse_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, ""} -> int
+      _ -> value
+    end
+  end
+
+  defp parse_int(value), do: value
+
+  defp ai_tone(tone), do: Map.get(@ai_tones, tone, tone)
 
   # Non-guest authenticated user creates room — they become creator and auto-join.
   # Guests are rejected here (the UI also hides the button for them).
