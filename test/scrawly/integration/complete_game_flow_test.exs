@@ -80,7 +80,7 @@ defmodule Scrawly.Integration.CompleteGameFlowTest do
             end
 
           # Start the round with the designated drawer
-          {:ok, g} = Games.start_round(g.id, drawer_id)
+          {:ok, g} = Games.start_round(g.id, drawer_id, %{used_words: used})
 
           # Verify round state
           assert g.current_drawer_id == drawer_id
@@ -100,7 +100,7 @@ defmodule Scrawly.Integration.CompleteGameFlowTest do
       {:ok, ended_game} = Games.end_current_game(completed.id)
       assert ended_game.status == :completed
 
-      # 6. Verify all rounds used different words (with high probability)
+      # 6. Verify all rounds used different words (used words are excluded each round)
       unique_words = Enum.uniq(final_used_words)
       assert length(unique_words) == total_rounds
     end
