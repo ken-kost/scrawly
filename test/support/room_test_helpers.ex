@@ -7,7 +7,7 @@ defmodule Scrawly.RoomTestHelpers do
   before the sandbox owner goes away.
   """
 
-  import ExUnit.Assertions, only: [assert: 1]
+  import ExUnit.Assertions, only: [assert: 1, flunk: 1]
   import ExUnit.Callbacks, only: [on_exit: 1]
 
   require Ash.Query
@@ -62,6 +62,31 @@ defmodule Scrawly.RoomTestHelpers do
     case Registry.lookup(Scrawly.RoomRegistry, room_id) do
       [{pid, _}] -> DynamicSupervisor.terminate_child(Scrawly.RoomSupervisor, pid)
       [] -> :ok
+    end
+  end
+
+  @doc """
+  Stops the room's RoomServer and waits for its Registry entry to go (removed
+  asynchronously), so the next `RoomServer.ensure_started/1` really starts
+  (or fails to start) a new process.
+  """
+  def kill_room!(room) do
+    stop_room(room.id)
+    assert_room_stopped(room.id)
+    assert_room_unregistered(room.id)
+  end
+
+  @doc "Waits up to ~500 ms for `RoomServer.room_exists?/1` to turn false."
+  def assert_room_unregistered(room_id, tries \\ 50)
+
+  def assert_room_unregistered(room_id, 0), do: flunk("#{room_id} is still registered")
+
+  def assert_room_unregistered(room_id, tries) do
+    if RoomServer.room_exists?(room_id) do
+      Process.sleep(10)
+      assert_room_unregistered(room_id, tries - 1)
+    else
+      :ok
     end
   end
 

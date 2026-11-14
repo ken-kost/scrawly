@@ -49,6 +49,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
             component =
               component
+              |> put_state(:room_missing?, false)
               |> put_state(:watching?, user_id == "Watcher")
               |> put_state(:room_id, room_id)
               |> put_state(:room_code, rs.code)
@@ -117,10 +118,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
             # A component has a single next_action, so the follow-up rides
             # along as :mounted's params (see action(:mounted, ...)).
+            # put_page/3 is ignored from init (only next_action is read on
+            # mount), so the score page is reached through an action.
             component =
               cond do
                 rs.status == :post_game and rs.last_game_id != nil ->
-                  put_page(component, ScrawlyWeb.Pages.GameScorePage, game_id: rs.last_game_id)
+                  put_action(component, :go_score, game_id: rs.last_game_id)
 
                 watch_mode or already_watching ->
                   component
@@ -149,12 +152,23 @@ defmodule ScrawlyWeb.Pages.GamePage do
             {component, server}
 
           {:error, _} ->
-            put_page(component, ScrawlyWeb.Pages.HomePage)
+            room_missing(component)
         end
 
+      # :room_not_found, :room_ended (dissolved rooms are never restarted)
       {:error, _} ->
-        put_page(component, ScrawlyWeb.Pages.HomePage)
+        room_missing(component)
     end
+  end
+
+  # put_page/3 from init never navigates: the server renders the template
+  # anyway and the client only runs next_action on mount. So an unknown or
+  # dissolved room renders a placeholder that reads only :room_missing?, and
+  # its first action goes home.
+  defp room_missing(component) do
+    component
+    |> put_state(:room_missing?, true)
+    |> put_action(:go_home)
   end
 
   defp put_mounted(component, next, delay \\ 0) do
@@ -324,6 +338,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   def action(:go_home, _params, component) do
     leave_page(component, ScrawlyWeb.Pages.HomePage)
+  end
+
+  # Queued by init for a room in its post-game window.
+  def action(:go_score, %{game_id: game_id}, component) do
+    leave_page(component, ScrawlyWeb.Pages.GameScorePage, game_id: game_id)
   end
 
   # A command was rejected server-side (see ScrawlyWeb.Auth.deny/3): nothing
@@ -744,8 +763,17 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
+  # An unknown or dissolved room only sets :room_missing?, so the placeholder
+  # must read no other state ({%if} compiles to `if`: the else branch is never
+  # evaluated). The marker stays out of it: the placeholder is no game page
+  # for drawing_manager.mjs / game_channel.mjs.
   def template do
     ~HOLO"""
+    {%if @room_missing?}
+    <div class="page page-mid">
+      <div class="mono" style="font-size: 12px; color: var(--muted);">room not found · returning to the lobby…</div>
+    </div>
+    {%else}
     <span id="game-page-marker" hidden={true}></span>
     {%if !@game_started}
     <div class="page page-mid">
@@ -1029,6 +1057,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
         </div>
       </div>
     </div>
+    {/if}
     {/if}
     """
   end

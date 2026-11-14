@@ -27,25 +27,6 @@ defmodule Scrawly.Games.RoomServerPostGameTest do
     pid
   end
 
-  # Stops the RoomServer and waits for its Registry entry to go (removed
-  # asynchronously), so ensure_started/1 really starts a new process.
-  defp kill_room!(room) do
-    stop_room(room.id)
-    assert_room_stopped(room.id)
-    wait_unregistered(room.id, 50)
-  end
-
-  defp wait_unregistered(room_id, 0), do: flunk("#{room_id} is still registered")
-
-  defp wait_unregistered(room_id, tries) do
-    if Registry.lookup(Scrawly.RoomRegistry, room_id) == [] do
-      :ok
-    else
-      Process.sleep(10)
-      wait_unregistered(room_id, tries - 1)
-    end
-  end
-
   defp start_game!(room, creator) do
     {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: ["zzyzx"]})
     on_exit(fn -> Games.stop_round_timer(started.game_id) end)

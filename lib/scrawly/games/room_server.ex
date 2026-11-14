@@ -67,6 +67,11 @@ defmodule Scrawly.Games.RoomServer do
     past_games: []
   ]
 
+  @doc """
+  The room's process, started from the DB if it isn't running.
+  `{:error, :room_not_found}` for an unknown id, `{:error, :room_ended}` for a
+  dissolved room.
+  """
   def ensure_started(room_id) do
     case Registry.lookup(@registry, room_id) do
       [{pid, _}] ->
@@ -370,9 +375,15 @@ defmodule Scrawly.Games.RoomServer do
     end)
   end
 
+  # A dissolved room (`:ended` in the DB) is never started again: visiting its
+  # URL must not resurrect a process nothing would stop. `{:stop, _}` (not
+  # `:ignore`) so ensure_started/1 returns `{:error, :room_ended}`.
   @impl true
   def init(room_id) do
     case Games.get_room_by_id(room_id) do
+      {:ok, %{status: :ended}} ->
+        {:stop, :room_ended}
+
       {:ok, room} ->
         creator_name =
           case Ash.get(Scrawly.Accounts.User, room.creator_id) do

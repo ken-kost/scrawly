@@ -4,6 +4,9 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
 
   import Scrawly.RoomTestHelpers
 
+  alias Hologram.Template.Renderer
+  alias Scrawly.Games
+  alias Scrawly.Games.RoomServer
   alias ScrawlyWeb.Pages.GamePage
 
   @moduletag :capture_log
@@ -22,6 +25,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
 
       assert %Hologram.Component{state: state} = component
       assert %Hologram.Server{} = server
+      assert state.room_missing? == false
       assert state.room_id == room.id
       assert state.room_code == room.code
       assert state.room_name == "Room #{room.name}"
@@ -42,6 +46,12 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert state.watching? == false
       assert component.next_action.name == :mounted
       assert component.next_action.params == %{next: :poll_room, delay: 500}
+      assert component.next_page == nil
+
+      html = render_template(state)
+      assert html =~ "game-page-marker"
+      assert html =~ "Room #{room.name}"
+      refute html =~ "room not found"
     end
 
     test "a visitor without an account watches and is never the drawer", %{room: room} do
@@ -55,13 +65,62 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert component.next_action.name == :mounted
       assert component.next_action.params == %{next: :do_join_as_watcher, delay: 0}
     end
+  end
 
-    test "redirects to home page when room not found" do
-      params = %{room_id: Ecto.UUID.generate()}
-      server = %Hologram.Server{session: %{}}
-      component = GamePage.init(params, %Hologram.Component{}, server)
+  # put_page/3 does nothing from init, so these branches must render on their
+  # own and leave through the action queued for the mount.
+  describe "init/3 for a room that can't be shown" do
+    test "an unknown room renders the placeholder and goes home", %{creator: creator} do
+      for room_id <- [Ecto.UUID.generate(), "not-a-room-id"],
+          server <- [server_for(creator), anon_server()] do
+        component = GamePage.init(%{room_id: room_id}, %Hologram.Component{}, server)
 
-      assert match?(%Hologram.Component{}, component)
+        assert %Hologram.Component{state: state} = component
+        assert state == %{room_missing?: true}
+        assert component.next_action.name == :go_home
+        assert component.next_page == nil
+        refute RoomServer.room_exists?(room_id)
+
+        html = render_template(state)
+        assert html =~ "room not found"
+        refute html =~ "game-page-marker"
+      end
+    end
+
+    test "a dissolved room is not started again", %{room: room, creator: creator} do
+      kill_room!(room)
+      {:ok, %{status: :ended}} = Games.dissolve_room(room.id)
+
+      component = GamePage.init(%{room_id: room.id}, %Hologram.Component{}, server_for(creator))
+
+      assert component.state == %{room_missing?: true}
+      assert component.next_action.name == :go_home
+      assert component.next_page == nil
+      assert render_template(component.state) =~ "room not found"
+      # gen_server unregisters the name before start_child returns the error.
+      refute RoomServer.room_exists?(room.id)
+
+      assert RoomServer.ensure_started(room.id) == {:error, :room_ended}
+      refute RoomServer.room_exists?(room.id)
+    end
+
+    test "a room in its post-game window goes to the score page", ctx do
+      %{room: room, creator: creator} = ctx
+      {:ok, game} = Games.create_game(room.id, 1)
+      [{pid, _}] = Registry.lookup(Scrawly.RoomRegistry, room.id)
+      :sys.replace_state(pid, &%{&1 | status: :post_game, last_game_id: game.id})
+
+      {component, _server} =
+        GamePage.init(%{room_id: room.id}, %Hologram.Component{}, server_for(creator))
+
+      assert component.state.room_missing? == false
+      assert component.next_page == nil
+      assert component.next_action.name == :go_score
+      assert component.next_action.params == %{game_id: game.id}
+
+      result = GamePage.action(:go_score, component.next_action.params, component)
+
+      assert result.next_page == {ScrawlyWeb.Pages.GameScorePage, [game_id: game.id]}
     end
   end
 
@@ -126,12 +185,21 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert length(result.state.chat_messages) == 0
     end
 
-    test "go_home navigates to home page" do
-      component = %Hologram.Component{state: %{}}
+    test "go_home navigates to home page, whatever the state" do
+      component = %Hologram.Component{state: %{room_missing?: true}}
       result = GamePage.action(:go_home, %{}, component)
 
-      assert match?(%Hologram.Component{}, result)
+      assert result.next_page == ScrawlyWeb.Pages.HomePage
     end
+  end
+
+  # The page template alone (no layout), rendered as the server does on load.
+  defp render_template(state) do
+    {html, _registry, _server} =
+      GamePage.template().(state)
+      |> Renderer.render_dom(%Renderer.Env{}, %Hologram.Server{})
+
+    html
   end
 
   # A :room_refreshed payload as RoomServer.View.for_viewer/2 builds it for
