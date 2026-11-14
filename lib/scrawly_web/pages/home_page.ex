@@ -499,9 +499,13 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_action(:reload_home)
   end
 
+  # A full page load, so the header, sockets and state come from the new
+  # session. A reload rather than location.assign('/'): on a same-URL
+  # navigation Hologram restores the page snapshot it saved for this history
+  # entry, which still holds the previous identity's state.
   def action(:reload_home, _params, component) do
     JS.exec(~JS"""
-      window.location.assign('/');
+      window.location.reload();
     """)
 
     component
