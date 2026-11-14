@@ -30,7 +30,7 @@ defmodule Scrawly.Games.RoomServerChatPayloadTest do
         current_drawer_id: @drawer,
         current_word: "zzyzx",
         round_active: true,
-        time_left: 60,
+        round_deadline: System.monotonic_time(:millisecond) + 60_000,
         round_duration: 60,
         players: [
           %{id: @drawer, username: "Drawer", score: 0},

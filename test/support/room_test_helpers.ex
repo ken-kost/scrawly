@@ -57,6 +57,19 @@ defmodule Scrawly.RoomTestHelpers do
     state
   end
 
+  @doc """
+  Ends the room's current round the way RoundTimer's expiry does: stops the
+  real timer, then sends `{:round_ended, %{game_id, round, reason: :time_up}}`
+  for the room's current game and round. Returns the public state after it.
+  """
+  def expire_round!(room) do
+    [{pid, _}] = Registry.lookup(Scrawly.RoomRegistry, room.id)
+    %{game_id: game_id, current_round: round} = :sys.get_state(pid)
+    Games.stop_round_timer(game_id)
+    send(pid, {:round_ended, %{game_id: game_id, round: round, reason: :time_up}})
+    room_state!(room.id)
+  end
+
   @doc "Stops the room's RoomServer if it is running."
   def stop_room(room_id) do
     case Registry.lookup(Scrawly.RoomRegistry, room_id) do

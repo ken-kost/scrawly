@@ -10,16 +10,23 @@ defmodule Scrawly.Games.RoomServer.View do
 
   Every map carries the word as three derived fields:
 
-    * `word_display` - the masked hint (`WordHints.generate_hint/3`) while
-      `:drawing` or `:round_end`, otherwise `""`;
+    * `word_display` - the masked hint for the room's current `hint_stage`
+      (`WordHints.hint_for_stage/3`) while `:drawing` or `:round_end`,
+      otherwise `""`;
     * `word_length` - the number of letters (spaces and hyphens excluded);
     * `revealed_word` - the word itself, only in `:round_end`.
 
-  No reveal schedule, future mask or letter positions are ever sent: the hint
-  is recomputed from `time_left` on every tick.
+  No reveal schedule, future mask or letter positions are ever sent: the room
+  reveals each stage when it is due and broadcasts the new mask then.
+
+  Time is sent as what is left, in ms, at the moment the map is built:
+  `round_remaining_ms` (`:drawing`) and `choice_remaining_ms` (`:choosing`),
+  0 otherwise, plus the full `round_duration` / `choice_duration` in seconds.
+  Clients anchor those on their own monotonic clock and count down; the
+  node-local deadlines themselves are never sent.
   """
 
-  alias Scrawly.Games.WordHints
+  alias Scrawly.Games.{RoomServer, WordHints}
   alias Scrawly.Games.RoomServer.GameFlow
 
   # Read by GamePage init and room_refreshed, HomePage (name, code, players,
@@ -39,7 +46,6 @@ defmodule Scrawly.Games.RoomServer.View do
     :current_round,
     :total_rounds,
     :current_drawer_id,
-    :time_left,
     :round_active,
     :correct_guessers,
     :chat_messages,
@@ -67,7 +73,6 @@ defmodule Scrawly.Games.RoomServer.View do
     :current_round,
     :total_rounds,
     :current_drawer_id,
-    :time_left,
     :round_active,
     :correct_guessers,
     :phase,
@@ -125,12 +130,16 @@ defmodule Scrawly.Games.RoomServer.View do
 
   defp derived_fields(state) do
     word = shown_word(state)
+    now = System.monotonic_time(:millisecond)
 
     %{
-      word_display: word_display(word, state),
+      word_display: WordHints.hint_for_stage(word, state.hint_stage || 0),
       word_length: WordHints.word_length_hint(word),
       revealed_word: if(state.phase == :round_end, do: word),
-      choice_time_left: choice_time_left(state)
+      round_remaining_ms: RoomServer.round_remaining_ms(state, now),
+      choice_remaining_ms: RoomServer.choice_remaining_ms(state, now),
+      round_duration: state.round_duration || 60,
+      choice_duration: GameFlow.choice_duration()
     }
   end
 
@@ -140,18 +149,6 @@ defmodule Scrawly.Games.RoomServer.View do
        do: word
 
   defp shown_word(_state), do: nil
-
-  defp word_display(nil, _state), do: ""
-
-  defp word_display(word, state),
-    do: WordHints.generate_hint(word, state.time_left || 0, state.round_duration || 60)
-
-  defp choice_time_left(%{choice_deadline: deadline}) when is_integer(deadline) do
-    now = System.monotonic_time(:millisecond)
-    max(0, div(deadline - now + 999, 1000))
-  end
-
-  defp choice_time_left(_state), do: 0
 
   defp post_game_remaining_ms(%{status: :post_game, post_game_deadline: deadline})
        when is_integer(deadline),

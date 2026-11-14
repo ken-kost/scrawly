@@ -4,15 +4,20 @@ defmodule Scrawly.Games.RoomServerTest do
   removes the given id, and each drawer tab's ops carry `{op_epoch, op_seq}`
   so a resent or late op is ignored. The stored pair resets every round.
 
-  The pure cases drive `handle_call/3` on hand-built states; the round reset
-  runs against a live room.
+  Round timing: the room keeps monotonic deadlines instead of a ticking
+  `time_left`, reveals hint stages from its own `{:hint_reveal, ...}`
+  messages and acts on a time-up only for its current game, round and
+  `:drawing` phase.
+
+  The pure cases drive `handle_call/3` / `handle_info/2` on hand-built
+  states; the round reset and the broadcast count run against a live room.
   """
   use Scrawly.DataCase, async: false
 
   import Scrawly.RoomTestHelpers
 
   alias Scrawly.Games
-  alias Scrawly.Games.RoomServer
+  alias Scrawly.Games.{RoomServer, Scoring, WordHints}
 
   @moduletag :capture_log
 
@@ -166,8 +171,7 @@ defmodule Scrawly.Games.RoomServerTest do
       assert RoomServer.append_drawing(ctx.room.id, ctx.creator.id, stroke(1), {"e1", 7}) == :ok
       assert :sys.get_state(ctx.pid).stroke_op == {"e1", 7}
 
-      Games.stop_round_timer(ctx.game_id)
-      send(ctx.pid, {:round_ended, %{reason: :time_up}})
+      assert expire_round!(ctx.room).phase == :round_end
       send(ctx.pid, :auto_advance_round)
 
       choosing = :sys.get_state(ctx.pid)
@@ -188,6 +192,238 @@ defmodule Scrawly.Games.RoomServerTest do
 
       assert {:ok, _} = RoomServer.end_game(ctx.room.id)
       assert %{drawing_strokes: [], stroke_op: nil} = :sys.get_state(ctx.pid)
+    end
+  end
+
+  # ── Round timing ──────────────────────────────────────────────────────
+
+  @game "TEST-game"
+  @guesser "player-id"
+  @time_up %{game_id: @game, round: 1, reason: :time_up}
+
+  defp drawing(attrs \\ []) do
+    room(
+      [
+        current_word: "elephant",
+        round_duration: 60,
+        round_active: true,
+        round_deadline: System.monotonic_time(:millisecond) + 60_000,
+        hint_stage: 0,
+        players: [
+          %{id: @drawer, username: "D", score: 0},
+          %{id: @guesser, username: "P", score: 0}
+        ],
+        round_start_scores: %{@drawer => 0, @guesser => 0}
+      ] ++ attrs
+    )
+  end
+
+  defp info(state, msg) do
+    {:noreply, new_state} = RoomServer.handle_info(msg, state)
+    new_state
+  end
+
+  defp subscribe(room_id) do
+    Phoenix.PubSub.subscribe(Hologram.PubSub, Hologram.Realtime.channel_topic({:room, room_id}))
+  end
+
+  defp flush_broadcasts do
+    receive do
+      {:broadcast_action, _, _, _, _} -> flush_broadcasts()
+    after
+      0 -> :ok
+    end
+  end
+
+  defp score(state, id), do: Enum.find(state.players, &(&1.id == id)).score
+  defp times_up(state), do: Enum.count(state.chat_messages, &(&1.message =~ "Time's up"))
+
+  describe "time helpers" do
+    test "round time is computed from the deadline, seconds rounded up" do
+      state = drawing(round_deadline: 10_000)
+
+      assert RoomServer.round_remaining_ms(state, 0) == 10_000
+      assert RoomServer.time_left(state, 0) == 10
+      assert RoomServer.time_left(state, 500) == 10
+      assert RoomServer.time_left(state, 9_001) == 1
+      assert RoomServer.time_left(state, 10_000) == 0
+      assert RoomServer.round_remaining_ms(state, 12_000) == 0
+      assert RoomServer.time_left(drawing(round_deadline: nil)) == 0
+    end
+
+    test "choice time is computed from the choice deadline" do
+      state = room(phase: :choosing, choice_deadline: 15_000)
+
+      assert RoomServer.choice_remaining_ms(state, 1_000) == 14_000
+      assert RoomServer.choice_remaining_ms(state, 16_000) == 0
+      assert RoomServer.choice_remaining_ms(room(choice_deadline: nil)) == 0
+    end
+
+    test "a guess scores with the seconds left on the round deadline" do
+      now = System.monotonic_time(:millisecond)
+
+      {{:ok, {:correct, pts}}, _} =
+        call(drawing(round_deadline: now + 30_000), {:submit_message, @guesser, "elephant"})
+
+      assert pts == Scoring.guesser_points(30, 60, order: 1)
+
+      {{:ok, {:correct, late}}, _} =
+        call(drawing(round_deadline: now - 1), {:submit_message, @guesser, "elephant"})
+
+      assert late == Scoring.guesser_points(0, 60, order: 1)
+    end
+  end
+
+  describe "{:hint_reveal, game_id, round, stage}" do
+    test "reveals the stage and broadcasts the new mask" do
+      state = drawing()
+      subscribe(state.room_id)
+
+      revealed = info(state, {:hint_reveal, @game, 1, 1})
+
+      assert revealed.hint_stage == 1
+      assert revealed.version == state.version + 1
+      assert_received {:broadcast_action, _, :room_delta, delta, _}
+      assert delta.word_display == WordHints.hint_for_stage("elephant", 1)
+      assert delta.word_display != WordHints.hint_for_stage("elephant", 0)
+      refute inspect(delta) =~ "elephant"
+
+      assert info(revealed, {:hint_reveal, @game, 1, 2}).hint_stage == 2
+      assert_received {:broadcast_action, _, :room_delta, %{word_display: stage2}, _}
+      assert stage2 == WordHints.hint_for_stage("elephant", 2)
+    end
+
+    test "a stage that leaves the mask unchanged broadcasts nothing" do
+      state = drawing(current_word: "cat", hint_stage: 1)
+      subscribe(state.room_id)
+
+      next = info(state, {:hint_reveal, @game, 1, 2})
+
+      assert next.hint_stage == 2
+      assert next.version == state.version
+      refute_received {:broadcast_action, _, _, _, _}
+    end
+
+    test "is ignored for another game or round, outside :drawing, or once past" do
+      for {state, msg} <- [
+            {drawing(), {:hint_reveal, "TEST-other-game", 1, 1}},
+            {drawing(), {:hint_reveal, @game, 2, 1}},
+            {drawing(phase: :round_end), {:hint_reveal, @game, 1, 1}},
+            {drawing(phase: :choosing, current_word: nil), {:hint_reveal, @game, 1, 1}},
+            {drawing(hint_stage: 2), {:hint_reveal, @game, 1, 1}}
+          ] do
+        subscribe(state.room_id)
+        assert info(state, msg) == state
+        refute_received {:broadcast_action, _, _, _, _}
+      end
+    end
+  end
+
+  describe "{:round_ended, ...} (time up)" do
+    test "ends the current round once: one score, one result, one Time's up" do
+      state = drawing(correct_guessers: [@guesser], round_guesser_points: [300])
+      subscribe(state.room_id)
+
+      ended = info(state, {:round_ended, @time_up})
+
+      assert %{phase: :round_end, round_active: false, round_deadline: nil} = ended
+      assert score(ended, @drawer) == 300
+      assert length(ended.round_results) == 1
+      assert times_up(ended) == 1
+      assert_received {:broadcast_action, _, :room_delta, delta, _}
+      assert %{phase: :round_end, round_remaining_ms: 0, revealed_word: "elephant"} = delta
+
+      flush_broadcasts()
+      assert info(ended, {:round_ended, @time_up}) == ended
+      refute_received {:broadcast_action, _, _, _, _}
+    end
+
+    test "an expiry still queued when everyone guessed changes nothing" do
+      {{:ok, {:correct, _}}, guessed} =
+        call(drawing(), {:submit_message, @guesser, "elephant"})
+
+      assert %{phase: :round_end, round_deadline: nil} = guessed
+      assert length(guessed.round_results) == 1
+      subscribe(guessed.room_id)
+
+      assert info(guessed, {:round_ended, @time_up}) == guessed
+      refute_received {:broadcast_action, _, _, _, _}
+      assert times_up(guessed) == 0
+    end
+
+    test "an expiry for another round or game, or without them, changes nothing" do
+      state = drawing()
+      subscribe(state.room_id)
+
+      for msg <- [
+            %{@time_up | round: 2},
+            %{@time_up | game_id: "TEST-other-game"},
+            %{reason: :time_up}
+          ] do
+        assert info(state, {:round_ended, msg}) == state
+      end
+
+      assert info(drawing(game_id: nil), {:round_ended, %{@time_up | game_id: nil}}).phase ==
+               :drawing
+
+      refute_received {:broadcast_action, _, _, _, _}
+    end
+  end
+
+  describe "a live :drawing phase" do
+    setup do
+      creator = create_user()
+      player = create_user()
+      room = start_room(creator)
+      {:ok, _} = RoomServer.join(room.id, %{id: player.id, username: player.username, score: 0})
+
+      {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: ["elephant"]})
+      on_exit(fn -> Games.stop_round_timer(started.game_id) end)
+      [{pid, _}] = Registry.lookup(Scrawly.RoomRegistry, room.id)
+
+      %{room: room, creator: creator, game_id: started.game_id, pid: pid}
+    end
+
+    # Every :room_delta until the round-end one, with its arrival time.
+    defp collect_deltas(acc \\ []) do
+      receive do
+        {:broadcast_action, _, :room_delta, delta, _} ->
+          acc = [{System.monotonic_time(:millisecond), delta} | acc]
+          if delta.phase == :round_end, do: Enum.reverse(acc), else: collect_deltas(acc)
+      after
+        5_000 -> flunk("no round-end delta; got #{length(acc)} deltas")
+      end
+    end
+
+    test "with no activity: two hint deltas between the commit and the round end", ctx do
+      # A 2 s round: reveals at 750 and 1_375 ms, time up at 2_000 ms.
+      :sys.replace_state(ctx.pid, &%{&1 | round_duration: 2})
+      subscribe(ctx.room.id)
+
+      {:ok, _} = RoomServer.choose_word(ctx.room.id, ctx.creator.id, "elephant")
+
+      assert [{commit_at, commit}, {s1_at, s1}, {s2_at, s2}, {end_at, ended}] = collect_deltas()
+
+      assert commit.phase == :drawing
+      assert commit.word_display == WordHints.hint_for_stage("elephant", 0)
+      assert commit.round_remaining_ms in 1_500..2_000
+      assert commit.round_duration == 2
+
+      assert s1.word_display == WordHints.hint_for_stage("elephant", 1)
+      assert s2.word_display == WordHints.hint_for_stage("elephant", 2)
+      assert s1.phase == :drawing and s2.phase == :drawing
+      # No second delta right after the commit (the old :timer_started one).
+      assert s1_at - commit_at >= 600
+      assert s2_at > s1_at
+
+      assert %{revealed_word: "elephant", round_remaining_ms: 0} = ended
+      assert end_at - commit_at >= 1_900
+
+      # A late duplicate expiry is ignored.
+      before = :sys.get_state(ctx.pid)
+      send(ctx.pid, {:round_ended, %{game_id: ctx.game_id, round: 1, reason: :time_up}})
+      assert :sys.get_state(ctx.pid) == before
+      refute_receive {:broadcast_action, _, :room_delta, _, _}, 100
     end
   end
 end

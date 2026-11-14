@@ -7,18 +7,34 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   callers remain responsible for `bump_version` / `notify_waiters`.
 
   The round lifecycle has two phases:
-    1. `:choosing` — drawer is shown 3 word options (15s timer)
+    1. `:choosing` — drawer is shown 3 word options (`choice_duration/0` s)
     2. `:drawing`  — round timer runs; guessers submit guesses
 
   `start_word_choice/4` advances the Game record + drawer rotation and enters
   `:choosing`. `commit_word_choice/2` is invoked when the drawer picks or the
   choice timer expires; it calls `Games.start_round` + `Games.start_round_timer`.
+
+  Both phases run against a monotonic deadline (`choice_deadline`,
+  `round_deadline`): nothing ticks on the server. Clients count down from the
+  remaining ms in `RoomServer.View`; hint stages are revealed by
+  `{:hint_reveal, game_id, round, stage}` messages scheduled at commit.
   """
 
   alias Scrawly.Games
+  alias Scrawly.Games.WordHints
 
   @ai_refill_threshold 6
   @max_chat_history 50
+  # The drawer's word-choice window.
+  @choice_duration 15
+
+  @doc "How long, in seconds, the drawer has to pick a word before one is auto-picked."
+  @spec choice_duration() :: pos_integer
+  def choice_duration, do: @choice_duration
+
+  @doc "`choice_duration/0` in ms."
+  @spec choice_duration_ms() :: pos_integer
+  def choice_duration_ms, do: @choice_duration * 1000
 
   @doc """
   Advance to the next round and enter the word-choice phase.
@@ -48,7 +64,8 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
             current_drawer_id: game_with_drawer.current_drawer_id,
             current_word: nil,
             ai_words: remaining_ai,
-            time_left: state.round_duration,
+            round_deadline: nil,
+            hint_stage: 0,
             round_active: false,
             correct_guessers: [],
             drawing_strokes: [],
@@ -84,10 +101,11 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
 
   @doc """
   Set `phase: :choosing`, populate `word_choices`, set `choice_deadline`, and
-  schedule the 15s timeout. Pure-ish: only side effect is the scheduled message.
+  schedule the `choice_duration/0` timeout. Pure-ish: only side effect is the
+  scheduled message.
   """
   def enter_word_choice(state, choices, schedule_timeout_fn) when is_list(choices) do
-    deadline = System.monotonic_time(:millisecond) + 15_000
+    deadline = System.monotonic_time(:millisecond) + choice_duration_ms()
     schedule_timeout_fn.(state.game_id, state.current_round)
 
     %{state | phase: :choosing, word_choices: choices, choice_deadline: deadline}
@@ -96,6 +114,11 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   @doc """
   Commit the chosen word: persist it to the Game, start the round timer, and
   transition to `:drawing`. Returns `{:ok, state}` or `{:error, reason}`.
+
+  Runs inside the room process: sets `round_deadline` (monotonic ms) and
+  `hint_stage: 0`, and schedules one `{:hint_reveal, game_id, round, stage}`
+  to `self()` per stage of `WordHints.reveal_offsets_ms/2`. The RoundTimer
+  expiry carries `%{round: current_round}`.
   """
   def commit_word_choice(state, word) when is_binary(word) do
     start_round_opts = %{
@@ -106,7 +129,12 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
 
     with {:ok, _updated_game} <-
            Games.start_round(state.game_id, state.current_drawer_id, start_round_opts),
-         :ok <- Games.start_round_timer(state.game_id, state.round_duration) do
+         :ok <-
+           Games.start_round_timer(state.game_id, state.round_duration, %{
+             round: state.current_round
+           }) do
+      round_deadline = System.monotonic_time(:millisecond) + state.round_duration * 1000
+      schedule_hint_reveals(state)
       drawer_name = get_player_name(state.players, state.current_drawer_id)
       new_used = Enum.uniq([word | state.used_words])
 
@@ -118,7 +146,8 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
             choice_deadline: nil,
             phase: :drawing,
             round_active: true,
-            time_left: state.round_duration,
+            round_deadline: round_deadline,
+            hint_stage: 0,
             used_words: new_used,
             correct_guessers: [],
             drawing_strokes: [],
@@ -130,6 +159,16 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
       {:ok, new_state}
     else
       err -> {:error, err}
+    end
+  end
+
+  defp schedule_hint_reveals(state) do
+    for {stage, offset_ms} <- WordHints.reveal_offsets_ms(state.round_duration) do
+      Process.send_after(
+        self(),
+        {:hint_reveal, state.game_id, state.current_round, stage},
+        offset_ms
+      )
     end
   end
 
@@ -157,7 +196,8 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
         current_round: 0,
         current_drawer_id: nil,
         current_word: nil,
-        time_left: 0,
+        round_deadline: nil,
+        hint_stage: 0,
         round_active: false,
         phase: :idle,
         word_choices: [],

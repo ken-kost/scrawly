@@ -243,8 +243,10 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
         assert_denied(run(command, ctx.room, server), command, reason)
       end
 
-      assert room_state!(ctx.room.id) |> Map.drop([:time_left, :version]) ==
-               Map.drop(before, [:time_left, :version])
+      # The remaining ms are computed when the state is read.
+      transient = [:round_remaining_ms, :choice_remaining_ms, :version]
+
+      assert room_state!(ctx.room.id) |> Map.drop(transient) == Map.drop(before, transient)
 
       assert strokes(ctx.room) == [@stroke]
     end
@@ -296,13 +298,10 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
     end
 
     test "is denied after time is up", ctx do
-      %{game_id: game_id} = start_drawing!(ctx.room, ctx.creator)
+      start_drawing!(ctx.room, ctx.creator)
       :ok = RoomServer.append_drawing(ctx.room.id, ctx.creator.id, @stroke)
 
-      Games.stop_round_timer(game_id)
-      [{pid, _}] = Registry.lookup(Scrawly.RoomRegistry, ctx.room.id)
-      send(pid, {:round_ended, %{reason: :time_up}})
-      assert room_state!(ctx.room.id).phase == :round_end
+      assert expire_round!(ctx.room).phase == :round_end
 
       for command <- [:complete_stroke, :clear_drawing_cmd, :undo_drawing_cmd] do
         assert_denied(run(command, ctx.room, tab(ctx.creator)), command, :wrong_phase)

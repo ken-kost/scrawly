@@ -17,6 +17,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       draw_eraser: false,
       is_drawer: true,
       game_started: true,
+      phase: :drawing,
       time_left: 60,
       current_user_id: "test-user"
     }
@@ -57,6 +58,12 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       phase: :drawing,
       time_left: 50,
       choice_time_left: 0,
+      choice_duration: 15,
+      round_duration: 60,
+      round_deadline_local: nil,
+      choice_deadline_local: nil,
+      tick_gen: 1,
+      last_tick_at: nil,
       current_drawer: %{id: "user-2", username: "D"},
       current_word: nil,
       current_word_display: "_ _ _",
@@ -94,8 +101,10 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
         current_drawer_id: "user-2",
         drawer_name: "D",
         phase: :drawing,
-        time_left: 45,
-        choice_time_left: 0,
+        round_remaining_ms: 45_000,
+        choice_remaining_ms: 0,
+        round_duration: 60,
+        choice_duration: 15,
         word_display: "_ _ _",
         word_length: 3,
         revealed_word: nil,
@@ -127,13 +136,17 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       assert result.state.drawing? == false
     end
 
-    test "does nothing when time is 0" do
-      comp = drawing_component(%{time_left: 0})
+    # The room ends the phase; the local countdown only clamps at 0.
+    test "follows the phase, never the local countdown" do
       params = %{event: %{offset_x: 100, offset_y: 150}}
 
-      result = GamePage.action(:canvas_pointer_down, params, comp)
+      for phase <- [:idle, :choosing, :round_end] do
+        comp = drawing_component(%{phase: phase, time_left: 30})
+        assert GamePage.action(:canvas_pointer_down, params, comp).state.drawing? == false
+      end
 
-      assert result.state.drawing? == false
+      comp = drawing_component(%{phase: :drawing, time_left: 0})
+      assert GamePage.action(:canvas_pointer_down, params, comp).state.drawing? == true
     end
   end
 
@@ -250,11 +263,37 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       end
     end
 
-    test "changes no state, for the drawer or a viewer" do
+    test "only anchors init's countdowns, for the drawer or a viewer" do
+      countdown_keys = [
+        :round_deadline_local,
+        :choice_deadline_local,
+        :time_left,
+        :choice_time_left,
+        :choice_duration,
+        :round_duration
+      ]
+
       for is_drawer <- [true, false] do
-        comp = drawing_component(%{is_drawer: is_drawer, drawing_strokes: [@s1]})
+        comp =
+          drawing_component(%{
+            is_drawer: is_drawer,
+            drawing_strokes: [@s1],
+            round_remaining_ms: 41_500,
+            choice_remaining_ms: 0,
+            choice_duration: 15,
+            round_duration: 60
+          })
+
+        before = System.monotonic_time(:millisecond)
         result = GamePage.action(:mounted, %{next: :poll_room, delay: 500}, comp)
-        assert result.state == comp.state
+
+        assert Map.drop(result.state, countdown_keys) == Map.drop(comp.state, countdown_keys)
+        assert (result.state.round_deadline_local - before) in 41_500..42_000
+        assert result.state.choice_deadline_local == nil
+        assert result.state.time_left == 42
+        assert result.state.choice_time_left == 0
+        # init's follow-up keeps the single next_action slot.
+        assert result.next_action == %Hologram.Component.Action{name: :poll_room, delay: 500}
       end
     end
   end
@@ -327,7 +366,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       result =
         GamePage.action(
           :room_refreshed,
-          refreshed(%{phase: :round_end, time_left: 0, revealed_word: "abc"}),
+          refreshed(%{phase: :round_end, round_remaining_ms: 0, revealed_word: "abc"}),
           comp
         )
 
@@ -336,9 +375,9 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       assert result.state.drawing_strokes == [@s1, @s2]
     end
 
-    test "a tick within :drawing leaves drawing? alone" do
+    test "a refresh within :drawing leaves drawing? alone" do
       comp = page_component(%{is_drawer: true, drawing?: true})
-      result = GamePage.action(:room_refreshed, refreshed(%{time_left: 30}), comp)
+      result = GamePage.action(:room_refreshed, refreshed(%{round_remaining_ms: 30_000}), comp)
 
       assert result.state.drawing? == true
       assert result.state.time_left == 30

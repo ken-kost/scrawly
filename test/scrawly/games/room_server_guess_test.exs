@@ -35,7 +35,7 @@ defmodule Scrawly.Games.RoomServerGuessTest do
         current_drawer_id: @drawer,
         current_word: @word,
         round_active: true,
-        time_left: 60,
+        round_deadline: System.monotonic_time(:millisecond) + 60_000,
         round_duration: 60,
         players: [
           %{id: @drawer, username: "Drawer", score: 0},
@@ -161,7 +161,7 @@ defmodule Scrawly.Games.RoomServerGuessTest do
 
       assert state.phase == :round_end
       assert state.round_active == false
-      assert state.time_left == 0
+      assert state.round_deadline == nil
       assert score_of(state, @drawer) == Scoring.drawer_round_points([p1_pts, p2_pts])
       assert [%{drawer_id: @drawer, word: @word}] = state.round_results
 

@@ -1,14 +1,18 @@
 defmodule Scrawly.Games.RoundTimer do
   @moduledoc """
-  GenServer that manages 80-second round timers for games.
+  One-shot round expiry per game.
 
-  Each game can have one active timer that counts down from 80 seconds.
-  When the timer expires, it broadcasts a round_ended event via Phoenix PubSub.
+  `start_timer/3` schedules a single `{:expire, game_id, token}` message for
+  the end of the round; nothing ticks in between. Clients count down from the
+  remaining ms the room sends them (`RoomServer.View`), and hint reveals are
+  scheduled by the room itself.
+
+  On expiry it broadcasts `{:round_ended, meta ++ %{game_id, reason: :time_up}}`
+  on Scrawly.PubSub `"game:<id>"`. Each timer carries a fresh token, so an
+  expiry already in the mailbox when its timer was stopped or replaced is
+  ignored and cannot end the replacement.
   """
   use GenServer
-
-  # Send updates every 1 second
-  @tick_interval_ms 1_000
 
   # Client API
 
@@ -17,10 +21,13 @@ defmodule Scrawly.Games.RoundTimer do
   end
 
   @doc """
-  Start a timer for a specific game. Duration in seconds (default 60).
+  Starts (or replaces) the timer for `game_id`: `duration_seconds` from now
+  it broadcasts `{:round_ended, Map.merge(meta, %{game_id: game_id, reason:
+  :time_up})}`. Pass the round in `meta` (`%{round: n}`) so the room can
+  ignore an expiry meant for another round.
   """
-  def start_timer(game_id, duration_seconds \\ 60) do
-    GenServer.call(__MODULE__, {:start_timer, game_id, duration_seconds})
+  def start_timer(game_id, duration_seconds \\ 60, meta \\ %{}) do
+    GenServer.call(__MODULE__, {:start_timer, game_id, duration_seconds, Map.new(meta)})
   end
 
   @doc """
@@ -53,39 +60,32 @@ defmodule Scrawly.Games.RoundTimer do
   end
 
   @impl true
-  def handle_call({:start_timer, game_id, duration_seconds}, _from, state) do
-    # Cancel existing timer if any
+  def handle_call({:start_timer, game_id, duration_seconds, meta}, _from, state) do
     state = cancel_timer_if_exists(state, game_id)
-    duration_ms = duration_seconds * 1000
-
-    # Start new timer
-    timer_ref = Process.send_after(self(), {:tick, game_id}, @tick_interval_ms)
-    start_time = System.monotonic_time(:millisecond)
+    duration_ms = round(duration_seconds * 1000)
+    token = make_ref()
 
     timer_info = %{
-      timer_ref: timer_ref,
-      start_time: start_time,
+      timer_ref: Process.send_after(self(), {:expire, game_id, token}, duration_ms),
+      token: token,
+      start_time: System.monotonic_time(:millisecond),
       duration_ms: duration_ms,
-      remaining_ms: duration_ms
+      meta: meta
     }
 
-    new_timers = Map.put(state.timers, game_id, timer_info)
-
-    # Broadcast timer started
     Phoenix.PubSub.broadcast(
       Scrawly.PubSub,
       "game:#{game_id}",
       {:timer_started, %{game_id: game_id, duration_seconds: duration_seconds}}
     )
 
-    {:reply, :ok, %{state | timers: new_timers}}
+    {:reply, :ok, %{state | timers: Map.put(state.timers, game_id, timer_info)}}
   end
 
   @impl true
   def handle_call({:stop_timer, game_id}, _from, state) do
     new_state = cancel_timer_if_exists(state, game_id)
 
-    # Broadcast timer stopped
     Phoenix.PubSub.broadcast(
       Scrawly.PubSub,
       "game:#{game_id}",
@@ -100,7 +100,7 @@ defmodule Scrawly.Games.RoundTimer do
     remaining_seconds =
       case Map.get(state.timers, game_id) do
         nil -> nil
-        timer_info -> max(0, div(timer_info.remaining_ms, 1000))
+        timer_info -> remaining_seconds(timer_info)
       end
 
     {:reply, remaining_seconds, state}
@@ -109,62 +109,37 @@ defmodule Scrawly.Games.RoundTimer do
   @impl true
   def handle_call(:get_active_timers, _from, state) do
     active_timers =
-      state.timers
-      |> Enum.map(fn {game_id, timer_info} ->
-        {game_id, div(timer_info.remaining_ms, 1000)}
+      Map.new(state.timers, fn {game_id, timer_info} ->
+        {game_id, remaining_seconds(timer_info)}
       end)
-      |> Enum.into(%{})
 
     {:reply, active_timers, state}
   end
 
   @impl true
-  def handle_info({:tick, game_id}, state) do
+  def handle_info({:expire, game_id, token}, state) do
     case Map.get(state.timers, game_id) do
-      nil ->
-        # Timer was cancelled, ignore
+      %{token: ^token, meta: meta} ->
+        Phoenix.PubSub.broadcast(
+          Scrawly.PubSub,
+          "game:#{game_id}",
+          {:round_ended, Map.merge(meta, %{game_id: game_id, reason: :time_up})}
+        )
+
+        {:noreply, %{state | timers: Map.delete(state.timers, game_id)}}
+
+      # Stopped or replaced after this expiry was sent.
+      _ ->
         {:noreply, state}
-
-      timer_info ->
-        current_time = System.monotonic_time(:millisecond)
-        elapsed_ms = current_time - timer_info.start_time
-        remaining_ms = max(0, timer_info.duration_ms - elapsed_ms)
-
-        if remaining_ms <= 0 do
-          # Timer expired
-          new_timers = Map.delete(state.timers, game_id)
-
-          # Broadcast round ended
-          Phoenix.PubSub.broadcast(
-            Scrawly.PubSub,
-            "game:#{game_id}",
-            {:round_ended, %{game_id: game_id, reason: :time_up}}
-          )
-
-          {:noreply, %{state | timers: new_timers}}
-        else
-          # Continue ticking
-          updated_timer_info = %{timer_info | remaining_ms: remaining_ms}
-          timer_ref = Process.send_after(self(), {:tick, game_id}, @tick_interval_ms)
-          updated_timer_info = %{updated_timer_info | timer_ref: timer_ref}
-
-          new_timers = Map.put(state.timers, game_id, updated_timer_info)
-
-          # Broadcast timer update every second so RoomServer can forward to clients
-          remaining_seconds = div(remaining_ms, 1000)
-
-          Phoenix.PubSub.broadcast(
-            Scrawly.PubSub,
-            "game:#{game_id}",
-            {:timer_update, %{game_id: game_id, remaining_seconds: remaining_seconds}}
-          )
-
-          {:noreply, %{state | timers: new_timers}}
-        end
     end
   end
 
   # Private functions
+
+  defp remaining_seconds(timer_info) do
+    elapsed_ms = System.monotonic_time(:millisecond) - timer_info.start_time
+    max(0, div(timer_info.duration_ms - elapsed_ms, 1000))
+  end
 
   defp cancel_timer_if_exists(state, game_id) do
     case Map.get(state.timers, game_id) do
@@ -173,8 +148,7 @@ defmodule Scrawly.Games.RoundTimer do
 
       timer_info ->
         Process.cancel_timer(timer_info.timer_ref)
-        new_timers = Map.delete(state.timers, game_id)
-        %{state | timers: new_timers}
+        %{state | timers: Map.delete(state.timers, game_id)}
     end
   end
 end

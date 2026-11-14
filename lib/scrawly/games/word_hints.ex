@@ -102,6 +102,40 @@ defmodule Scrawly.Games.WordHints do
   end
 
   @doc """
+  When each hint stage starts, as `[{stage, ms_after_round_start}]`: one entry
+  per batch of the schedule, `ms = round(threshold * round_duration * 1000)`.
+  For a 60 s round with the default schedule that is
+  `[{1, 22_500}, {2, 41_250}]`.
+
+  The room schedules one reveal per entry; the offsets themselves are never
+  sent to the browser (they would tell when, and the masks which, letters
+  come next).
+  """
+  @spec reveal_offsets_ms(number, keyword) :: [{pos_integer, non_neg_integer}]
+  def reveal_offsets_ms(round_duration, opts \\ []) do
+    duration_ms = round_duration * 1000
+
+    opts
+    |> Keyword.get(:hint_schedule, @default_schedule)
+    |> Enum.with_index(1)
+    |> Enum.map(fn {threshold, stage} -> {stage, round(threshold * duration_ms)} end)
+  end
+
+  @doc """
+  The hint for `word` once `stage` batches are revealed (0 = all underscores).
+  Same letters as `generate_hint/4` at a time in that stage: both use the
+  word's deterministic batches. A stage past the last batch shows them all.
+  """
+  @spec hint_for_stage(String.t() | nil, non_neg_integer, keyword) :: String.t()
+  def hint_for_stage(word, stage, opts \\ [])
+  def hint_for_stage(nil, _, _), do: ""
+  def hint_for_stage("", _, _), do: ""
+
+  def hint_for_stage(word, stage, opts) when is_binary(word) and is_integer(stage) do
+    render_hint(word, stage_indices(word, stage, opts))
+  end
+
+  @doc """
   Returns the number of letters in the word (excluding spaces and hyphens — always-visible chars).
   """
   def word_length_hint(word) when is_binary(word) do
@@ -130,19 +164,20 @@ defmodule Scrawly.Games.WordHints do
 
   # Indices revealed so far based on time elapsed and the configured schedule.
   defp revealed_indices(word, time_left, round_duration, opts) do
+    stage_indices(word, current_stage(time_left, round_duration, opts), opts)
+  end
+
+  # Indices revealed once the first `stage` batches are out.
+  defp stage_indices(_word, stage, _opts) when stage <= 0, do: MapSet.new()
+
+  defp stage_indices(word, stage, opts) do
     schedule = Keyword.get(opts, :hint_schedule, @default_schedule)
     fraction = Keyword.get(opts, :reveal_fraction, @default_reveal_fraction)
-    stage = current_stage(time_left, round_duration, opts)
 
-    if stage == 0 do
-      MapSet.new()
-    else
-      batches = build_batches(word, length(schedule), fraction)
-
-      batches
-      |> Enum.take(stage)
-      |> Enum.reduce(MapSet.new(), fn batch, acc -> MapSet.union(acc, batch) end)
-    end
+    word
+    |> build_batches(length(schedule), fraction)
+    |> Enum.take(stage)
+    |> Enum.reduce(MapSet.new(), fn batch, acc -> MapSet.union(acc, batch) end)
   end
 
   # Splits the chosen reveal indices into N batches (deterministic per word).

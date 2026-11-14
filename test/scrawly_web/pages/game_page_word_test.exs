@@ -47,12 +47,11 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
     :ok
   end
 
-  # Stops the round timer and sets time_left as a tick would.
-  defp tick!(%{room: room, game_id: game_id}, seconds) do
-    Games.stop_round_timer(game_id)
+  # Reveals a hint stage of round 1 as the room's scheduled message does.
+  defp reveal!(%{room: room, game_id: game_id}, stage) do
     [{pid, _}] = Registry.lookup(Scrawly.RoomRegistry, room.id)
-    send(pid, {:timer_update, %{remaining_seconds: seconds}})
-    assert room_state!(room.id).time_left == seconds
+    send(pid, {:hint_reveal, game_id, 1, stage})
+    assert :sys.get_state(pid).hint_stage == stage
   end
 
   defp init_page(room, server) do
@@ -126,19 +125,24 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
       drawer = init_page(ctx.room, server_for(ctx.creator)).state
       assert drawer.word_choices == @choices
       assert drawer.choice_time_left in 1..15
+      assert drawer.choice_remaining_ms in 1..15_000
+      assert drawer.choice_duration == 15
     end
 
     test "a reload shows the current hint, and the drawer keeps the word", ctx do
       choose!(ctx)
-      tick!(ctx, 30)
+      reveal!(ctx, 1)
 
-      hint = WordHints.generate_hint(@word, 30, 60)
+      hint = WordHints.hint_for_stage(@word, 1)
+      assert hint == WordHints.generate_hint(@word, 30, 60)
       assert hint =~ ~r/[a-z]/
 
       for {_who, server} <- non_drawers(ctx) do
         state = init_page(ctx.room, server).state
         assert state.current_word_display == hint
         assert state.current_word == nil
+        assert state.time_left in 59..60
+        assert state.round_remaining_ms in 58_000..60_000
       end
 
       assert init_page(ctx.room, server_for(ctx.creator)).state.current_word == @word
@@ -264,7 +268,7 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
   end
 
   describe "hints and the reveal" do
-    test "a tick's :room_delta brings the hint to a guesser's page without a poll", ctx do
+    test "a reveal's :room_delta brings the hint to a guesser's page without a poll", ctx do
       choose!(ctx)
       component = init_page(ctx.room, server_for(ctx.guesser))
 
@@ -273,16 +277,20 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
         Hologram.Realtime.channel_topic({:room, ctx.room.id})
       )
 
-      tick!(ctx, 30)
+      reveal!(ctx, 1)
 
-      assert_receive {:broadcast_action, _, :room_delta, %{time_left: 30} = delta, _}
+      assert_receive {:broadcast_action, _, :room_delta, %{phase: :drawing} = delta, _}
       refute_leaks(delta, @word)
+      assert delta.round_remaining_ms in 58_000..60_000
 
       updated = GamePage.action(:room_delta, delta, component)
 
-      assert updated.state.current_word_display == WordHints.generate_hint(@word, 30, 60)
-      assert updated.state.time_left == 30
+      assert updated.state.current_word_display == WordHints.hint_for_stage(@word, 1)
+      assert updated.state.time_left in 59..60
+      assert is_integer(updated.state.round_deadline_local)
       assert updated.next_command == nil
+      # The page counts down by itself from here.
+      assert updated.next_action.name == :countdown_tick
     end
 
     test "everyone sees the word once everyone has guessed", ctx do

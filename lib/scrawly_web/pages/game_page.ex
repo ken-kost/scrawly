@@ -30,6 +30,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
   alias ScrawlyWeb.Components.{ChatBox, ScoreBoard, DrawingCanvas}
   alias Scrawly.Games.RoomServer
 
+  # Countdown ticks (see "Round and word-choice countdowns" below).
+  @tick_ms 1_000
+  @tick_alive_ms 1_500
+  @tick_slack_ms 15
+
   # Page state is serialized into the HTML, so it is built from the session
   # user's own view of the room: only the drawer's view carries the word and
   # the word choices (RoomServer.View.for_viewer/2).
@@ -73,7 +78,17 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:game_started, game_active)
               |> put_state(:round, rs.current_round)
               |> put_state(:total_rounds, rs.total_rounds)
-              |> put_state(:time_left, rs.time_left)
+              # Countdowns: init runs on the server, so it keeps the remaining
+              # ms; :mounted anchors them on the browser's clock.
+              |> put_state(:round_remaining_ms, rs.round_remaining_ms)
+              |> put_state(:choice_remaining_ms, rs.choice_remaining_ms)
+              |> put_state(:choice_duration, rs.choice_duration)
+              |> put_state(:time_left, seconds_left(rs.round_remaining_ms))
+              |> put_state(:choice_time_left, seconds_left(rs.choice_remaining_ms))
+              |> put_state(:round_deadline_local, nil)
+              |> put_state(:choice_deadline_local, nil)
+              |> put_state(:tick_gen, System.unique_integer([:positive]))
+              |> put_state(:last_tick_at, nil)
               |> put_state(
                 :current_drawer,
                 if(rs.current_drawer_id,
@@ -90,7 +105,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:used_words, [])
               |> put_state(:phase, rs.phase)
               |> put_state(:word_choices, rs.word_choices)
-              |> put_state(:choice_time_left, rs.choice_time_left)
               |> put_state(
                 :can_start_game,
                 is_creator and length(rs.players) >= 2 and rs.game_id == nil
@@ -187,13 +201,18 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   # First action after every page load, once the DOM exists. Restores the
   # drawer's canvas from the room's strokes (independent of the game socket),
-  # then puts the follow-up init chose, exactly as init used to queue it.
+  # anchors init's countdowns on the browser's clock, then puts the follow-up
+  # init chose, exactly as init used to queue it. The follow-up holds the
+  # single next_action slot, so the tick chain starts from the
+  # :room_refreshed reply every follow-up produces (anchor_countdowns/2).
   def action(:mounted, %{next: next, delay: delay}, component) do
     JS.call(:mountCanvas, [])
 
     if component.state.is_drawer do
       JS.call(:restoreStrokes, [component.state.drawing_strokes])
     end
+
+    component = put_countdown_anchors(component, component.state)
 
     if delay > 0,
       do: put_action(component, name: next, delay: delay),
@@ -249,6 +268,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
             |> put_state(:past_games, Map.get(params, :past_games, []))
             |> sync_drawing_path(params)
             |> maybe_connect_channel()
+            |> anchor_countdowns(params)
 
           component
       end
@@ -299,13 +319,68 @@ defmodule ScrawlyWeb.Pages.GamePage do
           |> put_state(:current_word_display, Map.get(params, :word_display, ""))
           |> put_state(:word_length, Map.get(params, :word_length, 0))
           |> put_state(:revealed_word, Map.get(params, :revealed_word))
+          |> anchor_countdowns(params)
+          |> close_drawing(old_phase, new_phase)
 
-        if transition? do
-          put_command(component, :poll_room_state, room_id: component.props.room_id)
-        else
+        if transition?,
+          do: put_command(component, :poll_room_state, room_id: component.props.room_id),
+          else: component
+    end
+  end
+
+  # ── Round and word-choice countdowns ─────────────────────────────────
+  #
+  # The score page's deadline-anchored pattern (game_score_page.ex):
+  #
+  #   * The room sends what is left, as relative ms (`round_remaining_ms`,
+  #     `choice_remaining_ms`), never a deadline. anchor_countdowns/2 turns
+  #     them into deadlines on the browser's monotonic clock on every
+  #     :room_delta and :room_refreshed; :mounted anchors init's values.
+  #   * :countdown_tick recomputes the seconds from those deadlines (never
+  #     decrements: background tabs throttle timers) and re-puts itself, always
+  #     with a delay, timed to land just after the shown second changes. At 0
+  #     the chain stops: the room stays authoritative and its phase change
+  #     arrives as a delta, which re-anchors and starts a new chain.
+  #   * One chain at a time: ticks carry `tick_gen`, and anchoring starts a new
+  #     chain (gen + 1) only when none is alive, i.e. no tick for
+  #     @tick_alive_ms by `last_tick_at` (a Back/Forward snapshot restore
+  #     comes back with no chain; the next delta restarts it).
+  #   * Hologram 0.12 drops a delayed action once its page has been left, so a
+  #     pending tick never lands on another page.
+  #
+  # Nothing here sends anything to the server: between state changes the
+  # page makes no request and the room pushes nothing.
+
+  def action(:countdown_tick, %{gen: gen}, component) do
+    state = component.state
+
+    cond do
+      gen != state.tick_gen or state.leaving? ->
+        component
+
+      state.round_deadline_local == nil and state.choice_deadline_local == nil ->
+        put_state(component, :last_tick_at, nil)
+
+      true ->
+        now = System.monotonic_time(:millisecond)
+        round_ms = ms_until(state.round_deadline_local, now)
+        choice_ms = ms_until(state.choice_deadline_local, now)
+
+        component =
           component
-          |> put_state(:time_left, Map.get(params, :time_left) || 0)
-          |> put_state(:choice_time_left, Map.get(params, :choice_time_left) || 0)
+          |> put_state(:time_left, seconds_left(round_ms))
+          |> put_state(:choice_time_left, seconds_left(choice_ms))
+
+        if round_ms > 0 or choice_ms > 0 do
+          component
+          |> put_state(:last_tick_at, now)
+          |> put_tick(gen, max(round_ms, choice_ms))
+        else
+          # Clamped at 0: wait for the room's phase change.
+          component
+          |> put_state(:round_deadline_local, nil)
+          |> put_state(:choice_deadline_local, nil)
+          |> put_state(:last_tick_at, nil)
         end
     end
   end
@@ -482,9 +557,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
+  # The room decides when drawing ends: the gate is the phase, never the
+  # local countdown (which only clamps at 0 and waits for the phase change).
   def action(:canvas_pointer_down, params, component) do
-    if component.state.is_drawer and component.state.game_started and
-         component.state.time_left > 0 do
+    if component.state.is_drawer and component.state.phase == :drawing do
       JS.call(:startStroke, [params.event.offset_x, params.event.offset_y])
       put_state(component, :drawing?, true)
     else
@@ -615,7 +691,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
     new_game_active = params.game_id != nil
     old_round = component.state.round
     new_round = params.current_round || 0
-    new_time = params.time_left || 0
     new_phase = Map.get(params, :phase, :idle)
 
     is_drawer = params.is_drawer || false
@@ -625,8 +700,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
     current_word = Map.get(params, :current_word)
     drawer_name = params.drawer_name || "Unknown"
     word_choices = Map.get(params, :word_choices, [])
-    choice_time_left = Map.get(params, :choice_time_left, 0)
 
+    # time_left / choice_time_left are set by anchor_countdowns/2 afterwards.
     cond do
       not old_started and new_game_active ->
         JS.call(:setDrawingPath, [""])
@@ -643,10 +718,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
         |> put_state(:word_length, word_length)
         |> put_state(:revealed_word, revealed_word)
         |> put_state(:is_drawer, is_drawer)
-        |> put_state(:time_left, new_time)
         |> put_state(:phase, new_phase)
         |> put_state(:word_choices, word_choices)
-        |> put_state(:choice_time_left, choice_time_left)
         |> put_state(:drawing_strokes, [])
 
       old_started and not new_game_active ->
@@ -661,12 +734,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
         |> put_state(:current_word_display, "")
         |> put_state(:word_length, 0)
         |> put_state(:revealed_word, nil)
-        |> put_state(:time_left, 0)
         |> put_state(:is_drawer, false)
         |> put_state(:correct_guessers, [])
         |> put_state(:phase, :idle)
         |> put_state(:word_choices, [])
-        |> put_state(:choice_time_left, 0)
         |> put_state(:drawing_strokes, [])
 
       old_started and new_round > old_round ->
@@ -681,16 +752,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
         |> put_state(:word_length, word_length)
         |> put_state(:revealed_word, revealed_word)
         |> put_state(:is_drawer, is_drawer)
-        |> put_state(:time_left, new_time)
         |> put_state(:phase, new_phase)
         |> put_state(:word_choices, word_choices)
-        |> put_state(:choice_time_left, choice_time_left)
         |> put_state(:drawing_strokes, [])
 
       old_started ->
         component
         |> end_drawing_phase(component.state.phase, new_phase)
-        |> put_state(:time_left, new_time)
         |> put_state(:current_word_display, word_display)
         |> put_state(:word_length, word_length)
         |> put_state(:revealed_word, revealed_word)
@@ -698,12 +766,87 @@ defmodule ScrawlyWeb.Pages.GamePage do
         |> put_state(:current_word, current_word)
         |> put_state(:phase, new_phase)
         |> put_state(:word_choices, word_choices)
-        |> put_state(:choice_time_left, choice_time_left)
 
       true ->
         component
     end
   end
+
+  # Anchors the countdowns from a view, delta or init state (see the
+  # countdown section above) and starts a tick chain unless one is alive.
+  defp anchor_countdowns(component, params) do
+    component
+    |> put_countdown_anchors(params)
+    |> ensure_tick_chain()
+  end
+
+  defp put_countdown_anchors(component, params) do
+    now = System.monotonic_time(:millisecond)
+    round_ms = Map.get(params, :round_remaining_ms) || 0
+    choice_ms = Map.get(params, :choice_remaining_ms) || 0
+
+    component
+    |> put_state(:round_deadline_local, local_deadline(now, round_ms))
+    |> put_state(:choice_deadline_local, local_deadline(now, choice_ms))
+    |> put_state(:time_left, seconds_left(round_ms))
+    |> put_state(:choice_time_left, seconds_left(choice_ms))
+    |> put_state(
+      :choice_duration,
+      Map.get(params, :choice_duration) || Map.get(component.state, :choice_duration)
+    )
+    |> put_state(
+      :round_duration,
+      Map.get(params, :round_duration) || Map.get(component.state, :round_duration)
+    )
+  end
+
+  defp ensure_tick_chain(component) do
+    state = component.state
+    now = System.monotonic_time(:millisecond)
+    round_ms = ms_until(state.round_deadline_local, now)
+    choice_ms = ms_until(state.choice_deadline_local, now)
+
+    if (round_ms > 0 or choice_ms > 0) and not chain_alive?(state.last_tick_at, now) do
+      gen = state.tick_gen + 1
+
+      component
+      |> put_state(:tick_gen, gen)
+      |> put_state(:last_tick_at, now)
+      |> put_tick(gen, max(round_ms, choice_ms))
+    else
+      component
+    end
+  end
+
+  # A tick ran (or a chain started) less than @tick_alive_ms ago. `last` is
+  # from this document's clock unless a snapshot restore brought an older one
+  # back, hence the >= 0.
+  defp chain_alive?(last, now) when is_integer(last),
+    do: now - last >= 0 and now - last < @tick_alive_ms
+
+  defp chain_alive?(_last, _now), do: false
+
+  # Lands just after the shown whole second changes (ms is what is left now),
+  # so ticks never drift past a second and skip a number. Always a delay: an
+  # action that re-puts itself without one never yields to the browser.
+  defp put_tick(component, gen, ms) do
+    delay =
+      if ms > 0,
+        do: ms - (seconds_left(ms) - 1) * 1000 + @tick_slack_ms,
+        else: @tick_ms
+
+    put_action(component, name: :countdown_tick, params: %{gen: gen}, delay: delay)
+  end
+
+  defp local_deadline(now, ms) when is_integer(ms) and ms > 0, do: now + ms
+  defp local_deadline(_now, _ms), do: nil
+
+  defp ms_until(deadline, now) when is_integer(deadline), do: max(0, deadline - now)
+  defp ms_until(_deadline, _now), do: 0
+
+  # Whole seconds shown for `ms` left: rounded up, so 0 only once time is up.
+  defp seconds_left(ms) when is_integer(ms) and ms > 0, do: div(ms + 999, 1000)
+  defp seconds_left(_ms), do: 0
 
   # Leaving :drawing (time up, everyone guessed) ends the stroke in progress
   # and the viewers' live overlays: the room will not store either.
@@ -713,6 +856,18 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   defp end_drawing_phase(component, _old_phase, _new_phase), do: component
+
+  # A :room_delta that ends :drawing (time up, everyone guessed) closes the
+  # canvas at once: drawing follows the room's phase, and waiting for the poll
+  # reply would leave the drawer a round trip of strokes the room rejects.
+  # The reply fills in the rest of :round_end.
+  defp close_drawing(component, :drawing, :round_end) do
+    component
+    |> end_drawing_phase(:drawing, :round_end)
+    |> put_state(:phase, :round_end)
+  end
+
+  defp close_drawing(component, _old_phase, _new_phase), do: component
 
   # Shared by the toolbar buttons and the keyboard shortcuts.
   defp toggle_eraser(component) do
@@ -964,7 +1119,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
             <div class="col" style="align-items: center; gap: 4px;">
               {%if @phase == :choosing}
                 <div class="timer timer-big mono">{@choice_time_left}s</div>
-                <div class="bar accent" style="width: 80px;"><div style={"width: " <> Integer.to_string(min(100, round((@choice_time_left / 15) * 100))) <> "%;"}></div></div>
+                <div class="bar accent" style="width: 80px;"><div style={"width: " <> Integer.to_string(min(100, round((@choice_time_left / max(@choice_duration, 1)) * 100))) <> "%;"}></div></div>
               {%else}
                 <div class="timer timer-big mono">{@time_left}s</div>
                 <div class="bar accent" style="width: 80px;"><div style={"width: " <> Integer.to_string(min(100, round((@time_left / max(@round_duration, 1)) * 100))) <> "%;"}></div></div>
@@ -1024,7 +1179,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
           </div>
 
           <DrawingCanvas is_drawer={@is_drawer}
-            disabled={!@game_started or @time_left == 0}
+            disabled={not (@is_drawer and @phase == :drawing)}
             strokes={@drawing_strokes}
             active_color={if(@draw_eraser, do: "#FFFFFF", else: @draw_color)}
             active_width={if(@draw_eraser, do: 20, else: @draw_width)} />

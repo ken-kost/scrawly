@@ -6,7 +6,7 @@ defmodule Scrawly.Games.RoomViewTest do
   use ExUnit.Case, async: true
 
   alias Scrawly.Games.{RoomServer, WordHints}
-  alias Scrawly.Games.RoomServer.View
+  alias Scrawly.Games.RoomServer.{GameFlow, View}
 
   @word "zzyzx"
   @choices ["zzyzx", "quokka", "fjord"]
@@ -25,7 +25,10 @@ defmodule Scrawly.Games.RoomViewTest do
     :word_display,
     :word_length,
     :revealed_word,
-    :choice_time_left,
+    :round_remaining_ms,
+    :choice_remaining_ms,
+    :round_duration,
+    :choice_duration,
     :status,
     :game_id,
     :last_game_id,
@@ -39,10 +42,12 @@ defmodule Scrawly.Games.RoomViewTest do
     :current_round,
     :total_rounds,
     :current_drawer_id,
-    :time_left,
     :phase,
     :drawing_strokes
   ]
+
+  # What a :room_delta and View.public/1 must carry for client countdowns.
+  @time_keys [:round_remaining_ms, :choice_remaining_ms, :round_duration, :choice_duration]
 
   defp room(attrs) do
     struct!(
@@ -60,7 +65,8 @@ defmodule Scrawly.Games.RoomViewTest do
         current_drawer_id: @drawer,
         current_word: @word,
         round_active: true,
-        time_left: 80,
+        round_deadline: System.monotonic_time(:millisecond) + 80_000,
+        hint_stage: 0,
         round_duration: 80,
         players: [
           %{id: @drawer, username: "Drawer", score: 0},
@@ -80,6 +86,7 @@ defmodule Scrawly.Games.RoomViewTest do
         phase: :choosing,
         current_word: nil,
         round_active: false,
+        round_deadline: nil,
         word_choices: @choices,
         choice_deadline: System.monotonic_time(:millisecond) + 10_000
       ] ++ attrs
@@ -95,9 +102,12 @@ defmodule Scrawly.Games.RoomViewTest do
       current_drawer_id: nil,
       current_word: nil,
       round_active: false,
-      time_left: 0
+      round_deadline: nil
     )
   end
+
+  defp round_end(attrs \\ []),
+    do: room([phase: :round_end, round_deadline: nil, round_active: false] ++ attrs)
 
   defp dump(term), do: inspect(term, limit: :infinity, printable_limit: :infinity)
 
@@ -108,8 +118,8 @@ defmodule Scrawly.Games.RoomViewTest do
 
   describe "public/1 and delta/1" do
     test "never carry the word while drawing, whatever the hint stage" do
-      for time_left <- [80, 50, 25, 0] do
-        state = room(time_left: time_left)
+      for hint_stage <- [0, 1, 2] do
+        state = room(hint_stage: hint_stage)
         refute_leaks(View.public(state), @word)
         refute_leaks(View.delta(state), @word)
       end
@@ -119,8 +129,6 @@ defmodule Scrawly.Games.RoomViewTest do
       state = choosing()
       refute_leaks(View.public(state), @choices)
       refute_leaks(View.delta(state), @choices)
-      assert View.public(state).choice_time_left in 1..10
-      assert View.delta(state).choice_time_left in 1..10
     end
 
     test "drop round_results, keep the strokes init reads" do
@@ -170,7 +178,7 @@ defmodule Scrawly.Games.RoomViewTest do
 
   describe "for_viewer/2" do
     test "gives guessers, watchers and visitors no word and no choices" do
-      for state <- [room([]), choosing(), room(phase: :round_end, time_left: 0)],
+      for state <- [room([]), choosing(), round_end()],
           viewer <- [@p1, @watcher, nil] do
         view = View.for_viewer(state, viewer)
 
@@ -202,7 +210,7 @@ defmodule Scrawly.Games.RoomViewTest do
     end
 
     test "always has every key the game page reads" do
-      for state <- [lobby(), choosing(), room([]), room(phase: :round_end, time_left: 0)],
+      for state <- [lobby(), choosing(), room([]), round_end()],
           viewer <- [@drawer, @p1, nil],
           key <- @viewer_keys do
         assert Map.has_key?(View.for_viewer(state, viewer), key),
@@ -212,25 +220,28 @@ defmodule Scrawly.Games.RoomViewTest do
   end
 
   describe "word fields" do
-    test "word_display changes stage at 37.5% and 68.75% of the round elapsed" do
+    test "word_display is the mask of the room's hint stage" do
       word = "watermelon"
-      display = fn time_left -> View.public(room(current_word: word, time_left: time_left)) end
+      display = fn stage -> View.public(room(current_word: word, hint_stage: stage)) end
 
-      hidden = display.(80).word_display
+      hidden = display.(0).word_display
       assert hidden == "_ _ _ _ _ _ _ _ _ _"
-      assert display.(51).word_display == hidden
 
-      stage1 = display.(50).word_display
+      # The same letters generate_hint/4 shows between 37.5% and 68.75%
+      # elapsed, and after 68.75%.
+      stage1 = display.(1).word_display
       assert stage1 != hidden
       assert stage1 == WordHints.generate_hint(word, 50, 80)
-      assert display.(26).word_display == stage1
 
-      stage2 = display.(25).word_display
+      stage2 = display.(2).word_display
       assert stage2 != stage1
+      assert stage2 == WordHints.generate_hint(word, 25, 80)
       assert revealed_count(stage1) < revealed_count(stage2)
       refute stage2 =~ word
 
-      assert View.delta(room(current_word: word, time_left: 25)).word_display == stage2
+      assert View.delta(room(current_word: word, hint_stage: 2)).word_display == stage2
+      # The time left plays no part: only a reveal changes the mask.
+      assert View.public(room(current_word: word, round_deadline: nil)).word_display == hidden
     end
 
     test "revealed_word is set only in :round_end" do
@@ -240,7 +251,7 @@ defmodule Scrawly.Games.RoomViewTest do
         assert View.for_viewer(state, @p1).revealed_word == nil
       end
 
-      ended = room(phase: :round_end, time_left: 0, round_active: false)
+      ended = round_end()
       assert View.public(ended).revealed_word == @word
       assert View.delta(ended).revealed_word == @word
       assert View.for_viewer(ended, nil).revealed_word == @word
@@ -255,18 +266,49 @@ defmodule Scrawly.Games.RoomViewTest do
     end
   end
 
-  describe "RoomServer tick" do
-    test "the 1 Hz :room_delta carries the current hint, never the word" do
-      state = room(time_left: 80)
-      topic = Hologram.Realtime.channel_topic({:room, state.room_id})
-      Phoenix.PubSub.subscribe(Hologram.PubSub, topic)
+  describe "time fields" do
+    test "public/1 and delta/1 carry remaining ms and durations, no clock or schedule" do
+      for state <- [lobby(), choosing(), room([]), round_end()],
+          map <- [View.public(state), View.delta(state)] do
+        for key <- @time_keys ++ [:word_display], do: assert(Map.has_key?(map, key))
 
-      {:noreply, _} = RoomServer.handle_info({:timer_update, %{remaining_seconds: 0}}, state)
+        for key <- [:time_left, :choice_time_left, :current_word, :word_choices],
+            do: refute(Map.has_key?(map, key))
 
-      assert_received {:broadcast_action, _, :room_delta, delta, _}
-      assert delta.word_display == WordHints.generate_hint(@word, 0, 80)
-      assert delta.word_display =~ ~r/[a-z]/
-      refute_leaks(delta, @word)
+        for key <- Map.keys(map), name = Atom.to_string(key) do
+          refute name =~ "deadline", "#{name} in #{state.phase}"
+          refute name =~ "offset", "#{name} in #{state.phase}"
+        end
+      end
+    end
+
+    test "round_remaining_ms counts down the :drawing phase only" do
+      now = System.monotonic_time(:millisecond)
+      drawing = room(round_deadline: now + 30_000)
+
+      for map <- [View.public(drawing), View.delta(drawing)] do
+        assert map.round_remaining_ms in 29_000..30_000
+        assert map.choice_remaining_ms == 0
+        assert map.round_duration == 80
+        assert map.choice_duration == GameFlow.choice_duration()
+      end
+
+      refute dump(View.public(drawing)) =~ Integer.to_string(now + 30_000)
+      assert View.public(room(round_deadline: now - 500)).round_remaining_ms == 0
+      assert View.public(round_end()).round_remaining_ms == 0
+      assert View.public(lobby()).round_remaining_ms == 0
+    end
+
+    test "choice_remaining_ms counts down the word choice only" do
+      state = choosing()
+
+      for map <- [View.public(state), View.delta(state), View.for_viewer(state, @drawer)] do
+        assert map.choice_remaining_ms in 9_000..10_000
+        assert map.round_remaining_ms == 0
+        assert map.choice_duration == 15
+      end
+
+      assert View.public(room([])).choice_remaining_ms == 0
     end
   end
 

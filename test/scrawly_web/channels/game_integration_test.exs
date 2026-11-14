@@ -69,11 +69,8 @@ defmodule ScrawlyWeb.GameIntegrationTest do
     end)
   end
 
-  defp end_round!(room, game_id) do
-    Games.stop_round_timer(game_id)
-    [{pid, _}] = Registry.lookup(Scrawly.RoomRegistry, room.id)
-    send(pid, {:round_ended, %{reason: :time_up}})
-    assert room_state!(room.id).phase == :round_end
+  defp end_round!(room) do
+    assert expire_round!(room).phase == :round_end
   end
 
   describe "join" do
@@ -192,11 +189,11 @@ defmodule ScrawlyWeb.GameIntegrationTest do
     end
 
     test "an :allow is reused for the same stroke for 2 s; a new stroke is re-checked",
-         %{room: room, creator: creator, game_id: game_id} do
+         %{room: room, creator: creator} do
       socket = join!(creator, room)
       assert_relayed(socket, chunk())
 
-      end_round!(room, game_id)
+      end_round!(room)
 
       assert_relayed(socket, chunk(%{"seq" => 2}))
       refute_relayed(socket, chunk(%{"stroke_id" => "s-1700000000000-2"}))
@@ -242,8 +239,8 @@ defmodule ScrawlyWeb.GameIntegrationTest do
     end
 
     test "the drawer's chunk is not relayed after time is up", ctx do
-      %{game_id: game_id} = start_drawing!(ctx.room, ctx.creator)
-      end_round!(ctx.room, game_id)
+      start_drawing!(ctx.room, ctx.creator)
+      end_round!(ctx.room)
 
       refute_relayed(join!(ctx.creator, ctx.room), chunk())
     end

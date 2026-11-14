@@ -139,8 +139,13 @@ defmodule Scrawly.Games do
   end
 
   # Round timer helper functions
-  def start_round_timer(game_id, duration_seconds \\ 60) do
-    Scrawly.Games.RoundTimer.start_timer(game_id, duration_seconds)
+
+  @doc """
+  Starts the one-shot round expiry (`Scrawly.Games.RoundTimer.start_timer/3`):
+  `meta` (e.g. `%{round: n}`) rides along in the `{:round_ended, ...}` message.
+  """
+  def start_round_timer(game_id, duration_seconds \\ 60, meta \\ %{}) do
+    Scrawly.Games.RoundTimer.start_timer(game_id, duration_seconds, meta)
   end
 
   def stop_round_timer(game_id) do

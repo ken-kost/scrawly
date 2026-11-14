@@ -69,7 +69,7 @@ defmodule ScrawlyWeb.Pages.GamePageGuessTest do
   defp room_score(room, user),
     do: Enum.find(room_state!(room.id).players, &(&1.id == user.id)).score
 
-  # Leaves out version/time_left: the round timer bumps them every second.
+  # Leaves out version and the remaining ms (computed whenever state is read).
   defp snapshot(room) do
     room_state!(room.id)
     |> Map.take([:chat_messages, :players, :correct_guessers, :phase, :round_results])

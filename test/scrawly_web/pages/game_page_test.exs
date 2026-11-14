@@ -38,6 +38,15 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert state.is_creator == true
       assert state.current_user_id == creator.id
       assert state.time_left == 0
+      assert state.choice_time_left == 0
+      # Countdown anchors need the browser's clock: :mounted sets them.
+      assert state.round_remaining_ms == 0
+      assert state.choice_remaining_ms == 0
+      assert state.choice_duration == 15
+      assert state.round_deadline_local == nil
+      assert state.choice_deadline_local == nil
+      assert state.last_tick_at == nil
+      assert is_integer(state.tick_gen)
       assert state.is_drawer == false
       assert state.current_word == nil
       assert state.current_word_display == ""
@@ -221,7 +230,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
         current_round: 1,
         total_rounds: 5,
         current_drawer_id: "user-2",
-        time_left: 80,
+        round_remaining_ms: 80_000,
         round_active: true,
         correct_guessers: [],
         chat_messages: [],
@@ -234,7 +243,9 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
         past_games: [],
         last_game_id: nil,
         phase: :drawing,
-        choice_time_left: 0,
+        choice_remaining_ms: 0,
+        round_duration: 80,
+        choice_duration: 15,
         word_display: "_ _ _ _ _ _ _ _ _",
         word_length: 9,
         revealed_word: nil,
@@ -278,44 +289,46 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
 
       component = %Hologram.Component{
         props: %{room_id: room.id},
-        state: %{
-          room_code: room.code,
-          current_user_id: "user-1",
-          players: players,
-          game_id: nil,
-          game_started: false,
-          can_start_game: true,
-          round: 0,
-          total_rounds: 5,
-          current_drawer: nil,
-          current_word: nil,
-          current_word_display: "",
-          word_length: 0,
-          revealed_word: nil,
-          time_left: 0,
-          is_drawer: false,
-          is_creator: true,
-          chat_messages: [],
-          new_message: "",
-          correct_guessers: [],
-          used_words: [],
-          rate_limited: false,
-          message_timestamps: [],
-          watching?: false,
-          leaving?: false,
-          room_status: :lobby,
-          room_name: "Room ABCD",
-          current_user_username: "You",
-          version: 0,
-          phase: :idle,
-          word_choices: [],
-          choice_time_left: 0,
-          past_games: [],
-          drawing_strokes: [],
-          drawing_path: "",
-          drawing?: false,
-          drawing_sent_length: 0
-        }
+        state:
+          %{
+            room_code: room.code,
+            current_user_id: "user-1",
+            players: players,
+            game_id: nil,
+            game_started: false,
+            can_start_game: true,
+            round: 0,
+            total_rounds: 5,
+            current_drawer: nil,
+            current_word: nil,
+            current_word_display: "",
+            word_length: 0,
+            revealed_word: nil,
+            time_left: 0,
+            is_drawer: false,
+            is_creator: true,
+            chat_messages: [],
+            new_message: "",
+            correct_guessers: [],
+            used_words: [],
+            rate_limited: false,
+            message_timestamps: [],
+            watching?: false,
+            leaving?: false,
+            room_status: :lobby,
+            room_name: "Room ABCD",
+            current_user_username: "You",
+            version: 0,
+            phase: :idle,
+            word_choices: [],
+            choice_time_left: 0,
+            past_games: [],
+            drawing_strokes: [],
+            drawing_path: "",
+            drawing?: false,
+            drawing_sent_length: 0
+          }
+          |> Map.merge(countdown_state())
       }
 
       %{component: component, players: players}
@@ -345,7 +358,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
           game_id: nil,
           current_round: 0,
           current_drawer_id: nil,
-          time_left: 0,
+          round_remaining_ms: 0,
           round_active: false,
           phase: :idle,
           word_display: "",
@@ -359,16 +372,23 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert result.next_page == {ScrawlyWeb.Pages.GameScorePage, [game_id: "g1"]}
     end
 
-    test "room_refreshed detects timer tick", %{component: component} do
+    test "room_refreshed re-anchors the countdown and shows the hint", %{component: component} do
       started = started(component, %{})
 
       params =
-        view_params(component, %{version: 5, time_left: 55, word_display: "b _ _ _ _ _ _ _ _"})
+        view_params(component, %{
+          version: 5,
+          round_remaining_ms: 55_000,
+          word_display: "b _ _ _ _ _ _ _ _"
+        })
 
+      before = System.monotonic_time(:millisecond)
       result = GamePage.action(:room_refreshed, params, started)
 
       assert result.state.time_left == 55
+      assert (result.state.round_deadline_local - before) in 55_000..55_500
       assert result.state.current_word_display == "b _ _ _ _ _ _ _ _"
+      assert result.next_action.name == :countdown_tick
     end
 
     test "room_refreshed keeps local strokes: replies carry none", %{component: component} do
@@ -385,7 +405,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
         view_params(component, %{
           version: 5,
           phase: :round_end,
-          time_left: 0,
+          round_remaining_ms: 0,
           round_active: false,
           word_display: "b _ _ _ e _ _ _ y",
           revealed_word: "butterfly"
@@ -403,24 +423,26 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
     setup %{room: room} do
       component = %Hologram.Component{
         props: %{room_id: room.id},
-        state: %{
-          is_creator: false,
-          players: [],
-          watchers: [],
-          past_games: [],
-          correct_guessers: [],
-          leaving?: false,
-          game_started: true,
-          round: 1,
-          phase: :drawing,
-          version: 4,
-          time_left: 60,
-          choice_time_left: 0,
-          current_word: nil,
-          current_word_display: "_ _ _ _ _ _ _ _ _",
-          word_length: 9,
-          revealed_word: nil
-        }
+        state:
+          %{
+            is_creator: false,
+            players: [],
+            watchers: [],
+            past_games: [],
+            correct_guessers: [],
+            leaving?: false,
+            game_started: true,
+            round: 1,
+            phase: :drawing,
+            version: 4,
+            time_left: 60,
+            choice_time_left: 0,
+            current_word: nil,
+            current_word_display: "_ _ _ _ _ _ _ _ _",
+            word_length: 9,
+            revealed_word: nil
+          }
+          |> Map.merge(countdown_state())
       }
 
       delta = %{
@@ -433,11 +455,13 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
         current_round: 1,
         total_rounds: 5,
         current_drawer_id: "user-2",
-        time_left: 30,
+        round_remaining_ms: 30_000,
+        choice_remaining_ms: 0,
+        round_duration: 60,
+        choice_duration: 15,
         round_active: true,
         correct_guessers: [],
         phase: :drawing,
-        choice_time_left: 0,
         last_game_id: nil,
         max_players: 4,
         past_games: [],
@@ -449,7 +473,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       %{component: component, delta: delta}
     end
 
-    test "a tick updates the hint without a poll", %{component: component, delta: delta} do
+    test "a reveal updates the hint and the countdown without a poll", ctx do
+      %{component: component, delta: delta} = ctx
       result = GamePage.action(:room_delta, delta, component)
 
       assert result.state.current_word_display == "b _ _ _ _ _ _ _ y"
@@ -466,7 +491,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
     end
 
     test ":round_end stores the revealed word and polls", %{component: component, delta: delta} do
-      ended = %{delta | phase: :round_end, time_left: 0, revealed_word: "butterfly"}
+      ended = %{delta | phase: :round_end, round_remaining_ms: 0, revealed_word: "butterfly"}
 
       result = GamePage.action(:room_delta, ended, component)
 
@@ -474,10 +499,305 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert result.next_command.name == :poll_room_state
     end
 
+    test "a delta that ends :drawing closes the drawer's canvas before the poll reply", ctx do
+      %{component: component, delta: delta} = ctx
+
+      drawer = %{
+        component
+        | state:
+            Map.merge(component.state, %{
+              is_drawer: true,
+              drawing?: true,
+              room_code: "ABCD",
+              channel_connected: true
+            })
+      }
+
+      pointer = %{event: %{offset_x: 10, offset_y: 10}}
+      assert GamePage.action(:canvas_pointer_down, pointer, drawer).state.drawing? == true
+
+      ended = %{delta | phase: :round_end, round_remaining_ms: 0, revealed_word: "butterfly"}
+      result = GamePage.action(:room_delta, ended, drawer)
+
+      assert result.state.phase == :round_end
+      assert result.state.drawing? == false
+      assert result.next_command.name == :poll_room_state
+
+      closed = GamePage.action(:canvas_pointer_down, pointer, settled(result))
+      assert closed.state.drawing? == false
+
+      # The poll reply then finds the phase already applied.
+      reply =
+        Map.merge(ended, %{
+          is_drawer: true,
+          drawer_name: "Alice",
+          current_word: "butterfly",
+          word_choices: [],
+          chat_messages: [],
+          drawing_strokes: []
+        })
+
+      refreshed = GamePage.action(:room_refreshed, reply, settled(result))
+      assert refreshed.state.phase == :round_end
+      assert refreshed.state.drawing? == false
+    end
+
+    test "other phase changes still wait for the poll reply", ctx do
+      %{component: component, delta: delta} = ctx
+      choosing = %{delta | phase: :choosing, current_round: 2, round_remaining_ms: 0}
+
+      result = GamePage.action(:room_delta, choosing, component)
+
+      assert result.state.phase == :drawing
+      assert result.next_command.name == :poll_room_state
+    end
+
     test "a stale version is ignored", %{component: component, delta: delta} do
       result = GamePage.action(:room_delta, %{delta | version: 4}, component)
 
       assert result.state == component.state
+    end
+  end
+
+  # The countdown keys init puts, before :mounted anchors anything.
+  defp countdown_state(overrides \\ %{}) do
+    Map.merge(
+      %{
+        round_remaining_ms: 0,
+        choice_remaining_ms: 0,
+        choice_duration: 15,
+        round_duration: 60,
+        round_deadline_local: nil,
+        choice_deadline_local: nil,
+        tick_gen: 7,
+        last_tick_at: nil
+      },
+      overrides
+    )
+  end
+
+  defp now_ms, do: System.monotonic_time(:millisecond)
+
+  defp put_countdown(component, overrides),
+    do: %{component | state: Map.merge(component.state, overrides)}
+
+  # The runtime takes the queued action and command off the component after
+  # each action; chained calls in a test must too.
+  defp settled(component), do: %{component | next_action: nil, next_command: nil}
+
+  defp assert_tick(result, gen) do
+    assert %Hologram.Component.Action{name: :countdown_tick, params: %{gen: ^gen}, delay: delay} =
+             result.next_action
+
+    # Always delayed, never more than a second (plus the slack) away.
+    assert delay in 1..1_015
+    delay
+  end
+
+  describe "countdowns" do
+    setup %{room: room} do
+      component = %Hologram.Component{
+        props: %{room_id: room.id},
+        state:
+          Map.merge(countdown_state(), %{
+            is_creator: false,
+            players: [],
+            watchers: [],
+            past_games: [],
+            correct_guessers: [],
+            leaving?: false,
+            game_started: true,
+            round: 1,
+            phase: :drawing,
+            version: 4,
+            time_left: 0,
+            choice_time_left: 0,
+            current_word: nil,
+            current_word_display: "_ _ _ _ _",
+            word_length: 5,
+            revealed_word: nil
+          })
+      }
+
+      delta = %{
+        room_id: room.id,
+        status: :playing,
+        players: [],
+        watchers: [],
+        version: 5,
+        game_id: "g1",
+        current_round: 1,
+        total_rounds: 2,
+        current_drawer_id: "user-2",
+        round_active: true,
+        correct_guessers: [],
+        phase: :drawing,
+        last_game_id: nil,
+        max_players: 4,
+        past_games: [],
+        word_display: "_ _ _ _ _",
+        word_length: 5,
+        revealed_word: nil,
+        round_remaining_ms: 30_000,
+        choice_remaining_ms: 0,
+        round_duration: 60,
+        choice_duration: 15
+      }
+
+      %{component: component, delta: delta}
+    end
+
+    test ":room_delta anchors the countdown and starts one tick chain", ctx do
+      before = now_ms()
+      result = GamePage.action(:room_delta, ctx.delta, ctx.component)
+
+      assert (result.state.round_deadline_local - before) in 30_000..30_500
+      assert result.state.choice_deadline_local == nil
+      assert result.state.time_left == 30
+      assert result.state.choice_time_left == 0
+      assert result.state.tick_gen == 8
+      assert result.state.last_tick_at >= before
+      assert result.next_command == nil
+      assert_tick(result, 8)
+
+      # Another delta while that chain is alive only re-anchors.
+      again =
+        GamePage.action(
+          :room_delta,
+          %{ctx.delta | version: 6, round_remaining_ms: 20_000},
+          settled(result)
+        )
+
+      assert again.state.time_left == 20
+      assert (again.state.round_deadline_local - before) in 20_000..20_500
+      assert again.state.tick_gen == 8
+      assert again.next_action == nil
+    end
+
+    test "a transition delta anchors the new phase and still polls", ctx do
+      choosing = %{
+        ctx.delta
+        | phase: :choosing,
+          current_round: 2,
+          round_remaining_ms: 0,
+          choice_remaining_ms: 14_001
+      }
+
+      result = GamePage.action(:room_delta, choosing, ctx.component)
+
+      assert result.state.choice_time_left == 15
+      assert result.state.time_left == 0
+      assert is_integer(result.state.choice_deadline_local)
+      assert result.state.round_deadline_local == nil
+      assert result.next_command.name == :poll_room_state
+      assert_tick(result, 8)
+    end
+
+    test ":countdown_tick recomputes from the anchor and lands after the next second", ctx do
+      before = now_ms()
+
+      comp =
+        put_countdown(ctx.component, %{
+          round_deadline_local: before + 12_300,
+          tick_gen: 8,
+          last_tick_at: before - 1_000
+        })
+
+      result = GamePage.action(:countdown_tick, %{gen: 8}, comp)
+
+      assert result.state.time_left == 13
+      assert result.state.last_tick_at >= before
+      # 12_300 ms left shows 13 until 12_000: the next tick comes ~300 ms later.
+      assert assert_tick(result, 8) in 250..315
+
+      choosing =
+        put_countdown(ctx.component, %{
+          choice_deadline_local: before + 14_001,
+          tick_gen: 8,
+          last_tick_at: before - 1_000
+        })
+
+      result = GamePage.action(:countdown_tick, %{gen: 8}, choosing)
+      assert result.state.choice_time_left == 15
+      assert_tick(result, 8)
+    end
+
+    test "a stale gen or a page being left does nothing; no deadline ends the chain", ctx do
+      alive =
+        put_countdown(ctx.component, %{
+          round_deadline_local: now_ms() + 10_000,
+          tick_gen: 8,
+          last_tick_at: now_ms()
+        })
+
+      stale = GamePage.action(:countdown_tick, %{gen: 7}, alive)
+      assert stale.state == alive.state
+      assert stale.next_action == nil
+
+      leaving = put_countdown(alive, %{leaving?: true})
+      left = GamePage.action(:countdown_tick, %{gen: 8}, leaving)
+      assert left.state == leaving.state
+      assert left.next_action == nil
+
+      idle = put_countdown(alive, %{round_deadline_local: nil})
+      ended = GamePage.action(:countdown_tick, %{gen: 8}, idle)
+      assert ended.state.last_tick_at == nil
+      assert ended.next_action == nil
+    end
+
+    test "at 0 it clamps and waits; the room's next delta starts a new chain", ctx do
+      comp =
+        put_countdown(ctx.component, %{
+          round_deadline_local: now_ms() - 5,
+          tick_gen: 8,
+          last_tick_at: now_ms() - 1_000,
+          time_left: 1
+        })
+
+      result = GamePage.action(:countdown_tick, %{gen: 8}, comp)
+
+      assert result.state.time_left == 0
+      assert result.state.round_deadline_local == nil
+      assert result.state.last_tick_at == nil
+      assert result.next_action == nil
+
+      round_end = %{ctx.delta | version: 6, phase: :round_end, round_remaining_ms: 0}
+      ended = GamePage.action(:room_delta, round_end, settled(result))
+      assert ended.state.time_left == 0
+      assert ended.next_action == nil
+
+      choosing = %{
+        ctx.delta
+        | version: 7,
+          phase: :choosing,
+          current_round: 2,
+          round_remaining_ms: 0,
+          choice_remaining_ms: 15_000
+      }
+
+      next = GamePage.action(:room_delta, choosing, settled(ended))
+      assert next.state.choice_time_left == 15
+      assert_tick(next, 9)
+    end
+
+    test "a chain silent for 1.5 s is gone: a delta starts a new one, old ticks drop", ctx do
+      quiet =
+        put_countdown(ctx.component, %{
+          round_deadline_local: now_ms() + 40_000,
+          tick_gen: 8,
+          last_tick_at: now_ms() - 5_000
+        })
+
+      result = GamePage.action(:room_delta, ctx.delta, quiet)
+      assert_tick(result, 9)
+
+      late = GamePage.action(:countdown_tick, %{gen: 8}, settled(result))
+      assert late.state == result.state
+      assert late.next_action == nil
+
+      # A last_tick_at from another document's clock (snapshot restore).
+      restored = put_countdown(quiet, %{last_tick_at: now_ms() + 60_000})
+      assert_tick(GamePage.action(:room_delta, ctx.delta, restored), 9)
     end
   end
 

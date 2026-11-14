@@ -4,13 +4,25 @@ defmodule Scrawly.Games.RoomServer do
   game state, chat messages, and drawing data. State changes are projected to
   subscribed game pages via Hologram realtime (`:room_delta` / `:chat_appended`).
 
-  Subscribes to RoundTimer PubSub to forward timer ticks. Auto-advances rounds
-  when timer expires or all players guess correctly.
+  Rounds run against monotonic deadlines (`round_deadline`, `choice_deadline`):
+  the room broadcasts the remaining ms in its deltas and clients count down
+  locally, so nothing is pushed while a countdown runs. It subscribes to the
+  game's RoundTimer topic for the one-shot `{:round_ended, ...}` expiry and
+  reveals hint stages from its own `{:hint_reveal, ...}` messages. Auto-advances
+  rounds when the timer expires or all players guess correctly.
   """
   use GenServer
 
   alias Scrawly.Games
-  alias Scrawly.Games.{Guess, Scoring, StrokeRules, RoomServer.GameFlow, RoomServer.View}
+
+  alias Scrawly.Games.{
+    Guess,
+    Scoring,
+    StrokeRules,
+    WordHints,
+    RoomServer.GameFlow,
+    RoomServer.View
+  }
 
   @registry Scrawly.RoomRegistry
   @supervisor Scrawly.RoomSupervisor
@@ -46,7 +58,12 @@ defmodule Scrawly.Games.RoomServer do
     total_rounds: 5,
     current_drawer_id: nil,
     current_word: nil,
-    time_left: 0,
+    # Monotonic ms (node-local) at which the :drawing phase times out; nil in
+    # every other phase. Never sent: View sends the remaining ms.
+    round_deadline: nil,
+    # Hint batches revealed this round (WordHints.hint_for_stage/3), set by
+    # {:hint_reveal, ...}.
+    hint_stage: 0,
     round_active: false,
     correct_guessers: [],
     last_game_id: nil,
@@ -267,6 +284,35 @@ defmodule Scrawly.Games.RoomServer do
       true -> :ok
     end
   end
+
+  @doc """
+  Ms left in the `:drawing` phase (never negative), 0 when no round deadline
+  is set. `now` is `System.monotonic_time(:millisecond)` on this node.
+  """
+  @spec round_remaining_ms(map, integer) :: non_neg_integer
+  def round_remaining_ms(state, now \\ System.monotonic_time(:millisecond))
+
+  def round_remaining_ms(%{round_deadline: deadline}, now) when is_integer(deadline),
+    do: max(0, deadline - now)
+
+  def round_remaining_ms(_state, _now), do: 0
+
+  @doc "Ms left to pick a word (never negative), 0 outside `:choosing`."
+  @spec choice_remaining_ms(map, integer) :: non_neg_integer
+  def choice_remaining_ms(state, now \\ System.monotonic_time(:millisecond))
+
+  def choice_remaining_ms(%{choice_deadline: deadline}, now) when is_integer(deadline),
+    do: max(0, deadline - now)
+
+  def choice_remaining_ms(_state, _now), do: 0
+
+  @doc """
+  Whole seconds left in the round, rounded up (what a client countdown shows):
+  the time used for guess scoring.
+  """
+  @spec time_left(map, integer) :: non_neg_integer
+  def time_left(state, now \\ System.monotonic_time(:millisecond)),
+    do: div(round_remaining_ms(state, now) + 999, 1000)
 
   defp creator?(state, actor_id), do: actor_id != nil and actor_id == state.creator_id
   defp player?(state, actor_id), do: Enum.any?(state.players, &(&1.id == actor_id))
@@ -609,7 +655,8 @@ defmodule Scrawly.Games.RoomServer do
           current_round: 0,
           current_drawer_id: nil,
           current_word: nil,
-          time_left: 0,
+          round_deadline: nil,
+          hint_stage: 0,
           round_active: false,
           phase: :idle,
           word_choices: [],
@@ -688,47 +735,36 @@ defmodule Scrawly.Games.RoomServer do
     {:reply, authorize(state, user_id, :draw) == :ok, state}
   end
 
+  # The commit delta already carries the round: nothing to send.
   @impl true
-  def handle_info({:timer_update, %{remaining_seconds: seconds}}, state) do
-    new_state = %{state | time_left: seconds} |> bump_version() |> notify_waiters()
-    {:noreply, new_state}
+  def handle_info({:timer_started, _info}, state), do: {:noreply, state}
+
+  # Time-up from RoundTimer, only for this game's current round while it is
+  # still being drawn: an expiry already queued when everyone guessed (or one
+  # for an earlier round) must not score the drawer, capture the round or
+  # schedule an advance a second time.
+  def handle_info({:round_ended, %{reason: :time_up} = info}, state) do
+    if state.game_id != nil and Map.get(info, :game_id) == state.game_id and
+         Map.get(info, :round) == state.current_round and state.phase == :drawing,
+       do: {:noreply, time_up(state)},
+       else: {:noreply, state}
   end
 
-  def handle_info({:timer_started, %{duration_seconds: seconds}}, state) do
-    new_state =
-      %{state | time_left: seconds, round_active: true} |> bump_version() |> notify_waiters()
+  # A hint stage is due. Only for this game's current round while drawing;
+  # broadcasts only when the mask changes (a short word's later batch can be
+  # empty).
+  def handle_info({:hint_reveal, game_id, round, stage}, state) do
+    if state.game_id != nil and game_id == state.game_id and round == state.current_round and
+         state.phase == :drawing and stage > state.hint_stage do
+      new_state = %{state | hint_stage: stage}
 
-    {:noreply, new_state}
-  end
-
-  def handle_info({:round_ended, %{reason: :time_up}}, state) do
-    correct_count = length(state.correct_guessers)
-    drawer_pts = Scoring.drawer_round_points(state.round_guesser_points)
-    drawer_name = get_player_name(state.players, state.current_drawer_id)
-
-    updated_players =
-      Enum.map(state.players, fn p ->
-        if p.id == state.current_drawer_id,
-          do: %{p | score: (p.score || 0) + drawer_pts},
-          else: p
-      end)
-
-    msg =
-      if correct_count > 0 do
-        "Time's up! The word was: #{state.current_word}. #{drawer_name} earned #{drawer_pts} pts (#{correct_count} guessed)"
-      else
-        "Time's up! The word was: #{state.current_word}. Nobody guessed."
-      end
-
-    new_state =
-      %{state | players: updated_players, time_left: 0, round_active: false, phase: :round_end}
-      |> capture_round_result(drawer_pts)
-      |> add_sys_msg(msg)
-      |> bump_version()
-      |> notify_waiters()
-
-    Process.send_after(self(), :auto_advance_round, 3_000)
-    {:noreply, new_state}
+      if WordHints.hint_for_stage(state.current_word, stage) ==
+           WordHints.hint_for_stage(state.current_word, state.hint_stage),
+         do: {:noreply, new_state},
+         else: {:noreply, new_state |> bump_version() |> notify_waiters()}
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info(:auto_advance_round, state) do
@@ -909,7 +945,7 @@ defmodule Scrawly.Games.RoomServer do
   # early (scoring the drawer) once every non-drawer player has guessed.
   defp award_guess(state, player_id) do
     order = length(state.correct_guessers) + 1
-    guess_pts = Scoring.guesser_points(state.time_left, state.round_duration, order: order)
+    guess_pts = Scoring.guesser_points(time_left(state), state.round_duration, order: order)
     new_guessers = [player_id | state.correct_guessers]
     new_round_points = state.round_guesser_points ++ [guess_pts]
 
@@ -956,7 +992,7 @@ defmodule Scrawly.Games.RoomServer do
           | players: updated_players_with_drawer,
             round_active: false,
             phase: :round_end,
-            time_left: 0
+            round_deadline: nil
         }
         |> capture_round_result(drawer_pts)
         |> add_sys_msg("Everyone guessed! #{drawer_name} earns #{drawer_pts} pts!")
@@ -967,6 +1003,43 @@ defmodule Scrawly.Games.RoomServer do
       |> notify_waiters()
 
     {new_state, guess_pts}
+  end
+
+  # The round timed out: score the drawer, reveal the word, advance in 3 s.
+  defp time_up(state) do
+    correct_count = length(state.correct_guessers)
+    drawer_pts = Scoring.drawer_round_points(state.round_guesser_points)
+    drawer_name = get_player_name(state.players, state.current_drawer_id)
+
+    updated_players =
+      Enum.map(state.players, fn p ->
+        if p.id == state.current_drawer_id,
+          do: %{p | score: (p.score || 0) + drawer_pts},
+          else: p
+      end)
+
+    msg =
+      if correct_count > 0 do
+        "Time's up! The word was: #{state.current_word}. #{drawer_name} earned #{drawer_pts} pts (#{correct_count} guessed)"
+      else
+        "Time's up! The word was: #{state.current_word}. Nobody guessed."
+      end
+
+    new_state =
+      %{
+        state
+        | players: updated_players,
+          round_deadline: nil,
+          round_active: false,
+          phase: :round_end
+      }
+      |> capture_round_result(drawer_pts)
+      |> add_sys_msg(msg)
+      |> bump_version()
+      |> notify_waiters()
+
+    Process.send_after(self(), :auto_advance_round, 3_000)
+    new_state
   end
 
   defp end_room(state) do
@@ -1014,7 +1087,8 @@ defmodule Scrawly.Games.RoomServer do
         total_rounds: total_rounds,
         current_drawer_id: drawer_id,
         current_word: nil,
-        time_left: state.round_duration,
+        round_deadline: nil,
+        hint_stage: 0,
         round_active: false,
         correct_guessers: [],
         drawing_strokes: [],
@@ -1069,7 +1143,11 @@ defmodule Scrawly.Games.RoomServer do
   defp resume_post_game(state), do: state
 
   defp schedule_word_choice_timeout(game_id, round) do
-    Process.send_after(self(), {:word_choice_timeout, game_id, round}, 15_000)
+    Process.send_after(
+      self(),
+      {:word_choice_timeout, game_id, round},
+      GameFlow.choice_duration_ms()
+    )
   end
 
   defp fresh_stroke_op(%{stroke_op: {epoch, last}}, {epoch, seq}) when seq <= last,
