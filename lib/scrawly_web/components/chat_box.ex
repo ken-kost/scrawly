@@ -1,6 +1,9 @@
 defmodule ScrawlyWeb.Components.ChatBox do
   @moduledoc """
   Stateless chat component. All events bubble to the parent GamePage.
+
+  Visitors without an account (`current_user_id` nil) can read but not type.
+  "me" is marked by the message's `player_id`, which the server sets.
   """
   use Hologram.Component
 
@@ -39,7 +42,7 @@ defmodule ScrawlyWeb.Components.ChatBox do
                   <div class="msg system">→ {msg.message}</div>
                 {%else}
                   <div class="msg">
-                    <span class={"who " <> if(Map.get(msg, :player_name) == @current_user_id, do: "me", else: "")}>{Map.get(msg, :player_name, "")}</span>
+                    <span class={"who " <> if(@current_user_id != nil and Map.get(msg, :player_id) == @current_user_id, do: "me", else: "")}>{Map.get(msg, :player_name, "")}</span>
                     <span>{msg.message}</span>
                   </div>
                 {/if}
@@ -52,12 +55,12 @@ defmodule ScrawlyWeb.Components.ChatBox do
         <div style="padding: 4px 14px; font-size: 11px; color: var(--danger);">slow down</div>
       {/if}
       <form class="chat-input" $submit="send_message">
-        <input type="text" name="message"
-               placeholder={if(@is_drawer, do: "you are drawing — chat disabled", else: "type a guess...")}
+        <input type="text" name="message" maxlength="240"
+               placeholder={if(@current_user_id == nil, do: "sign in to chat", else: if(@is_drawer, do: "you are drawing — chat disabled", else: "type a guess..."))}
                value={@current_message}
-               disabled={@disabled}
+               disabled={@disabled || @current_user_id == nil}
                $input={:update_message} />
-        <button type="submit" class="app-btn app-btn-sm" disabled={@disabled || String.trim(@current_message) == ""}>send</button>
+        <button type="submit" class="app-btn app-btn-sm" disabled={@disabled || @current_user_id == nil || String.trim(@current_message) == ""}>send</button>
       </form>
     </div>
     """

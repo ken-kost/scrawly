@@ -16,6 +16,7 @@ defmodule Scrawly.Accounts do
       define :sign_in_with_password, action: :sign_in_with_password, args: [:email, :password]
       define :join_room, action: :join_room, args: [:current_room_id]
       define :leave_room, action: :leave_room
+      define :add_score, action: :add_score, args: [:points]
       define :update_dark_mode, action: :update_dark_mode, args: [:dark_mode]
       define :update_accent_color, action: :update_accent_color, args: [:accent_color]
       define :update_profile, action: :update_profile

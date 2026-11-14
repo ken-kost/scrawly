@@ -92,9 +92,10 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       result = GamePage.action(:send_message, %{}, component)
 
       assert result.state.new_message == ""
-      # Messages now go to server via command, not added locally
+      # Messages go to the server via :submit_guess, not added locally
       assert result.state.chat_messages == []
-      assert result.next_command != nil
+      assert result.next_command.name == :submit_guess
+      assert result.next_command.params == %{room_id: "test-room", text: "Test message"}
     end
 
     test "send_message ignores empty messages" do

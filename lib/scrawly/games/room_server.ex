@@ -10,11 +10,15 @@ defmodule Scrawly.Games.RoomServer do
   use GenServer
 
   alias Scrawly.Games
-  alias Scrawly.Games.{Scoring, RoomServer.GameFlow}
+  alias Scrawly.Games.{Guess, Scoring, RoomServer.GameFlow}
 
   @registry Scrawly.RoomRegistry
   @supervisor Scrawly.RoomSupervisor
   @max_watchers 50
+  @max_chat_history 50
+  @max_message_length 240
+  @chat_max_messages 3
+  @chat_window_ms 5_000
 
   defstruct [
     :room_id,
@@ -130,8 +134,41 @@ defmodule Scrawly.Games.RoomServer do
     :exit, _ -> {:error, :not_found}
   end
 
-  def record_guess(room_id, player_id) do
-    GenServer.call(via(room_id), {:record_guess, player_id})
+  @doc """
+  Submits a chat line typed by `user_id`. Guesses are checked here, in the room
+  process, so scoring is atomic and guess order is deterministic.
+
+  The text is trimmed and capped at #{@max_message_length} characters. The
+  sender must be a player or a watcher; the displayed name is always the stored
+  username. Every sender is limited to #{@chat_max_messages} messages per
+  #{@chat_window_ms} ms, guesses included.
+
+  Replies:
+
+    * `{:ok, {:correct, points}}` - a non-drawer player guessed the word while
+      `:drawing` (first time this round). The text is not stored; a
+      `:correct_guess` line is posted instead.
+    * `{:ok, :suppressed}` - the word, typed by a player who already guessed or
+      by a watcher. Nothing is stored or broadcast.
+    * `{:ok, :chat}` - anything else, stored and broadcast as `:chat`.
+    * `{:error, :empty | :not_in_room | :rate_limited | :drawer_cannot_chat |
+      :not_found}` - nothing changes.
+  """
+  @spec submit_message(term, term, term) ::
+          {:ok, {:correct, pos_integer} | :suppressed | :chat}
+          | {:error, :empty | :not_in_room | :rate_limited | :drawer_cannot_chat | :not_found}
+  def submit_message(room_id, user_id, text) do
+    GenServer.call(via(room_id), {:submit_message, user_id, text})
+  catch
+    :exit, _ -> {:error, :not_found}
+  end
+
+  @doc """
+  Posts a server-side `:system` line to the room chat (e.g. the AI word status).
+  Never call this with client-provided text.
+  """
+  def system_message(room_id, text) when is_binary(text) do
+    GenServer.call(via(room_id), {:system_message, text})
   catch
     :exit, _ -> {:error, :not_found}
   end
@@ -195,12 +232,6 @@ defmodule Scrawly.Games.RoomServer do
       [{_pid, _}] -> true
       [] -> false
     end
-  end
-
-  def send_chat_message(room_id, message) do
-    GenServer.call(via(room_id), {:send_chat_message, message})
-  catch
-    :exit, _ -> {:error, :not_found}
   end
 
   def append_drawing(room_id, path_segment) do
@@ -413,71 +444,29 @@ defmodule Scrawly.Games.RoomServer do
     end
   end
 
-  def handle_call({:record_guess, player_id}, _from, state) do
-    cond do
-      state.phase != :drawing ->
-        {:reply, {:error, :round_not_active}, state}
+  def handle_call({:submit_message, user_id, text}, _from, state) do
+    now = System.monotonic_time(:millisecond)
 
-      player_id in state.correct_guessers ->
-        {:reply, {:ok, to_public(state), 0}, state}
-
-      true ->
-        order = length(state.correct_guessers) + 1
-        guess_pts = Scoring.guesser_points(state.time_left, state.round_duration, order: order)
-        new_guessers = [player_id | state.correct_guessers]
-        new_round_points = state.round_guesser_points ++ [guess_pts]
-
-        guesser_ids =
-          state.players
-          |> Enum.reject(&(&1.id == state.current_drawer_id))
-          |> Enum.map(& &1.id)
-
-        all_guessed = length(guesser_ids) > 0 and Enum.all?(guesser_ids, &(&1 in new_guessers))
-
-        updated_players =
-          Enum.map(state.players, fn p ->
-            if p.id == player_id, do: %{p | score: (p.score || 0) + guess_pts}, else: p
-          end)
-
-        intermediate = %{
-          state
-          | players: updated_players,
-            correct_guessers: new_guessers,
-            round_guesser_points: new_round_points
-        }
-
-        new_state =
-          if all_guessed do
-            Games.stop_round_timer(state.game_id)
-            Process.send_after(self(), :auto_advance_round, 3_000)
-
-            drawer_pts = Scoring.drawer_round_points(new_round_points)
-            drawer_name = get_player_name(state.players, state.current_drawer_id)
-
-            updated_players_with_drawer =
-              Enum.map(intermediate.players, fn p ->
-                if p.id == state.current_drawer_id,
-                  do: %{p | score: (p.score || 0) + drawer_pts},
-                  else: p
-              end)
-
-            %{
-              intermediate
-              | players: updated_players_with_drawer,
-                round_active: false,
-                phase: :round_end,
-                time_left: 0
-            }
-            |> capture_round_result(drawer_pts)
-            |> add_sys_msg("Everyone guessed! #{drawer_name} earns #{drawer_pts} pts!")
-          else
-            intermediate
-          end
-          |> bump_version()
-          |> notify_waiters()
-
-        {:reply, {:ok, to_public(new_state), guess_pts}, new_state}
+    with {:ok, text} <- clean_message(text),
+         {:ok, sender} <- find_sender(state, user_id),
+         {:ok, recent} <- check_chat_rate(state, user_id, now),
+         :ok <- check_drawer_can_chat(state, user_id) do
+      state
+      |> put_chat_rate(user_id, [now | recent], now)
+      |> deliver_message(sender, text)
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
+  end
+
+  def handle_call({:system_message, text}, _from, state) do
+    new_state =
+      state
+      |> add_sys_msg(text)
+      |> bump_version()
+      |> notify_waiters(false)
+
+    {:reply, :ok, new_state}
   end
 
   def handle_call(:end_game, _from, state) do
@@ -526,48 +515,6 @@ defmodule Scrawly.Games.RoomServer do
     case authorize(state, actor_id, :dissolve) do
       :ok -> {:stop, :normal, :ok, end_room(state)}
       {:error, reason} -> {:reply, {:error, reason}, state}
-    end
-  end
-
-  @chat_max_messages 3
-  @chat_window_ms 5_000
-
-  def handle_call({:send_chat_message, message}, _from, state) do
-    type = Map.get(message, :type)
-    player_name = Map.get(message, :player_name)
-
-    if type in [:system, :correct_guess] or player_name == "System" do
-      new_state =
-        %{state | chat_messages: [message | state.chat_messages] |> Enum.take(50)}
-        |> bump_version()
-        |> notify_waiters(false)
-
-      broadcast_chat_appended(state.room_id, message)
-      {:reply, :ok, new_state}
-    else
-      now = System.monotonic_time(:millisecond)
-      key = player_name || "unknown"
-
-      recent =
-        state.chat_rate_limits |> Map.get(key, []) |> Enum.filter(&(now - &1 < @chat_window_ms))
-
-      if length(recent) >= @chat_max_messages do
-        {:reply, {:error, :rate_limited}, state}
-      else
-        new_limits = Map.put(state.chat_rate_limits, key, [now | recent])
-
-        new_state =
-          %{
-            state
-            | chat_messages: [message | state.chat_messages] |> Enum.take(50),
-              chat_rate_limits: new_limits
-          }
-          |> bump_version()
-          |> notify_waiters(false)
-
-        broadcast_chat_appended(state.room_id, message)
-        {:reply, :ok, new_state}
-      end
     end
   end
 
@@ -748,6 +695,158 @@ defmodule Scrawly.Games.RoomServer do
 
   def handle_info({:timer_stopped, _}, state), do: {:noreply, state}
   def handle_info(_msg, state), do: {:noreply, state}
+
+  # ── Chat and guesses (submit_message/3) ───────────────────────────────────
+
+  defp clean_message(text) when is_binary(text) do
+    if String.valid?(text) do
+      case text |> String.trim() |> String.slice(0, @max_message_length) do
+        "" -> {:error, :empty}
+        text -> {:ok, text}
+      end
+    else
+      {:error, :empty}
+    end
+  end
+
+  defp clean_message(_text), do: {:error, :empty}
+
+  # Players first: a player who also watches keeps their player identity.
+  defp find_sender(_state, nil), do: {:error, :not_in_room}
+
+  defp find_sender(state, user_id) do
+    case Enum.find(state.players, &(&1.id == user_id)) ||
+           Enum.find(state.watchers, &(&1.id == user_id)) do
+      nil -> {:error, :not_in_room}
+      member -> {:ok, member}
+    end
+  end
+
+  defp check_chat_rate(state, user_id, now) do
+    recent =
+      state.chat_rate_limits
+      |> Map.get(user_id, [])
+      |> Enum.filter(&(now - &1 < @chat_window_ms))
+
+    if length(recent) >= @chat_max_messages, do: {:error, :rate_limited}, else: {:ok, recent}
+  end
+
+  # Also drops senders whose timestamps have all expired, so the map stays small.
+  defp put_chat_rate(state, user_id, stamps, now) do
+    limits =
+      state.chat_rate_limits
+      |> Map.put(user_id, stamps)
+      |> Map.filter(fn {_id, ts} -> Enum.any?(ts, &(now - &1 < @chat_window_ms)) end)
+
+    %{state | chat_rate_limits: limits}
+  end
+
+  defp check_drawer_can_chat(state, user_id) do
+    if user_id == state.current_drawer_id and state.phase in [:choosing, :drawing],
+      do: {:error, :drawer_cannot_chat},
+      else: :ok
+  end
+
+  # The text of a correct or suppressed guess is never stored or broadcast.
+  defp deliver_message(state, sender, text) do
+    cond do
+      not (state.phase == :drawing and Guess.matches?(text, state.current_word)) ->
+        {:reply, {:ok, :chat}, append_chat(state, sender, text)}
+
+      can_score?(state, sender.id) ->
+        {new_state, points} = award_guess(state, sender.id)
+        {:reply, {:ok, {:correct, points}}, new_state}
+
+      true ->
+        {:reply, {:ok, :suppressed}, state}
+    end
+  end
+
+  defp can_score?(state, user_id) do
+    player?(state, user_id) and user_id != state.current_drawer_id and
+      user_id not in state.correct_guessers
+  end
+
+  defp append_chat(state, sender, text) do
+    message = %{
+      id: System.unique_integer([:positive]),
+      player_id: sender.id,
+      player_name: Map.get(sender, :username) || "Unknown",
+      message: text,
+      timestamp: DateTime.utc_now(),
+      type: :chat
+    }
+
+    broadcast_chat_appended(state.room_id, message)
+
+    %{state | chat_messages: Enum.take([message | state.chat_messages], @max_chat_history)}
+    |> bump_version()
+    |> notify_waiters(false)
+  end
+
+  # Scores a correct guess, posts the :correct_guess line, and ends the round
+  # early (scoring the drawer) once every non-drawer player has guessed.
+  defp award_guess(state, player_id) do
+    order = length(state.correct_guessers) + 1
+    guess_pts = Scoring.guesser_points(state.time_left, state.round_duration, order: order)
+    new_guessers = [player_id | state.correct_guessers]
+    new_round_points = state.round_guesser_points ++ [guess_pts]
+
+    guesser_ids =
+      state.players
+      |> Enum.reject(&(&1.id == state.current_drawer_id))
+      |> Enum.map(& &1.id)
+
+    all_guessed = length(guesser_ids) > 0 and Enum.all?(guesser_ids, &(&1 in new_guessers))
+
+    updated_players =
+      Enum.map(state.players, fn p ->
+        if p.id == player_id, do: %{p | score: (p.score || 0) + guess_pts}, else: p
+      end)
+
+    player_name = get_player_name(state.players, player_id)
+
+    intermediate =
+      %{
+        state
+        | players: updated_players,
+          correct_guessers: new_guessers,
+          round_guesser_points: new_round_points
+      }
+      |> add_sys_msg("#{player_name} guessed the word! (+#{guess_pts} points)", :correct_guess)
+
+    new_state =
+      if all_guessed do
+        Games.stop_round_timer(state.game_id)
+        Process.send_after(self(), :auto_advance_round, 3_000)
+
+        drawer_pts = Scoring.drawer_round_points(new_round_points)
+        drawer_name = get_player_name(state.players, state.current_drawer_id)
+
+        updated_players_with_drawer =
+          Enum.map(intermediate.players, fn p ->
+            if p.id == state.current_drawer_id,
+              do: %{p | score: (p.score || 0) + drawer_pts},
+              else: p
+          end)
+
+        %{
+          intermediate
+          | players: updated_players_with_drawer,
+            round_active: false,
+            phase: :round_end,
+            time_left: 0
+        }
+        |> capture_round_result(drawer_pts)
+        |> add_sys_msg("Everyone guessed! #{drawer_name} earns #{drawer_pts} pts!")
+      else
+        intermediate
+      end
+      |> bump_version()
+      |> notify_waiters()
+
+    {new_state, guess_pts}
+  end
 
   defp end_room(state) do
     if state.game_id, do: Phoenix.PubSub.unsubscribe(Scrawly.PubSub, "game:#{state.game_id}")
@@ -935,5 +1034,5 @@ defmodule Scrawly.Games.RoomServer do
     do: GameFlow.capture_round_result(state, drawer_points)
 
   defp get_player_name(players, player_id), do: GameFlow.get_player_name(players, player_id)
-  defp add_sys_msg(state, text), do: GameFlow.add_sys_msg(state, text)
+  defp add_sys_msg(state, text, type \\ :system), do: GameFlow.add_sys_msg(state, text, type)
 end

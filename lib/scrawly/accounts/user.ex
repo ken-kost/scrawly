@@ -46,7 +46,12 @@ defmodule Scrawly.Accounts.User do
       require_atomic? false
       accept []
       argument :current_password, :string, sensitive?: true, allow_nil?: false
-      argument :password, :string, sensitive?: true, allow_nil?: false, constraints: [min_length: 8]
+
+      argument :password, :string,
+        sensitive?: true,
+        allow_nil?: false,
+        constraints: [min_length: 8]
+
       argument :password_confirmation, :string, sensitive?: true, allow_nil?: false
 
       validate confirm(:password, :password_confirmation)
@@ -98,7 +103,9 @@ defmodule Scrawly.Accounts.User do
         |> Ash.Changeset.force_change_attribute(:username, "guest-#{suffix}")
         |> Ash.Changeset.force_change_attribute(:is_guest, true)
         |> Ash.Changeset.after_action(fn _changeset, user ->
-          {:ok, token, _claims} = AshAuthentication.Jwt.token_for_user(user, %{"purpose" => "user"})
+          {:ok, token, _claims} =
+            AshAuthentication.Jwt.token_for_user(user, %{"purpose" => "user"})
+
           {:ok, Ash.Resource.put_metadata(user, :token, token)}
         end)
       end
@@ -111,14 +118,20 @@ defmodule Scrawly.Accounts.User do
     update :upgrade_guest do
       require_atomic? false
       accept [:email]
-      argument :password, :string, allow_nil?: false, sensitive?: true, constraints: [min_length: 8]
+
+      argument :password, :string,
+        allow_nil?: false,
+        sensitive?: true,
+        constraints: [min_length: 8]
 
       change set_attribute(:is_guest, false)
       change {AshAuthentication.Strategy.Password.HashPasswordChange, strategy_name: :password}
 
       change fn changeset, _context ->
         Ash.Changeset.after_action(changeset, fn _changeset, user ->
-          {:ok, token, _claims} = AshAuthentication.Jwt.token_for_user(user, %{"purpose" => "user"})
+          {:ok, token, _claims} =
+            AshAuthentication.Jwt.token_for_user(user, %{"purpose" => "user"})
+
           {:ok, Ash.Resource.put_metadata(user, :token, token)}
         end)
       end
@@ -166,6 +179,19 @@ defmodule Scrawly.Accounts.User do
 
     update :update_score do
       accept [:score]
+    end
+
+    # Adds a server-computed guess award in one UPDATE, so concurrent awards
+    # can't overwrite each other.
+    update :add_score do
+      accept []
+
+      argument :points, :integer do
+        allow_nil? false
+        constraints min: 0
+      end
+
+      change atomic_update(:score, expr(score + ^arg(:points)))
     end
 
     update :set_player_state do

@@ -230,14 +230,18 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
     }
   end
 
-  @doc "Prepends a system chat message to state.chat_messages (capped at 50)."
-  def add_sys_msg(state, text) do
+  @doc """
+  Prepends a server-built chat line to state.chat_messages (capped at 50) and
+  broadcasts it. `type` is `:system` or `:correct_guess`; these lines only ever
+  come from the room process, never from client input.
+  """
+  def add_sys_msg(state, text, type \\ :system) do
     msg = %{
-      id: :rand.uniform(100_000),
+      id: System.unique_integer([:positive]),
       player_name: "System",
       message: text,
       timestamp: DateTime.utc_now(),
-      type: :system
+      type: type
     }
 
     Hologram.Realtime.broadcast_action({:room, state.room_id}, :chat_appended, %{message: msg})

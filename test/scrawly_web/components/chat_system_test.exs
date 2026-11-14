@@ -2,8 +2,9 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
   @moduledoc """
   Comprehensive unit tests for the chat system.
 
-  Tests the chat-related actions on GamePage: message submission, rate limiting,
-  system messages, close guess detection, and message history management.
+  Tests the chat-related actions on GamePage: message submission (the server
+  checks guesses via :submit_guess), rate limiting, system messages, and
+  message history management.
   Since Hologram actions are pure functions on %Component{} structs, we test
   them directly without needing a running server.
   """
@@ -55,6 +56,13 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
     %Hologram.Component{state: Map.merge(defaults, overrides)}
   end
 
+  # The client sends only the room and the typed text; the server decides
+  # whether it is a guess, who sent it and what it is worth.
+  defp assert_submits(result, text) do
+    assert %{name: :submit_guess, params: params} = result.next_command
+    assert params == %{room_id: "test-room", text: text}
+  end
+
   # ── 1. Message Submission Flow ──────────────────────────────────────────
 
   describe "send_message — basic submission" do
@@ -63,10 +71,9 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       result = GamePage.action(:send_message, %{}, comp)
 
       assert result.state.new_message == ""
-      # Messages now go through the server via command, not added to local state
+      # Messages go through the server, not added to local state
       assert result.state.chat_messages == []
-      # A next_command should be set to send the message to the server
-      assert result.next_command != nil
+      assert_submits(result, "hello everyone")
     end
 
     test "ignores empty messages" do
@@ -112,62 +119,43 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       # Message goes to server via command, not added locally
       assert result.state.new_message == ""
       assert result.state.chat_messages == []
-      assert result.next_command != nil
+      assert_submits(result, "I already got it")
     end
   end
 
-  # ── 2. Correct Guess Detection ──────────────────────────────────────────
+  # ── 2. Guesses Are Checked On The Server ────────────────────────────────
 
-  describe "send_message — correct guess" do
-    test "exact match triggers correct guess via command" do
+  describe "send_message — guesses go to the server" do
+    test "the word is sent as plain text, not matched locally" do
       comp = base_component(%{new_message: "butterfly", time_left: 60})
       result = GamePage.action(:send_message, %{}, comp)
 
-      # Correct guess goes to server via record_correct_guess command
       assert result.state.new_message == ""
-      assert "user-1" in result.state.correct_guessers
-      # Messages are not added locally — they go through the server
+      assert_submits(result, "butterfly")
+      # no optimistic guesser entry: :room_delta carries correct_guessers
+      assert result.state.correct_guessers == []
       assert result.state.chat_messages == []
-      assert result.next_command != nil
     end
 
-    test "case-insensitive match triggers correct guess" do
-      comp = base_component(%{new_message: "BUTTERFLY"})
-      result = GamePage.action(:send_message, %{}, comp)
-
-      assert "user-1" in result.state.correct_guessers
-      assert result.next_command != nil
+    test "case and whitespace variants are sent as typed" do
+      for text <- ["BUTTERFLY", "  butterfly  "] do
+        result = GamePage.action(:send_message, %{}, base_component(%{new_message: text}))
+        assert_submits(result, text)
+        assert result.state.correct_guessers == []
+      end
     end
 
-    test "match with surrounding whitespace triggers correct guess" do
-      comp = base_component(%{new_message: "  butterfly  "})
-      result = GamePage.action(:send_message, %{}, comp)
-
-      assert "user-1" in result.state.correct_guessers
-      assert result.next_command != nil
-    end
-
-    test "correct guess sends points to server (not updated locally)" do
+    test "no player id, name, points or type are sent" do
       comp = base_component(%{new_message: "butterfly", time_left: 80})
       result = GamePage.action(:send_message, %{}, comp)
 
-      # Points are sent to server via command, not updated locally
-      assert "user-1" in result.state.correct_guessers
-      assert result.next_command != nil
+      assert result.next_command.params |> Map.keys() |> Enum.sort() == [:room_id, :text]
     end
 
-    test "correct guess adds player to correct_guessers" do
-      comp = base_component(%{new_message: "butterfly"})
-      result = GamePage.action(:send_message, %{}, comp)
-
-      assert "user-1" in result.state.correct_guessers
-    end
-
-    test "correct guess does not update local player score (server handles it)" do
+    test "does not update the local player score" do
       comp = base_component(%{new_message: "butterfly", time_left: 60})
       result = GamePage.action(:send_message, %{}, comp)
 
-      # Score is NOT updated locally — the server handles it via record_correct_guess
       alice = Enum.find(result.state.players, &(&1.id == "user-1"))
       assert alice.score == 0
     end
@@ -185,63 +173,38 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       # Drawer is completely blocked from chat — input just clears
       assert result.state.new_message == ""
       assert result.state.chat_messages == []
+      assert result.next_command == nil
     end
 
-    test "already-guessed player cannot guess again — sends as regular chat" do
-      comp =
-        base_component(%{
-          new_message: "butterfly",
-          correct_guessers: ["user-1"]
-        })
-
+    test "an already-guessed player's text is sent the same way" do
+      comp = base_component(%{new_message: "butterfly", correct_guessers: ["user-1"]})
       result = GamePage.action(:send_message, %{}, comp)
 
-      # Message goes as regular chat via command
+      assert_submits(result, "butterfly")
       assert result.state.chat_messages == []
-      assert result.next_command != nil
     end
 
-    test "no correct guess when no current word — sends as regular chat" do
-      comp = base_component(%{new_message: "butterfly", current_word: nil})
-      result = GamePage.action(:send_message, %{}, comp)
+    test "the same command is sent whether or not a word is known locally" do
+      for word <- [nil, ""] do
+        comp = base_component(%{new_message: "butterfly", current_word: word})
+        result = GamePage.action(:send_message, %{}, comp)
 
-      assert result.state.chat_messages == []
-      assert result.next_command != nil
-    end
-
-    test "no correct guess when current word is empty — sends as regular chat" do
-      comp = base_component(%{new_message: "butterfly", current_word: ""})
-      result = GamePage.action(:send_message, %{}, comp)
-
-      assert result.state.chat_messages == []
-      assert result.next_command != nil
+        assert_submits(result, "butterfly")
+        assert result.state.chat_messages == []
+      end
     end
   end
 
-  # ── 3. Close Guess Detection (Obfuscation) ─────────────────────────────
+  # ── 3. No Client-Side Classification ──────────────────────────────────
 
-  describe "send_message — close guess detection" do
-    test "messages are sent to server via command" do
-      comp = base_component(%{new_message: "butter"})
-      result = GamePage.action(:send_message, %{}, comp)
+  describe "send_message — no client-side classification" do
+    test "near misses and unrelated words are sent as plain text" do
+      for text <- ["butter", "elephant", "bu"] do
+        result = GamePage.action(:send_message, %{}, base_component(%{new_message: text}))
 
-      assert result.state.new_message == ""
-      assert result.next_command != nil
-      assert result.next_command.params.message.type == :chat
-    end
-
-    test "completely unrelated word is sent as regular chat" do
-      comp = base_component(%{new_message: "elephant"})
-      result = GamePage.action(:send_message, %{}, comp)
-
-      assert result.next_command.params.message.type == :chat
-    end
-
-    test "very short substring not flagged (length < 3)" do
-      comp = base_component(%{new_message: "bu", current_word: "butterfly"})
-      result = GamePage.action(:send_message, %{}, comp)
-
-      assert result.next_command.params.message.type == :chat
+        assert result.state.new_message == ""
+        assert_submits(result, text)
+      end
     end
 
     test "drawer messages are blocked entirely" do
@@ -257,25 +220,14 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       # Drawer is blocked — no message sent, input cleared
       assert result.state.new_message == ""
       assert result.state.chat_messages == []
+      assert result.next_command == nil
     end
 
-    test "already-guessed player messages not flagged as close guess" do
-      comp =
-        base_component(%{
-          new_message: "butter",
-          correct_guessers: ["user-1"]
-        })
-
-      result = GamePage.action(:send_message, %{}, comp)
-
-      assert result.next_command.params.message.type == :chat
-    end
-
-    test "close guess not detected when no active word" do
-      comp = base_component(%{new_message: "butter", current_word: nil})
-      result = GamePage.action(:send_message, %{}, comp)
-
-      assert result.next_command.params.message.type == :chat
+    test "already-guessed players and missing words change nothing client-side" do
+      for overrides <- [%{correct_guessers: ["user-1"]}, %{current_word: nil}] do
+        comp = base_component(Map.put(overrides, :new_message, "butter"))
+        assert_submits(GamePage.action(:send_message, %{}, comp), "butter")
+      end
     end
   end
 
@@ -338,6 +290,30 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       result = GamePage.action(:clear_rate_limit, %{}, comp)
 
       assert result.state.rate_limited == false
+    end
+
+    test "a server-side :rate_limited result sets the flag and clears it after 3 s" do
+      result = GamePage.action(:guess_result, %{outcome: :rate_limited}, base_component())
+
+      assert result.state.rate_limited == true
+      assert result.next_action.name == :clear_rate_limit
+      assert result.next_action.delay == 3_000
+    end
+
+    test "other guess results change nothing" do
+      comp = base_component()
+
+      for params <- [
+            %{outcome: :correct, points: 300},
+            %{outcome: :chat},
+            %{outcome: :suppressed},
+            %{outcome: :drawer_cannot_chat},
+            %{outcome: :empty}
+          ] do
+        result = GamePage.action(:guess_result, params, comp)
+        assert result.state == comp.state
+        assert result.next_action == nil
+      end
     end
   end
 
@@ -533,11 +509,11 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
     end
   end
 
-  # ── 6. All Guessed — Round Complete ────────────────────────────────────
+  # ── 6. Correct Guess Handling ──────────────────────────────────────────
 
   describe "correct guess handling" do
-    test "correct guess updates guessers list and sends command" do
-      # user-2 is the drawer, user-1 guesses correctly
+    test "a guess only sends :submit_guess; guessers and scores come from the server" do
+      # user-2 is the drawer, user-1 types the word
       comp =
         base_component(%{
           new_message: "butterfly",
@@ -549,30 +525,13 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
 
       result = GamePage.action(:send_message, %{}, comp)
 
-      # User should be in correct_guessers (updated locally)
-      assert "user-1" in result.state.correct_guessers
-      # Message goes to server via record_correct_guess command
-      assert result.next_command != nil
-    end
-
-    test "correct guess does not update local player score" do
-      comp =
-        base_component(%{
-          new_message: "butterfly",
-          current_word: "butterfly",
-          time_left: 60,
-          correct_guessers: [],
-          current_drawer: %{id: "user-2", name: "Bob"}
-        })
-
-      result = GamePage.action(:send_message, %{}, comp)
-
+      assert_submits(result, "butterfly")
+      assert result.state.correct_guessers == []
       alice = Enum.find(result.state.players, &(&1.id == "user-1"))
-      # Score is NOT updated locally — the server handles it
       assert alice.score == 0
     end
 
-    test "already guessed player's message treated as regular chat via command" do
+    test "an already-guessed player's word is sent like any text" do
       comp =
         base_component(%{
           new_message: "butterfly",
@@ -584,9 +543,8 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
 
       result = GamePage.action(:send_message, %{}, comp)
 
-      # Message goes as regular chat via send_chat_message command
       assert result.state.chat_messages == []
-      assert result.next_command != nil
+      assert_submits(result, "butterfly")
     end
   end
 
@@ -610,7 +568,7 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
 
       # Local chat_messages unchanged — message sent to server via command
       assert length(result.state.chat_messages) == 49
-      assert result.next_command != nil
+      assert_submits(result, "overflow")
     end
 
     test "room_refreshed replaces local chat_messages with server state" do

@@ -9,6 +9,8 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   params. Rejected commands reply with `:command_denied` (see `Auth.deny/3`).
   """
 
+  require Logger
+
   import Hologram.Component, only: [put_action: 2, put_action: 3, put_broadcast_except: 5]
 
   alias Scrawly.{Accounts, Games}
@@ -87,7 +89,7 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
       case RoomServer.start_game(room_id, uid, %{word_choices: choices, ai_words: remaining_ai}) do
         {:ok, _state} ->
-          if ai_status, do: RoomServer.send_chat_message(room_id, system_message(ai_status))
+          if ai_status, do: RoomServer.system_message(room_id, ai_status)
 
           case RoomServer.get_state(room_id) do
             {:ok, state} -> put_action(server, :room_refreshed, enrich_state(state, uid))
@@ -164,43 +166,40 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
   end
 
-  def send_chat_message(%{room_id: room_id, message: message}, server) do
-    full_msg =
-      Map.merge(message, %{
-        id: :rand.uniform(100_000),
-        timestamp: DateTime.utc_now()
-      })
+  @doc """
+  Submits a chat line or guess as the session user. Only `room_id` and `text`
+  are read from params; identity, display name and points never come from the
+  client. The room process checks the guess (`RoomServer.submit_message/3`);
+  on a correct guess the session user's stored score is raised atomically.
 
-    RoomServer.send_chat_message(room_id, full_msg)
-    server
-  end
+  Replies `:guess_result` with `outcome` (`:correct` also carries `points`), or
+  `:command_denied` for visitors without an account, non-members and rooms
+  that no longer exist.
+  """
+  def submit_guess(params, server) do
+    case Auth.user_id(server) do
+      nil ->
+        Auth.deny(server, :submit_guess, :unauthenticated)
 
-  def record_correct_guess(
-        %{room_id: room_id, player_id: player_id, player_name: player_name} = _params,
-        server
-      ) do
-    case RoomServer.record_guess(room_id, player_id) do
-      {:ok, _state, points} when points > 0 ->
-        with {:ok, user} <- Ash.get(Scrawly.Accounts.User, player_id) do
-          new_score = (user.score || 0) + points
-          user |> Ash.Changeset.for_update(:update_score, %{score: new_score}) |> Ash.update()
+      uid ->
+        case RoomServer.submit_message(Map.get(params, :room_id), uid, Map.get(params, :text)) do
+          {:ok, {:correct, points}} ->
+            persist_guess_points(uid, points)
+            put_action(server, :guess_result, outcome: :correct, points: points)
+
+          {:ok, outcome} ->
+            put_action(server, :guess_result, outcome: outcome)
+
+          {:error, :not_in_room} ->
+            Auth.deny(server, :submit_guess, :not_member)
+
+          {:error, :not_found} ->
+            Auth.deny(server, :submit_guess, :not_found)
+
+          {:error, reason} ->
+            put_action(server, :guess_result, outcome: reason)
         end
-
-        sys_msg = %{
-          id: :rand.uniform(100_000),
-          player_name: "System",
-          message: "#{player_name} guessed the word! (+#{points} points)",
-          timestamp: DateTime.utc_now(),
-          type: :correct_guess
-        }
-
-        RoomServer.send_chat_message(room_id, sys_msg)
-
-      _ ->
-        :ok
     end
-
-    server
   end
 
   def complete_stroke(
@@ -281,14 +280,16 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
   end
 
-  defp system_message(text) do
-    %{
-      id: :rand.uniform(100_000),
-      player_name: "System",
-      message: text,
-      timestamp: DateTime.utc_now(),
-      type: :system
-    }
+  # Runs after the room call has already scored the guess: a failed DB write is
+  # logged, never retried through the room process.
+  defp persist_guess_points(uid, points) do
+    case Accounts.add_score(uid, points) do
+      {:ok, _user} ->
+        :ok
+
+      {:error, error} ->
+        Logger.error("could not add #{points} points to user #{inspect(uid)}: #{inspect(error)}")
+    end
   end
 
   defp poll_and_enrich(server, room_id, user_id) do

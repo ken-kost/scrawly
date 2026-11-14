@@ -2,7 +2,7 @@ defmodule Scrawly.Integration.MultiplayerSimultaneousTest do
   use Scrawly.DataCase
 
   alias Scrawly.Games
-  alias Scrawly.Games.WordHints
+  alias Scrawly.Games.{Guess, WordHints}
   alias Scrawly.Accounts.User
 
   describe "multiple players joining and playing simultaneously" do
@@ -86,7 +86,7 @@ defmodule Scrawly.Integration.MultiplayerSimultaneousTest do
       word = game.current_word
 
       # Simulate guesser1 guessing correctly (fast — 60s left = 387 points)
-      assert guess_matches?(word, word)
+      assert Guess.matches?(word, word)
       points_g1 = calculate_points(60)
 
       {:ok, updated_g1} =
@@ -257,9 +257,9 @@ defmodule Scrawly.Integration.MultiplayerSimultaneousTest do
       word = game.current_word
 
       # Wrong guesses don't match
-      refute guess_matches?("completely_wrong_word", word)
-      refute guess_matches?("", word)
-      refute guess_matches?(String.slice(word, 0, 2), word)
+      refute Guess.matches?("completely_wrong_word", word)
+      refute Guess.matches?("", word)
+      refute Guess.matches?(String.slice(word, 0, 2), word)
 
       # Score unchanged for guesser
       {:ok, fresh_guesser} = Ash.get(User, guesser.id)
@@ -267,14 +267,10 @@ defmodule Scrawly.Integration.MultiplayerSimultaneousTest do
     end
   end
 
-  # Mirror scoring and matching logic from GamePage
+  # Mirror the scoring formula used by these scenarios
   defp calculate_points(time_left) when is_integer(time_left) do
     base = 50
     bonus = div(time_left * 450, 80)
     base + bonus
-  end
-
-  defp guess_matches?(guess, word) do
-    String.downcase(String.trim(guess)) == String.downcase(String.trim(word))
   end
 end

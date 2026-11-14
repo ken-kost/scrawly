@@ -323,6 +323,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
+  # The server checks guesses, scores them and picks the display name: the
+  # client only sends the typed text. The drawer short-circuit and the local
+  # throttle just save round trips; the room process enforces both.
   def action(:send_message, _params, component) do
     if component.state.is_drawer do
       put_state(component, :new_message, "")
@@ -341,7 +344,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
           |> put_action(name: :clear_rate_limit, delay: 3_000)
         else
           if String.trim(message) != "" do
-            handle_chat_message(component, message, now, recent)
+            component
+            |> put_state(:new_message, "")
+            |> put_state(:message_timestamps, [now | recent])
+            |> put_command(:submit_guess, room_id: component.state.room_id, text: message)
           else
             component
           end
@@ -349,6 +355,16 @@ defmodule ScrawlyWeb.Pages.GamePage do
       end
     end
   end
+
+  # Reply to :submit_guess. Scores, guessers and chat lines arrive through
+  # :room_delta / :chat_appended; only the server-side rate limit needs a hint.
+  def action(:guess_result, %{outcome: :rate_limited}, component) do
+    component
+    |> put_state(:rate_limited, true)
+    |> put_action(name: :clear_rate_limit, delay: 3_000)
+  end
+
+  def action(:guess_result, _params, component), do: component
 
   def action(:clear_rate_limit, _params, component),
     do: put_state(component, :rate_limited, false)
@@ -527,10 +543,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def command(:leave_watcher, params, server), do: Commands.leave_watcher(params, server)
   def command(:start_game, params, server), do: Commands.start_game(params, server)
   def command(:leave_room, params, server), do: Commands.leave_room(params, server)
-  def command(:send_chat_message, params, server), do: Commands.send_chat_message(params, server)
-
-  def command(:record_correct_guess, params, server),
-    do: Commands.record_correct_guess(params, server)
+  def command(:submit_guess, params, server), do: Commands.submit_guess(params, server)
 
   def command(:choose_word, params, server), do: Commands.choose_word(params, server)
 
@@ -653,79 +666,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
         put_state(component, :drawing_strokes, Map.get(params, :drawing_strokes, []))
     end
   end
-
-  defp handle_chat_message(component, message, now, recent_timestamps) do
-    player_name = Map.get(component.state, :current_user_username, "You")
-    current_user_id = component.state.current_user_id
-    current_word = component.state.current_word
-    correct_guessers = Map.get(component.state, :correct_guessers, [])
-    already_guessed = current_user_id in correct_guessers
-
-    is_correct =
-      not already_guessed and
-        current_word != nil and current_word != "" and
-        guess_matches?(message, current_word)
-
-    if is_correct do
-      handle_correct_guess(component, player_name, current_user_id, now, recent_timestamps)
-    else
-      handle_regular_message(
-        component,
-        message,
-        player_name,
-        already_guessed,
-        current_word,
-        now,
-        recent_timestamps
-      )
-    end
-  end
-
-  defp handle_correct_guess(component, player_name, current_user_id, now, recent_timestamps) do
-    time_left = component.state.time_left
-    points = calculate_points(time_left)
-
-    component
-    |> put_state(:new_message, "")
-    |> put_state(:correct_guessers, [
-      current_user_id | Map.get(component.state, :correct_guessers, [])
-    ])
-    |> put_state(:message_timestamps, [now | recent_timestamps])
-    |> put_command(:record_correct_guess,
-      room_id: component.state.room_id,
-      player_id: current_user_id,
-      player_name: player_name,
-      points: points
-    )
-  end
-
-  defp handle_regular_message(
-         component,
-         message,
-         player_name,
-         _already_guessed,
-         _current_word,
-         now,
-         recent_timestamps
-       ) do
-    chat_msg = %{
-      player_name: player_name,
-      message: message,
-      type: :chat
-    }
-
-    component
-    |> put_state(:new_message, "")
-    |> put_state(:message_timestamps, [now | recent_timestamps])
-    |> put_command(:send_chat_message, room_id: component.state.room_id, message: chat_msg)
-  end
-
-  defp guess_matches?(guess, word) do
-    String.downcase(String.trim(guess)) == String.downcase(String.trim(word))
-  end
-
-  defp calculate_points(time_left) when is_integer(time_left) and time_left > 0, do: time_left
-  defp calculate_points(_), do: 0
 
   def template do
     ~HOLO"""
