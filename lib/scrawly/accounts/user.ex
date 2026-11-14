@@ -58,16 +58,17 @@ defmodule Scrawly.Accounts.User do
     end
 
     create :register_with_password do
-      argument :password, :string, allow_nil?: false, sensitive?: true
+      # No upsert: a duplicate email must fail on the :unique_email identity.
+      # An upsert would return the existing row with a fresh token (account takeover).
+      argument :password, :string,
+        allow_nil?: false,
+        sensitive?: true,
+        constraints: [min_length: 8]
 
       accept [:email]
 
       change AshAuthentication.GenerateTokenChange
       change AshAuthentication.Strategy.Password.HashPasswordChange
-
-      upsert? true
-      upsert_identity :unique_email
-      upsert_fields [:email]
 
       change fn changeset, _context ->
         Ash.Changeset.after_action(changeset, fn _changeset, user ->
