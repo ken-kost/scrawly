@@ -176,5 +176,11 @@ defmodule ScrawlyWeb.Pages.GameScorePageAuthzTest do
       assert GameScorePage.action(:command_denied, %{reason: :not_creator}, component) ==
                component
     end
+
+    test "a late :stroke_op_acked from GamePage is a no-op" do
+      component = %Hologram.Component{state: %{room_id: "r1"}}
+
+      assert GameScorePage.action(:stroke_op_acked, %{op_seq: 3}, component) == component
+    end
   end
 end

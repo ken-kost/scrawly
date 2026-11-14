@@ -56,6 +56,7 @@ defmodule Scrawly.Games.RoomServer do
     round_start_scores: %{},
     chat_messages: [],
     drawing_strokes: [],
+    stroke_op: nil,
     chat_rate_limits: %{},
     past_games: []
   ]
@@ -265,41 +266,61 @@ defmodule Scrawly.Games.RoomServer do
     end
   end
 
+  @typedoc """
+  Orders one drawer tab's canvas ops: `{op_epoch, op_seq}`, see
+  `StrokeRules.op_tag/2`. The room keeps the last applied tag for the round
+  and ignores an op with the same epoch and a seq that is not greater (a
+  resend or a late duplicate). `nil` skips the check.
+  """
+  @type stroke_op :: {String.t(), pos_integer} | nil
+
   @doc """
   Appends a completed stroke drawn by `actor_id`, who must pass
-  `authorize(state, actor_id, :draw)`. Only `path`, `color` and `width` are
-  kept, after `StrokeRules.check_append/2`.
+  `authorize(state, actor_id, :draw)`. The stroke is
+  `%{id, path, color, width}`, checked by `StrokeRules.check_append/2`; other
+  keys are dropped.
 
-  Returns `:ok`, `{:error, :not_drawer | :wrong_phase | :not_found}`, or
-  `{:error, :invalid_stroke | :stroke_limit, strokes}` with the canvas as
+  Idempotent: when the room already holds a stroke with that id, or `op` is
+  stale (see `t:stroke_op/0`), nothing changes and it returns `:duplicate`.
+
+  Returns `:ok`, `:duplicate`, `{:error, :not_drawer | :wrong_phase | :not_found}`,
+  or `{:error, :invalid_stroke | :stroke_limit, strokes}` with the canvas as
   stored, so the drawer can resync.
   """
-  @spec append_drawing(term, term, term) ::
+  @spec append_drawing(term, term, term, stroke_op) ::
           :ok
+          | :duplicate
           | {:error, :not_drawer | :wrong_phase | :not_found}
           | {:error, :invalid_stroke | :stroke_limit, [StrokeRules.stroke()]}
-  def append_drawing(room_id, actor_id, stroke) do
-    GenServer.call(via(room_id), {:append_drawing, actor_id, stroke})
-  catch
-    :exit, _ -> {:error, :not_found}
-  end
-
-  @doc "Clears the canvas for the current drawer (`authorize/3` `:draw`)."
-  @spec clear_drawing(term, term) :: :ok | {:error, :not_drawer | :wrong_phase | :not_found}
-  def clear_drawing(room_id, actor_id) do
-    GenServer.call(via(room_id), {:clear_drawing, actor_id})
+  def append_drawing(room_id, actor_id, stroke, op \\ nil) do
+    GenServer.call(via(room_id), {:append_drawing, actor_id, stroke, op})
   catch
     :exit, _ -> {:error, :not_found}
   end
 
   @doc """
-  Drops the last stroke for the current drawer (`authorize/3` `:draw`) and
-  returns the remaining strokes.
+  Clears the canvas for the current drawer (`authorize/3` `:draw`). A stale
+  `op` changes nothing and returns `:duplicate`.
   """
-  @spec undo_drawing(term, term) ::
-          {:ok, [StrokeRules.stroke()]} | {:error, :not_drawer | :wrong_phase | :not_found}
-  def undo_drawing(room_id, actor_id) do
-    GenServer.call(via(room_id), {:undo_drawing, actor_id})
+  @spec clear_drawing(term, term, stroke_op) ::
+          :ok | :duplicate | {:error, :not_drawer | :wrong_phase | :not_found}
+  def clear_drawing(room_id, actor_id, op \\ nil) do
+    GenServer.call(via(room_id), {:clear_drawing, actor_id, op})
+  catch
+    :exit, _ -> {:error, :not_found}
+  end
+
+  @doc """
+  Removes the stroke with id `stroke_id` for the current drawer
+  (`authorize/3` `:draw`) and returns the remaining strokes. An unknown id or
+  a stale `op` changes nothing and returns `:duplicate`.
+  """
+  @spec undo_drawing(term, term, term, stroke_op) ::
+          {:ok, [StrokeRules.stroke()]}
+          | :duplicate
+          | {:error, :not_drawer | :wrong_phase | :not_found}
+  def undo_drawing(room_id, actor_id, stroke_id, op \\ nil) do
+    GenServer.call(via(room_id), {:undo_drawing, actor_id, stroke_id, op})
   catch
     :exit, _ -> {:error, :not_found}
   end
@@ -573,6 +594,7 @@ defmodule Scrawly.Games.RoomServer do
           round_guesser_points: [],
           correct_guessers: [],
           drawing_strokes: [],
+          stroke_op: nil,
           round_results: [],
           used_words: [],
           ai_words: [],
@@ -596,11 +618,16 @@ defmodule Scrawly.Games.RoomServer do
     end
   end
 
-  def handle_call({:append_drawing, actor_id, stroke}, _from, state) do
+  def handle_call({:append_drawing, actor_id, stroke, op}, _from, state) do
     with :ok <- authorize(state, actor_id, :draw),
+         :ok <- fresh_stroke_op(state, op),
+         :ok <- new_stroke_id(state, stroke),
          {:ok, stroke} <- StrokeRules.check_append(state.drawing_strokes, stroke) do
-      {:reply, :ok, put_strokes(state, state.drawing_strokes ++ [stroke])}
+      {:reply, :ok, state |> put_stroke_op(op) |> put_strokes(state.drawing_strokes ++ [stroke])}
     else
+      :duplicate ->
+        {:reply, :duplicate, state}
+
       {:error, reason} when reason in [:invalid_stroke, :stroke_limit] ->
         {:reply, {:error, reason, state.drawing_strokes}, state}
 
@@ -609,21 +636,24 @@ defmodule Scrawly.Games.RoomServer do
     end
   end
 
-  def handle_call({:clear_drawing, actor_id}, _from, state) do
-    case authorize(state, actor_id, :draw) do
-      :ok -> {:reply, :ok, put_strokes(state, [])}
+  def handle_call({:clear_drawing, actor_id, op}, _from, state) do
+    with :ok <- authorize(state, actor_id, :draw),
+         :ok <- fresh_stroke_op(state, op) do
+      {:reply, :ok, state |> put_stroke_op(op) |> put_strokes([])}
+    else
+      :duplicate -> {:reply, :duplicate, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
-  def handle_call({:undo_drawing, actor_id}, _from, state) do
-    case authorize(state, actor_id, :draw) do
-      :ok ->
-        new_strokes = Enum.drop(state.drawing_strokes, -1)
-        {:reply, {:ok, new_strokes}, put_strokes(state, new_strokes)}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
+  def handle_call({:undo_drawing, actor_id, stroke_id, op}, _from, state) do
+    with :ok <- authorize(state, actor_id, :draw),
+         :ok <- fresh_stroke_op(state, op),
+         {:ok, remaining} <- drop_stroke(state.drawing_strokes, stroke_id) do
+      {:reply, {:ok, remaining}, state |> put_stroke_op(op) |> put_strokes(remaining)}
+    else
+      :duplicate -> {:reply, :duplicate, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
@@ -970,6 +1000,7 @@ defmodule Scrawly.Games.RoomServer do
         round_active: false,
         correct_guessers: [],
         drawing_strokes: [],
+        stroke_op: nil,
         chat_messages: [],
         round_results: [],
         used_words: [],
@@ -1004,6 +1035,27 @@ defmodule Scrawly.Games.RoomServer do
 
   defp schedule_word_choice_timeout(game_id, round) do
     Process.send_after(self(), {:word_choice_timeout, game_id, round}, 15_000)
+  end
+
+  defp fresh_stroke_op(%{stroke_op: {epoch, last}}, {epoch, seq}) when seq <= last,
+    do: :duplicate
+
+  defp fresh_stroke_op(_state, _op), do: :ok
+
+  defp put_stroke_op(state, nil), do: state
+  defp put_stroke_op(state, op), do: %{state | stroke_op: op}
+
+  defp new_stroke_id(state, %{id: id}) do
+    if Enum.any?(state.drawing_strokes, &(&1.id == id)), do: :duplicate, else: :ok
+  end
+
+  defp new_stroke_id(_state, _stroke), do: :ok
+
+  defp drop_stroke(strokes, stroke_id) do
+    case Enum.split_with(strokes, &(&1.id == stroke_id)) do
+      {[], _strokes} -> :duplicate
+      {_dropped, remaining} -> {:ok, remaining}
+    end
   end
 
   # Stroke changes are fanned out by the stroke commands, not by :room_delta.

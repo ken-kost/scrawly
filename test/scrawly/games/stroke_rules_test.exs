@@ -3,7 +3,7 @@ defmodule Scrawly.Games.StrokeRulesTest do
 
   alias Scrawly.Games.StrokeRules
 
-  @stroke %{path: "M 10 20 L 30.5 40.25", color: "#d63838", width: 5}
+  @stroke %{id: "s-1", path: "M 10 20 L 30.5 40.25", color: "#d63838", width: 5}
 
   describe "valid_color?/1" do
     test "accepts #RRGGBB in either case (palette, eraser, default)" do
@@ -104,8 +104,33 @@ defmodule Scrawly.Games.StrokeRulesTest do
     end
   end
 
+  describe "op_tag/2" do
+    test "is {epoch, seq} for a sane epoch and a positive integer seq" do
+      assert StrokeRules.op_tag("e-1", 1) == {"e-1", 1}
+
+      assert StrokeRules.op_tag(String.duplicate("e", 64), 9_999) ==
+               {String.duplicate("e", 64), 9_999}
+    end
+
+    test "is nil otherwise" do
+      for {epoch, seq} <- [
+            {nil, 1},
+            {"", 1},
+            {String.duplicate("e", 65), 1},
+            {7, 1},
+            {"e-1", 0},
+            {"e-1", -1},
+            {"e-1", 1.0},
+            {"e-1", "1"},
+            {"e-1", nil}
+          ] do
+        assert StrokeRules.op_tag(epoch, seq) == nil, inspect({epoch, seq})
+      end
+    end
+  end
+
   describe "check_append/2" do
-    test "returns only path, color and width" do
+    test "returns only id, path, color and width" do
       assert StrokeRules.check_append([], Map.merge(@stroke, %{stroke_id: "x", user_id: "y"})) ==
                {:ok, @stroke}
     end
@@ -115,6 +140,11 @@ defmodule Scrawly.Games.StrokeRulesTest do
             Map.delete(@stroke, :path),
             Map.delete(@stroke, :color),
             Map.delete(@stroke, :width),
+            Map.delete(@stroke, :id),
+            %{@stroke | id: nil},
+            %{@stroke | id: ""},
+            %{@stroke | id: 7},
+            %{@stroke | id: String.duplicate("a", 65)},
             %{@stroke | path: nil},
             %{@stroke | path: "M 1 2 <x>"},
             %{@stroke | color: "red"},

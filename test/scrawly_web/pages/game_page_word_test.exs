@@ -16,7 +16,7 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
 
   @word "zzyzx"
   @choices [@word, "TESTquokka", "TESTfjord"]
-  @stroke %{path: "M0 0 L10 10", color: "#d63838", width: 5}
+  @stroke %{id: "s-word-1", path: "M0 0 L10 10", color: "#d63838", width: 5}
 
   setup do
     creator = create_user()
@@ -246,7 +246,8 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
         component = init_page(ctx.room, server)
         assert component.state.watching? == true
         assert component.state.drawing_strokes == [@stroke]
-        assert component.next_action.name == :do_join_as_watcher
+        assert component.next_action.name == :mounted
+        assert component.next_action.params.next == :do_join_as_watcher
 
         result = GamePage.command(:join_as_watcher, %{room_id: ctx.room.id}, server)
         assert result.next_action.name == :room_refreshed

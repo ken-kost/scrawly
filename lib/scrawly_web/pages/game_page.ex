@@ -3,6 +3,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   use Hologram.JS
 
   js_import :connectGameChannel, from: "./game_channel.mjs"
+  js_import :disconnectGameChannel, from: "./game_channel.mjs"
 
   js_import :installCanvasShortcuts, from: "./keyboard.mjs"
 
@@ -18,6 +19,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :undoStroke, from: "./drawing_manager.mjs"
   js_import :setStrokes, from: "./drawing_manager.mjs"
   js_import :removeRemoteOverlay, from: "./drawing_manager.mjs"
+  js_import :mountCanvas, from: "./drawing_manager.mjs"
+  js_import :restoreStrokes, from: "./drawing_manager.mjs"
+  js_import :endDrawingPhase, from: "./drawing_manager.mjs"
+  js_import :ackStrokeOp, from: "./drawing_manager.mjs"
+  js_import :rejectStrokeOp, from: "./drawing_manager.mjs"
+  js_import :applyRejectedStrokes, from: "./drawing_manager.mjs"
 
   route "/game/:room_id"
   layout ScrawlyWeb.Layouts.AppLayout
@@ -108,6 +115,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
             server = put_session(server, :watch_mode, nil)
 
+            # A component has a single next_action, so the follow-up rides
+            # along as :mounted's params (see action(:mounted, ...)).
             component =
               cond do
                 rs.status == :post_game and rs.last_game_id != nil ->
@@ -116,23 +125,23 @@ defmodule ScrawlyWeb.Pages.GamePage do
                 watch_mode or already_watching ->
                   component
                   |> put_state(:watching?, true)
-                  |> put_action(:do_join_as_watcher)
+                  |> put_mounted(:do_join_as_watcher)
 
                 user_id == nil ->
                   component
                   |> put_state(:watching?, true)
-                  |> put_action(:do_join_as_watcher)
+                  |> put_mounted(:do_join_as_watcher)
 
                 Enum.any?(rs.players, &(&1.id == user_id)) ->
-                  put_action(component, name: :poll_room, delay: 500)
+                  put_mounted(component, :poll_room, 500)
 
                 rs.status == :lobby and length(rs.players) < rs.max_players ->
-                  put_action(component, :do_join_room)
+                  put_mounted(component, :do_join_room)
 
                 true ->
                   component
                   |> put_state(:watching?, true)
-                  |> put_action(:do_join_as_watcher)
+                  |> put_mounted(:do_join_as_watcher)
               end
 
             server = put_subscription(server, {:room, room_id})
@@ -148,6 +157,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
+  defp put_mounted(component, next, delay \\ 0) do
+    put_action(component, name: :mounted, params: [next: next, delay: delay])
+  end
+
   defp load_user_data(component, "Watcher") do
     put_state(component, :current_user_username, "Watcher")
   end
@@ -160,6 +173,21 @@ defmodule ScrawlyWeb.Pages.GamePage do
       {:error, _} ->
         component
     end
+  end
+
+  # First action after every page load, once the DOM exists. Restores the
+  # drawer's canvas from the room's strokes (independent of the game socket),
+  # then puts the follow-up init chose, exactly as init used to queue it.
+  def action(:mounted, %{next: next, delay: delay}, component) do
+    JS.call(:mountCanvas, [])
+
+    if component.state.is_drawer do
+      JS.call(:restoreStrokes, [component.state.drawing_strokes])
+    end
+
+    if delay > 0,
+      do: put_action(component, name: next, delay: delay),
+      else: put_action(component, next)
   end
 
   def action(:do_join_room, _params, component) do
@@ -188,10 +216,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
           |> put_action(name: :go_home, delay: 2000)
 
         params.status == :post_game and params.last_game_id != nil ->
-          put_page(component, ScrawlyWeb.Pages.GameScorePage, game_id: params.last_game_id)
+          leave_page(component, ScrawlyWeb.Pages.GameScorePage, game_id: params.last_game_id)
 
         old_started and not new_game_active and params.last_game_id != nil ->
-          put_page(component, ScrawlyWeb.Pages.GameScorePage, game_id: params.last_game_id)
+          leave_page(component, ScrawlyWeb.Pages.GameScorePage, game_id: params.last_game_id)
 
         true ->
           component =
@@ -226,7 +254,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
         component
 
       params.status == :post_game and Map.get(params, :last_game_id) != nil ->
-        put_page(component, ScrawlyWeb.Pages.GameScorePage, game_id: params.last_game_id)
+        leave_page(component, ScrawlyWeb.Pages.GameScorePage, game_id: params.last_game_id)
 
       params.status == :ended ->
         component
@@ -295,12 +323,17 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   def action(:go_home, _params, component) do
-    put_page(component, ScrawlyWeb.Pages.HomePage)
+    leave_page(component, ScrawlyWeb.Pages.HomePage)
   end
 
   # A command was rejected server-side (see ScrawlyWeb.Auth.deny/3): nothing
-  # changed, so resync from the room.
-  def action(:command_denied, _params, component) do
+  # changed, so resync from the room. A denied stroke op leaves the drawer's
+  # op queue so the next one can go.
+  def action(:command_denied, params, component) do
+    if Map.get(params, :command) in [:complete_stroke, :undo_drawing_cmd, :clear_drawing_cmd] do
+      JS.call(:rejectStrokeOp, [Map.get(params, :op_seq)])
+    end
+
     component
     |> put_state(:leaving?, false)
     |> put_action(:poll_room)
@@ -387,12 +420,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
+  # Dispatched on every (re)join of the game channel. Never touches the
+  # canvas: the drawer's strokes live in drawing_manager.mjs (restored once per
+  # mount by :mounted), the viewers' in :drawing_strokes.
   def action(:channel_connected, _params, component) do
     JS.call(:installCanvasShortcuts, [])
-
-    if component.state.is_drawer do
-      JS.call(:setStrokes, [Map.get(component.state, :drawing_strokes, [])])
-    end
 
     component
     |> put_state(:channel_connected, true)
@@ -402,6 +434,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def action(:stroke_completed, params, component) do
     if not component.state.is_drawer do
       stroke = %{
+        id: params.stroke_id,
         path: params.path || "",
         color: params.color || "#000000",
         width: params.width || 2
@@ -410,7 +443,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
       strokes = Map.get(component.state, :drawing_strokes, [])
 
       JS.call(:removeRemoteOverlay, [params.stroke_id])
-      put_state(component, :drawing_strokes, strokes ++ [stroke])
+
+      if Enum.any?(strokes, &(&1.id == stroke.id)) do
+        component
+      else
+        put_state(component, :drawing_strokes, strokes ++ [stroke])
+      end
     else
       component
     end
@@ -459,37 +497,46 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  def action(
-        :commit_stroke,
-        %{stroke_id: stroke_id, path: path, color: color, width: width},
+  # The head of the drawer's op queue (drawing_manager.mjs), one op at a time.
+  def action(:send_stroke_op, %{kind: kind} = op, component) do
+    base = [room_id: component.state.room_id, op_epoch: op.op_epoch, op_seq: op.op_seq]
+
+    case kind do
+      "commit" ->
+        put_command(
+          component,
+          :complete_stroke,
+          base ++ [stroke_id: op.stroke_id, path: op.path, color: op.color, width: op.width]
+        )
+
+      "undo" ->
+        put_command(component, :undo_drawing_cmd, base ++ [stroke_id: op.stroke_id])
+
+      "clear" ->
+        put_command(component, :clear_drawing_cmd, base)
+
+      _other ->
         component
-      ) do
-    put_command(component, :complete_stroke,
-      room_id: component.state.room_id,
-      stroke_id: stroke_id,
-      path: path,
-      color: color,
-      width: width
-    )
+    end
+  end
+
+  # Reply to every stroke op the room applied or ignored as a duplicate.
+  def action(:stroke_op_acked, params, component) do
+    JS.call(:ackStrokeOp, [Map.get(params, :op_seq)])
+    component
   end
 
   # Reply to :complete_stroke when the server refused to store the stroke
   # (invalid, or the canvas is full): show the drawer what everyone else sees.
-  def action(:stroke_rejected, %{strokes: strokes}, component) do
-    JS.call(:setStrokes, [strokes])
+  def action(:stroke_rejected, %{strokes: strokes} = params, component) do
+    JS.call(:applyRejectedStrokes, [Map.get(params, :op_seq), strokes])
     put_state(component, :drawing_strokes, strokes)
   end
 
-  def action(:commit_undo, _params, component) do
-    put_command(component, :undo_drawing_cmd, room_id: component.state.room_id)
-  end
-
+  # The clear goes out through the op queue, after the ops queued before it.
   def action(:clear_canvas, _params, component) do
     JS.call(:clearDrawing, [])
-
-    component
-    |> put_state(:drawing_strokes, [])
-    |> put_command(:clear_drawing_cmd, room_id: component.state.room_id)
+    put_state(component, :drawing_strokes, [])
   end
 
   def action(:select_color, params, component) do
@@ -564,6 +611,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
         JS.call(:setDrawingPath, [""])
 
         component
+        |> put_state(:drawing?, false)
         |> put_state(:game_started, true)
         |> put_state(:game_id, params.game_id)
         |> put_state(:round, new_round)
@@ -584,6 +632,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
         JS.call(:setDrawingPath, [""])
 
         component
+        |> put_state(:drawing?, false)
         |> put_state(:game_started, false)
         |> put_state(:game_id, nil)
         |> put_state(:current_drawer, nil)
@@ -603,6 +652,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
         JS.call(:setDrawingPath, [""])
 
         component
+        |> put_state(:drawing?, false)
         |> put_state(:round, new_round)
         |> put_state(:current_drawer, %{id: params.current_drawer_id, username: drawer_name})
         |> put_state(:current_word, current_word)
@@ -618,6 +668,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
       old_started ->
         component
+        |> end_drawing_phase(component.state.phase, new_phase)
         |> put_state(:time_left, new_time)
         |> put_state(:current_word_display, word_display)
         |> put_state(:word_length, word_length)
@@ -631,6 +682,26 @@ defmodule ScrawlyWeb.Pages.GamePage do
       true ->
         component
     end
+  end
+
+  # Leaving :drawing (time up, everyone guessed) ends the stroke in progress
+  # and the viewers' live overlays: the room will not store either.
+  defp end_drawing_phase(component, :drawing, new_phase) when new_phase != :drawing do
+    JS.call(:endDrawingPhase, [])
+    put_state(component, :drawing?, false)
+  end
+
+  defp end_drawing_phase(component, _old_phase, _new_phase), do: component
+
+  # Every navigation away from GamePage that the page itself starts: the game
+  # socket would otherwise stay joined (header links are handled by the
+  # marker check in game_channel.mjs).
+  defp leave_page(component, page, params \\ []) do
+    JS.call(:disconnectGameChannel, [])
+
+    if params == [],
+      do: put_page(component, page),
+      else: put_page(component, page, params)
   end
 
   defp maybe_connect_channel(component) do
@@ -654,11 +725,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
       params.is_drawer ->
         component
 
+      # Only a non-empty list longer than ours can be newer: the list is
+      # maintained by init, the stroke actions and the round resets.
       channel_connected ->
-        server_strokes = Map.get(params, :drawing_strokes, [])
+        server_strokes = Map.get(params, :drawing_strokes) || []
         local_strokes = Map.get(component.state, :drawing_strokes, [])
 
-        if length(server_strokes) > length(local_strokes) do
+        if server_strokes != [] and length(server_strokes) > length(local_strokes) do
           put_state(component, :drawing_strokes, server_strokes)
         else
           component
@@ -673,6 +746,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   def template do
     ~HOLO"""
+    <span id="game-page-marker" hidden={true}></span>
     {%if !@game_started}
     <div class="page page-mid">
       <div class="row" style="margin-bottom: 24px;">

@@ -161,6 +161,9 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   # A command was rejected server-side (see ScrawlyWeb.Auth.deny/3); nothing changed.
   def action(:command_denied, _params, component), do: component
 
+  # A GamePage stroke op acked after the game ended and this page took over.
+  def action(:stroke_op_acked, _params, component), do: component
+
   # ── Drawing Modal ──────────────────────────────────────────────────
 
   def action(:open_drawing_modal, params, component) do

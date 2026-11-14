@@ -51,6 +51,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
             round_active: false,
             correct_guessers: [],
             drawing_strokes: [],
+            stroke_op: nil,
             round_guesser_points: [],
             round_start_scores:
               Enum.reduce(state.players, %{}, fn p, acc ->
@@ -120,6 +121,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
             used_words: new_used,
             correct_guessers: [],
             drawing_strokes: [],
+            stroke_op: nil,
             round_guesser_points: []
         }
         |> add_sys_msg("Round #{state.current_round} — #{drawer_name} is drawing")
@@ -162,6 +164,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
         round_guesser_points: [],
         correct_guessers: [],
         drawing_strokes: [],
+        stroke_op: nil,
         round_results: [],
         used_words: [],
         ai_words: [],

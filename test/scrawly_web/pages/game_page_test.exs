@@ -40,7 +40,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert state.revealed_word == nil
       assert state.word_choices == []
       assert state.watching? == false
-      assert component.next_action.name == :poll_room
+      assert component.next_action.name == :mounted
+      assert component.next_action.params == %{next: :poll_room, delay: 500}
     end
 
     test "a visitor without an account watches and is never the drawer", %{room: room} do
@@ -51,7 +52,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert component.state.is_creator == false
       assert component.state.is_drawer == false
       assert component.state.watching? == true
-      assert component.next_action.name == :do_join_as_watcher
+      assert component.next_action.name == :mounted
+      assert component.next_action.params == %{next: :do_join_as_watcher, delay: 0}
     end
 
     test "redirects to home page when room not found" do
@@ -296,7 +298,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
     end
 
     test "room_refreshed keeps local strokes: replies carry none", %{component: component} do
-      stroke = %{path: "M0 0 L1 1", color: "#000000", width: 2}
+      stroke = %{id: "s-1", path: "M0 0 L1 1", color: "#000000", width: 2}
       started = started(component, %{drawing_strokes: [stroke]})
 
       result = GamePage.action(:room_refreshed, view_params(component, %{version: 5}), started)

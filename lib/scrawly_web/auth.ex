@@ -71,15 +71,16 @@ defmodule ScrawlyWeb.Auth do
   end
 
   @doc """
-  Rejects a command: logs a warning and replies with a `:command_denied` action.
-  Changes no state and queues no broadcast.
+  Rejects a command: logs a warning and replies with a `:command_denied` action
+  whose params are `command`, `reason` and any `extra` entries (e.g. the
+  stroke commands' `op_seq`). Changes no state and queues no broadcast.
   """
-  @spec deny(Server.t(), atom, atom) :: Server.t()
-  def deny(%Server{} = server, command, reason) when is_atom(reason) do
+  @spec deny(Server.t(), atom, atom, keyword) :: Server.t()
+  def deny(%Server{} = server, command, reason, extra \\ []) when is_atom(reason) do
     Logger.warning(
       "command denied: #{inspect(command)} (#{inspect(reason)}) for #{inspect(actor_key(server))}"
     )
 
-    put_action(server, :command_denied, command: command, reason: reason)
+    put_action(server, :command_denied, Keyword.merge(extra, command: command, reason: reason))
   end
 end

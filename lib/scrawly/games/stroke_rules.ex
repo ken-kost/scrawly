@@ -25,7 +25,7 @@ defmodule Scrawly.Games.StrokeRules do
   @path_chars ~r/\A[MLQCZmlqcz0-9eE.,\- ]+\z/
   @color ~r/\A#[0-9a-fA-F]{6}\z/
 
-  @type stroke :: %{path: String.t(), color: String.t(), width: pos_integer}
+  @type stroke :: %{id: String.t(), path: String.t(), color: String.t(), width: pos_integer}
 
   def max_path_bytes, do: @max_path_bytes
   def max_delta_bytes, do: @max_delta_bytes
@@ -56,10 +56,22 @@ defmodule Scrawly.Games.StrokeRules do
     do: is_binary(id) and byte_size(id) in 1..@max_stroke_id_bytes
 
   @doc """
-  Validates `stroke` (a map with `:path`, `:color` and `:width`) for appending
-  to `strokes`, the canvas so far.
+  The ordering tag of a drawer tab's canvas op (commit, undo or clear):
+  `{op_epoch, op_seq}` when `op_epoch` is a 1..#{@max_stroke_id_bytes}-byte
+  binary (random per page load) and `op_seq` a positive integer (increasing per
+  op), otherwise `nil` (no ordering).
+  """
+  @spec op_tag(term, term) :: {String.t(), pos_integer} | nil
+  def op_tag(epoch, seq) do
+    if valid_stroke_id?(epoch) and is_integer(seq) and seq > 0, do: {epoch, seq}, else: nil
+  end
 
-  Returns `{:ok, stroke}` with only those three keys, `{:error, :invalid_stroke}`
+  @doc """
+  Validates `stroke` (a map with `:id`, `:path`, `:color` and `:width`) for
+  appending to `strokes`, the canvas so far. The id is the client-chosen stroke
+  id (`valid_stroke_id?/1`); undo refers to strokes by it.
+
+  Returns `{:ok, stroke}` with only those four keys, `{:error, :invalid_stroke}`
   when a field is invalid, or `{:error, :stroke_limit}` when the canvas would
   hold more than #{@max_strokes} strokes or #{@max_canvas_bytes} path bytes.
   """
@@ -75,10 +87,11 @@ defmodule Scrawly.Games.StrokeRules do
   @spec canvas_bytes([stroke]) :: non_neg_integer
   def canvas_bytes(strokes), do: Enum.reduce(strokes, 0, &(byte_size(&1.path) + &2))
 
-  defp normalize(%{path: path, color: color, width: width}) do
-    if valid_path?(path) and valid_color?(color) and valid_width?(width),
-      do: {:ok, %{path: path, color: color, width: width}},
-      else: {:error, :invalid_stroke}
+  defp normalize(%{id: id, path: path, color: color, width: width}) do
+    if valid_stroke_id?(id) and valid_path?(path) and valid_color?(color) and
+         valid_width?(width),
+       do: {:ok, %{id: id, path: path, color: color, width: width}},
+       else: {:error, :invalid_stroke}
   end
 
   defp normalize(_stroke), do: {:error, :invalid_stroke}

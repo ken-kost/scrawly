@@ -203,28 +203,39 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
   @doc """
   Stores a completed stroke drawn by the session user and fans it out to the
-  room's other tabs. Only `room_id`, `stroke_id`, `path`, `color` and `width`
-  are read from params.
+  room's other tabs. Only `room_id`, `stroke_id`, `path`, `color`, `width`,
+  `op_epoch` and `op_seq` are read from params.
 
   The room process checks that the session user is the current drawer while
-  `:drawing` and validates the stroke (`StrokeRules`). A non-drawer, the wrong
-  phase, a missing room or no account gets `:command_denied`; an invalid stroke
-  or a full canvas gets `:stroke_rejected` with the stored strokes, so the
-  drawer's canvas drops what nobody else will see.
+  `:drawing` and validates the stroke (`StrokeRules`, including the stroke id).
+  The three stroke commands are the drawer tab's op queue
+  (drawing_manager.mjs): each carries `{op_epoch, op_seq}`
+  (`StrokeRules.op_tag/2`) and is acknowledged with `:stroke_op_acked`
+  (`op_seq`), whether it was applied or ignored as a duplicate (a stroke id the
+  room already holds, or a resent op). Duplicates broadcast nothing.
+
+  A non-drawer, the wrong phase, a missing room or no account gets
+  `:command_denied` (with `op_seq`); an invalid stroke or a full canvas gets
+  `:stroke_rejected` with the stored strokes, so the drawer's canvas drops
+  what nobody else will see.
   """
   def complete_stroke(%{room_id: room_id} = params, server) do
-    stroke = Map.take(params, [:path, :color, :width])
-    stroke_id = clean_stroke_id(Map.get(params, :stroke_id))
+    stroke = %{
+      id: Map.get(params, :stroke_id),
+      path: Map.get(params, :path),
+      color: Map.get(params, :color),
+      width: Map.get(params, :width)
+    }
 
     with {:ok, uid} <- session_user_id(server),
-         :ok <- RoomServer.append_drawing(room_id, uid, stroke) do
-      broadcast_to_other_tabs(
-        server,
-        room_id,
-        :stroke_completed,
-        Map.put(stroke, :stroke_id, stroke_id)
-      )
+         :ok <- RoomServer.append_drawing(room_id, uid, stroke, op_tag(params)) do
+      server
+      |> broadcast_to_other_tabs(room_id, :stroke_completed, stroke_completed(stroke))
+      |> ack_stroke_op(params)
     else
+      :duplicate ->
+        ack_stroke_op(server, params)
+
       {:error, reason, strokes} ->
         Logger.warning(
           "stroke rejected: #{inspect(reason)} in room #{inspect(room_id)} " <>
@@ -232,33 +243,50 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
         )
 
         put_action(server, :stroke_rejected,
-          stroke_id: stroke_id,
+          stroke_id: clean_stroke_id(stroke.id),
           reason: reason,
-          strokes: strokes
+          strokes: strokes,
+          op_seq: op_seq(params)
         )
 
       {:error, reason} ->
-        Auth.deny(server, :complete_stroke, reason)
+        deny_stroke_op(server, :complete_stroke, reason, params)
     end
   end
 
-  @doc "Clears the canvas as the session user (current drawer, `:drawing` only)."
-  def clear_drawing_cmd(%{room_id: room_id}, server) do
+  @doc """
+  Clears the canvas as the session user (current drawer, `:drawing` only).
+  An op of the drawer's queue: see `complete_stroke/2`.
+  """
+  def clear_drawing_cmd(%{room_id: room_id} = params, server) do
     with {:ok, uid} <- session_user_id(server),
-         :ok <- RoomServer.clear_drawing(room_id, uid) do
-      broadcast_to_other_tabs(server, room_id, :drawing_cleared, %{})
+         :ok <- RoomServer.clear_drawing(room_id, uid, op_tag(params)) do
+      server
+      |> broadcast_to_other_tabs(room_id, :drawing_cleared, %{})
+      |> ack_stroke_op(params)
     else
-      {:error, reason} -> Auth.deny(server, :clear_drawing_cmd, reason)
+      :duplicate -> ack_stroke_op(server, params)
+      {:error, reason} -> deny_stroke_op(server, :clear_drawing_cmd, reason, params)
     end
   end
 
-  @doc "Undoes the last stroke as the session user (current drawer, `:drawing` only)."
-  def undo_drawing_cmd(%{room_id: room_id}, server) do
+  @doc """
+  Removes the stroke `stroke_id` as the session user (current drawer,
+  `:drawing` only) and broadcasts the remaining strokes. An unknown id changes
+  nothing and broadcasts nothing. An op of the drawer's queue: see
+  `complete_stroke/2`.
+  """
+  def undo_drawing_cmd(%{room_id: room_id} = params, server) do
+    stroke_id = Map.get(params, :stroke_id)
+
     with {:ok, uid} <- session_user_id(server),
-         {:ok, strokes} <- RoomServer.undo_drawing(room_id, uid) do
-      broadcast_to_other_tabs(server, room_id, :drawing_undone, %{strokes: strokes})
+         {:ok, strokes} <- RoomServer.undo_drawing(room_id, uid, stroke_id, op_tag(params)) do
+      server
+      |> broadcast_to_other_tabs(room_id, :drawing_undone, %{strokes: strokes})
+      |> ack_stroke_op(params)
     else
-      {:error, reason} -> Auth.deny(server, :undo_drawing_cmd, reason)
+      :duplicate -> ack_stroke_op(server, params)
+      {:error, reason} -> deny_stroke_op(server, :undo_drawing_cmd, reason, params)
     end
   end
 
@@ -274,7 +302,32 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     )
   end
 
-  # The stroke id is only echoed back so viewers can drop the live overlay.
+  # The stored stroke, with the id under the key viewers already use for the
+  # live overlay.
+  defp stroke_completed(stroke) do
+    %{stroke_id: stroke.id, path: stroke.path, color: stroke.color, width: stroke.width}
+  end
+
+  defp op_tag(params),
+    do: StrokeRules.op_tag(Map.get(params, :op_epoch), Map.get(params, :op_seq))
+
+  defp op_seq(params) do
+    case op_tag(params) do
+      {_epoch, seq} -> seq
+      nil -> nil
+    end
+  end
+
+  defp ack_stroke_op(server, params),
+    do: put_action(server, :stroke_op_acked, op_seq: op_seq(params))
+
+  defp deny_stroke_op(server, command, reason, params) do
+    case op_seq(params) do
+      nil -> Auth.deny(server, command, reason)
+      seq -> Auth.deny(server, command, reason, op_seq: seq)
+    end
+  end
+
   defp clean_stroke_id(id), do: if(StrokeRules.valid_stroke_id?(id), do: id, else: nil)
 
   defp dissolve_room_server(room_id, uid) do

@@ -11,7 +11,7 @@ defmodule Scrawly.Games.RoomServerDrawingTest do
   @drawer "drawer-id"
   @player "player-id"
   @watcher "watcher-id"
-  @stroke %{path: "M 1 2 L 3 4", color: "#d63838", width: 5}
+  @stroke %{id: "s-1", path: "M 1 2 L 3 4", color: "#d63838", width: 5}
 
   defp room(attrs \\ []) do
     struct!(
@@ -31,6 +31,8 @@ defmodule Scrawly.Games.RoomServerDrawingTest do
       attrs
     )
   end
+
+  defp stroke(n), do: %{@stroke | id: "s-#{n}"}
 
   defp call(state, msg) do
     {:reply, reply, new_state} = RoomServer.handle_call(msg, {self(), make_ref()}, state)
@@ -63,11 +65,11 @@ defmodule Scrawly.Games.RoomServerDrawingTest do
   end
 
   describe "append_drawing" do
-    test "stores only path, color and width for the drawer" do
+    test "stores only id, path, color and width for the drawer" do
       state = room()
-      extra = Map.merge(@stroke, %{stroke_id: "s-1", user_id: @player, evil: "x"})
+      extra = Map.merge(@stroke, %{stroke_id: "s-9", user_id: @player, evil: "x"})
 
-      assert {:ok, new_state} = call(state, {:append_drawing, @drawer, extra})
+      assert {:ok, new_state} = call(state, {:append_drawing, @drawer, extra, nil})
       assert new_state.drawing_strokes == [@stroke]
       assert new_state.version == state.version + 1
     end
@@ -76,14 +78,14 @@ defmodule Scrawly.Games.RoomServerDrawingTest do
       state = room(drawing_strokes: [@stroke])
 
       for actor <- [@player, @watcher, nil] do
-        {reply, new_state} = call(state, {:append_drawing, actor, @stroke})
+        {reply, new_state} = call(state, {:append_drawing, actor, stroke(2), nil})
         assert reply == {:error, :not_drawer}
         assert_unchanged(new_state, state)
       end
 
       for phase <- [:choosing, :round_end, :idle] do
         state = room(phase: phase)
-        {reply, new_state} = call(state, {:append_drawing, @drawer, @stroke})
+        {reply, new_state} = call(state, {:append_drawing, @drawer, @stroke, nil})
         assert reply == {:error, :wrong_phase}
         assert_unchanged(new_state, state)
       end
@@ -91,78 +93,85 @@ defmodule Scrawly.Games.RoomServerDrawingTest do
 
     test "rejects invalid strokes and returns the stored canvas" do
       state = room(drawing_strokes: [@stroke])
+      new = stroke(2)
 
       for bad <- [
-            %{@stroke | path: 123},
-            %{@stroke | path: "M 1 2 <script>"},
-            %{@stroke | path: String.duplicate("1", 65_537)},
-            %{@stroke | color: "red"},
-            %{@stroke | color: "#fff"},
-            %{@stroke | width: 0},
-            %{@stroke | width: 41},
-            %{@stroke | width: "5"},
-            Map.delete(@stroke, :color),
+            %{new | path: 123},
+            %{new | path: "M 1 2 <script>"},
+            %{new | path: String.duplicate("1", 65_537)},
+            %{new | color: "red"},
+            %{new | color: "#fff"},
+            %{new | width: 0},
+            %{new | width: 41},
+            %{new | width: "5"},
+            %{new | id: nil},
+            %{new | id: String.duplicate("a", 65)},
+            Map.delete(new, :color),
+            Map.delete(new, :id),
             "M 1 2 L 3 4"
           ] do
-        {reply, new_state} = call(state, {:append_drawing, @drawer, bad})
+        {reply, new_state} = call(state, {:append_drawing, @drawer, bad, nil})
         assert reply == {:error, :invalid_stroke, [@stroke]}, inspect(bad)
         assert_unchanged(new_state, state)
       end
     end
 
     test "rejects stroke 501" do
-      full = List.duplicate(@stroke, StrokeRules.max_strokes())
+      full = Enum.map(1..StrokeRules.max_strokes(), &stroke/1)
       state = room(drawing_strokes: full)
+      next = stroke(StrokeRules.max_strokes() + 1)
 
-      {reply, new_state} = call(state, {:append_drawing, @drawer, @stroke})
+      {reply, new_state} = call(state, {:append_drawing, @drawer, next, nil})
       assert reply == {:error, :stroke_limit, full}
       assert_unchanged(new_state, state)
 
       assert {:ok, _} =
-               call(room(drawing_strokes: tl(full)), {:append_drawing, @drawer, @stroke})
+               call(room(drawing_strokes: tl(full)), {:append_drawing, @drawer, next, nil})
     end
 
     test "rejects a stroke that would push the canvas over the byte budget" do
-      big = %{@stroke | path: String.duplicate("1", 60_000)}
+      big = &%{stroke(&1) | path: String.duplicate("1", 60_000)}
       # 33 * 60_000 = 1_980_000 bytes stored; one more 60 KB stroke is over 2 MB.
-      strokes = List.duplicate(big, 33)
+      strokes = Enum.map(1..33, big)
       state = room(drawing_strokes: strokes)
 
-      {reply, new_state} = call(state, {:append_drawing, @drawer, big})
+      {reply, new_state} = call(state, {:append_drawing, @drawer, big.(34), nil})
       assert reply == {:error, :stroke_limit, strokes}
       assert_unchanged(new_state, state)
 
-      assert {:ok, _} = call(state, {:append_drawing, @drawer, @stroke})
+      assert {:ok, _} = call(state, {:append_drawing, @drawer, stroke(34), nil})
     end
   end
 
   describe "clear_drawing and undo_drawing" do
     test "the drawer can clear and undo" do
-      other = %{@stroke | color: "#000000"}
+      other = %{stroke(2) | color: "#000000"}
       state = room(drawing_strokes: [@stroke, other])
 
-      assert {{:ok, [@stroke]}, undone} = call(state, {:undo_drawing, @drawer})
+      assert {{:ok, [@stroke]}, undone} = call(state, {:undo_drawing, @drawer, other.id, nil})
       assert undone.drawing_strokes == [@stroke]
 
-      assert {:ok, cleared} = call(state, {:clear_drawing, @drawer})
+      assert {:ok, cleared} = call(state, {:clear_drawing, @drawer, nil})
       assert cleared.drawing_strokes == []
 
-      assert {{:ok, []}, _} = call(room(), {:undo_drawing, @drawer})
+      assert {:duplicate, ^state} = call(state, {:undo_drawing, @drawer, "s-unknown", nil})
+      assert {:duplicate, _} = call(room(), {:undo_drawing, @drawer, @stroke.id, nil})
     end
 
     test "anyone else, or the wrong phase, changes nothing" do
       state = room(drawing_strokes: [@stroke])
 
-      for actor <- [@player, @watcher, nil], msg <- [:clear_drawing, :undo_drawing] do
-        {reply, new_state} = call(state, {msg, actor})
+      for actor <- [@player, @watcher, nil],
+          msg <- [{:clear_drawing, actor, nil}, {:undo_drawing, actor, @stroke.id, nil}] do
+        {reply, new_state} = call(state, msg)
         assert reply == {:error, :not_drawer}
         assert_unchanged(new_state, state)
       end
 
       state = room(phase: :round_end, drawing_strokes: [@stroke])
 
-      for msg <- [:clear_drawing, :undo_drawing] do
-        {reply, new_state} = call(state, {msg, @drawer})
+      for msg <- [{:clear_drawing, @drawer, nil}, {:undo_drawing, @drawer, @stroke.id, nil}] do
+        {reply, new_state} = call(state, msg)
         assert reply == {:error, :wrong_phase}
         assert_unchanged(new_state, state)
       end
@@ -196,7 +205,7 @@ defmodule Scrawly.Games.RoomServerDrawingTest do
       refute RoomServer.drawing_allowed?(missing, @drawer)
       assert RoomServer.append_drawing(missing, @drawer, @stroke) == {:error, :not_found}
       assert RoomServer.clear_drawing(missing, @drawer) == {:error, :not_found}
-      assert RoomServer.undo_drawing(missing, @drawer) == {:error, :not_found}
+      assert RoomServer.undo_drawing(missing, @drawer, "s-1") == {:error, :not_found}
     end
   end
 end
