@@ -4,7 +4,9 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
 
   Functions take a RoomServer state struct and return a (possibly modified) state
   struct. Side effects (PubSub, process messages, AI calls) are kept minimal —
-  callers remain responsible for `bump_version` / `notify_waiters`.
+  callers remain responsible for `notify_waiters` (the `:room_delta`). Chat
+  lines are published here (`push_chat/2`), through
+  `RoomServer.Broadcasts.publish/3` like every `{:room}` broadcast.
 
   The round lifecycle has two phases:
     1. `:choosing` — drawer is shown 3 word options (`choice_duration/0` s)
@@ -22,6 +24,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
 
   alias Scrawly.Games
   alias Scrawly.Games.WordHints
+  alias Scrawly.Games.RoomServer.Broadcasts
 
   @ai_refill_threshold 6
   @max_chat_history 50
@@ -42,11 +45,12 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   Picks 3 candidate words (AI pool first, falls back to local), sets `phase:
   :choosing`, populates `word_choices`, schedules a 15s timeout via the
   supplied `schedule_timeout_fn.(game_id, round)`. Does NOT start the round
-  timer — that happens in `commit_word_choice/2`.
+  timer — that happens in `commit_word_choice/2`. `notify_fn` runs last, on
+  the new state (the room's `:room_delta`, then the drawer's private slice).
 
   Returns unchanged state on any error.
   """
-  def start_word_choice(state, bump_fn, notify_fn, schedule_timeout_fn) do
+  def start_word_choice(state, notify_fn, schedule_timeout_fn) do
     player_queue = Enum.map(state.players, & &1.id)
 
     with {:ok, _} <- Games.complete_round(state.game_id),
@@ -82,7 +86,6 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
         |> add_sys_msg(
           "Round #{game_with_drawer.current_round} — #{drawer_name} is choosing a word …"
         )
-        |> bump_fn.()
         |> notify_fn.()
 
       if state.word_source == :ai and used_from_ai > 0 and
@@ -177,7 +180,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   a delayed self-stop via the given `send_after_fn` (to allow clients to read
   final state). Returns updated state.
   """
-  def auto_end_game(state, bump_fn, notify_fn) do
+  def auto_end_game(state, notify_fn) do
     if state.game_id do
       Games.save_game_results(state.game_id, state.room_id, state.players, state.round_results)
       Games.stop_round_timer(state.game_id)
@@ -213,7 +216,6 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
         past_games: [game_entry | state.past_games]
     }
     |> add_sys_msg("Game over! Final scores are in.")
-    |> bump_fn.()
     |> notify_fn.()
   end
 
@@ -284,22 +286,22 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   end
 
   @doc """
-  The only place a chat line enters a room: stamps `fields` with a unique `id`
-  and an integer `timestamp` (Unix ms), broadcasts it as `:chat_appended`
-  (`%{message: msg}`) and prepends it to `state.chat_messages` (capped at 50).
+  The only place a chat line enters a room: stamps `fields` with an `id` and
+  an integer `timestamp` (Unix ms), publishes it as `:chat_appended`
+  (`%{message: msg, seq: seq}`) and prepends it to `state.chat_messages`
+  (capped at 50).
+
+  The id is the line's broadcast seq (`Broadcasts.publish/3`): unique within
+  the room and increasing, so pages can merge chat from a snapshot with lines
+  that arrived after it.
 
   Chat lines reach the browser through room state and that broadcast, so they
   hold plain data only: a struct (a DateTime, say) would make every client
   load that type's code chunk before it can show the line.
   """
   def push_chat(state, fields) when is_map(fields) do
-    msg =
-      Map.merge(fields, %{
-        id: System.unique_integer([:positive]),
-        timestamp: System.system_time(:millisecond)
-      })
-
-    Hologram.Realtime.broadcast_action({:room, state.room_id}, :chat_appended, %{message: msg})
+    msg = Map.merge(fields, %{id: state.seq + 1, timestamp: System.system_time(:millisecond)})
+    state = Broadcasts.publish(state, :chat_appended, %{message: msg})
 
     %{state | chat_messages: Enum.take([msg | state.chat_messages], @max_chat_history)}
   end

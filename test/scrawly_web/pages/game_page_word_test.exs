@@ -1,8 +1,10 @@
 defmodule ScrawlyWeb.Pages.GamePageWordTest do
   @moduledoc """
   The secret word and the word choices reach only the drawer. Page state
-  (`init/3`), `:room_refreshed` replies and `:room_delta` broadcasts are all
-  built from per-viewer views (`RoomServer.View`), whatever the params say.
+  (`init/3`), `:room_resynced` snapshots and `:room_delta` broadcasts are all
+  built from per-viewer views (`RoomServer.View`), whatever the params say;
+  the drawer's own word and choices travel on their private `{:room_player}`
+  channel and in their `choose_word` reply.
   """
   use Scrawly.DataCase, async: false
 
@@ -25,13 +27,13 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
     room = start_room(creator)
 
     assert GamePage.command(:join_room, %{room_id: room.id}, server_for(guesser)).next_action.name ==
-             :room_refreshed
+             :room_resynced
 
     {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: @choices})
     on_exit(fn -> Games.stop_round_timer(started.game_id) end)
 
     assert GamePage.command(:join_as_watcher, %{room_id: room.id}, server_for(spectator)).next_action.name ==
-             :room_refreshed
+             :room_resynced
 
     %{
       room: room,
@@ -150,7 +152,7 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
   end
 
   describe "command replies" do
-    test "a non-drawer's :poll_room_state carries no word or choices, even with forged ids",
+    test "a non-drawer's :resync_room carries no word or choices, even with forged ids",
          ctx do
       forged = %{
         room_id: ctx.room.id,
@@ -163,16 +165,15 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
         if phase == :drawing, do: choose!(ctx)
 
         for {_who, server} <- non_drawers(ctx) do
-          result = GamePage.command(:poll_room_state, forged, server)
+          result = GamePage.command(:resync_room, forged, server)
 
-          assert result.next_action.name == :room_refreshed
+          assert result.next_action.name == :room_resynced
           assert result.next_action.params.phase == phase
           assert_no_secret(result.next_action.params)
         end
       end
 
-      drawer =
-        GamePage.command(:poll_room_state, %{room_id: ctx.room.id}, server_for(ctx.creator))
+      drawer = GamePage.command(:resync_room, %{room_id: ctx.room.id}, server_for(ctx.creator))
 
       assert drawer.next_action.params.current_word == @word
     end
@@ -206,11 +207,17 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
           server_for(ctx.creator)
         )
 
-      assert result.next_action.name == :room_refreshed
-      assert result.next_action.params.is_drawer == true
-      assert result.next_action.params.current_word == @word
-      assert result.next_action.params.phase == :drawing
-      assert result.next_action.params.drawing_strokes == []
+      # The drawer's slice, without a seq.
+      assert result.next_action.name == :private_state
+
+      assert result.next_action.params == %{
+               game_id: ctx.game_id,
+               round: 1,
+               phase: :drawing,
+               current_word: @word,
+               word_choices: []
+             }
+
       assert room_state!(ctx.room.id).phase == :drawing
     end
 
@@ -222,21 +229,33 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
       end
     end
 
-    test ":start_game replies with the session user's own view" do
+    test ":start_game replies nothing; only the drawer's channel gets the choices" do
       creator = create_user()
       player = create_user()
       room = start_room(creator)
       GamePage.command(:join_room, %{room_id: room.id}, server_for(player))
       seed_test_words()
 
+      for channel <- [{:room, room.id}, {:room_player, room.id, creator.id}] do
+        Phoenix.PubSub.subscribe(Hologram.PubSub, Hologram.Realtime.channel_topic(channel))
+      end
+
+      player_id = player.id
+      player_channel = {:room_player, room.id, player_id}
+      Phoenix.PubSub.subscribe(Hologram.PubSub, Hologram.Realtime.channel_topic(player_channel))
+
       result = GamePage.command(:start_game, %{room_id: room.id}, server_for(creator))
+      assert result.next_action == nil
 
-      assert result.next_action.name == :room_refreshed
+      assert_receive {:broadcast_action, {:room_player, _, _}, :private_state,
+                      %{phase: :choosing, word_choices: [_ | _] = choices} = slice, _}
 
-      assert %{is_drawer: true, phase: :choosing, word_choices: [_ | _] = choices} =
-               result.next_action.params
+      refute Map.has_key?(slice, :seq)
+      assert_receive {:broadcast_action, {:room, _}, :room_delta, delta, _}
+      refute_leaks(delta, choices)
+      refute_received {:broadcast_action, {:room_player, _, ^player_id}, _, _, _}
 
-      as_player = GamePage.command(:poll_room_state, %{room_id: room.id}, server_for(player))
+      as_player = GamePage.command(:resync_room, %{room_id: room.id}, server_for(player))
       assert as_player.next_action.params.word_choices == []
       refute_leaks(as_player, choices)
     end
@@ -251,13 +270,13 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
         assert component.state.watching? == true
         assert component.state.drawing_strokes == [@stroke]
         assert component.next_action.name == :mounted
-        assert component.next_action.params.next == :do_join_as_watcher
+        assert component.next_action.params.join == :watcher
 
         result = GamePage.command(:join_as_watcher, %{room_id: ctx.room.id}, server)
-        assert result.next_action.name == :room_refreshed
+        assert result.next_action.name == :room_resynced
         assert_no_secret(result.next_action.params)
 
-        refreshed = GamePage.action(:room_refreshed, result.next_action.params, component)
+        refreshed = GamePage.action(:room_resynced, result.next_action.params, component)
 
         assert refreshed.state.drawing_strokes == [@stroke]
         assert refreshed.state.current_word == nil
@@ -268,7 +287,7 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
   end
 
   describe "hints and the reveal" do
-    test "a reveal's :room_delta brings the hint to a guesser's page without a poll", ctx do
+    test "a reveal's :room_delta brings the hint to a guesser's page", ctx do
       choose!(ctx)
       component = init_page(ctx.room, server_for(ctx.guesser))
 
@@ -303,17 +322,16 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
 
       for {_who, server} <- non_drawers(ctx) do
         params =
-          GamePage.command(:poll_room_state, %{room_id: ctx.room.id}, server).next_action.params
+          GamePage.command(:resync_room, %{room_id: ctx.room.id}, server).next_action.params
 
         assert params.revealed_word == @word
         assert params.current_word == nil
         assert params.word_choices == []
       end
 
-      reply =
-        GamePage.command(:poll_room_state, %{room_id: ctx.room.id}, server_for(ctx.spectator))
+      reply = GamePage.command(:resync_room, %{room_id: ctx.room.id}, server_for(ctx.spectator))
 
-      updated = GamePage.action(:room_refreshed, reply.next_action.params, spectator_page)
+      updated = GamePage.action(:room_resynced, reply.next_action.params, spectator_page)
       assert updated.state.revealed_word == @word
       assert updated.state.phase == :round_end
     end

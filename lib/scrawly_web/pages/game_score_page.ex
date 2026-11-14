@@ -226,6 +226,11 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   def action(:drawing_cleared, _params, component), do: component
   def action(:drawing_undone, _params, component), do: component
 
+  # The drawer's slice comes on GamePage's {:room_player} channel, which this
+  # page never subscribes to; one pushed while the game page was being left
+  # must not crash this one.
+  def action(:private_state, _params, component), do: component
+
   # ── Navigation ──────────────────────────────────────────────────────
 
   def action(:go_home, _params, component), do: leave_for_home(component)

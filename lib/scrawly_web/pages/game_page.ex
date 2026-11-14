@@ -5,6 +5,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   use Hologram.JS
 
   js_import :connectGameChannel, from: "./game_channel.mjs"
+  js_import :ensureGameChannel, from: "./game_channel.mjs"
   js_import :disconnectGameChannel, from: "./game_channel.mjs"
 
   js_import :startStroke, from: "./drawing_manager.mjs"
@@ -28,12 +29,23 @@ defmodule ScrawlyWeb.Pages.GamePage do
   param :room_id, :string
 
   alias ScrawlyWeb.Components.{ChatBox, ScoreBoard, DrawingCanvas}
+  alias ScrawlyWeb.Pages.GamePage.Commands
   alias Scrawly.Games.RoomServer
 
   # Countdown ticks (see "Round and word-choice countdowns" below).
   @tick_ms 1_000
   @tick_alive_ms 1_500
   @tick_slack_ms 15
+  # A countdown that sits at 0 this long while the room still shows the phase
+  # it counts down means the phase change was lost: resync.
+  @watchdog_ms 4_000
+  # The drawer's private slice follows the delta that starts the phase; once
+  # it is this late, it was lost.
+  @slice_grace_ms 1_500
+  # At most one resync in flight; a request with no reply after this long may
+  # be retried (there is no command-failure callback).
+  @resync_guard_ms 5_000
+  @max_chat 50
 
   # Page state is serialized into the HTML, so it is built from the session
   # user's own view of the room: only the drawer's view carries the word and
@@ -44,6 +56,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # into state (a same-named state key would shadow the prop).
   #
   # The session user is loaded once here and stashed for AppLayout's init.
+  #
+  # The page is push-only (see "Room broadcasts" below): init's view is a
+  # full snapshot with the room's seq, and the page subscribes to the room's
+  # public channel and to its own user's private one.
   def init(%{room_id: room_id}, component, server) do
     watch_mode = get_session(server, :watch_mode) == "yes"
     user_id = ScrawlyWeb.Auth.user_id(server)
@@ -68,7 +84,22 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:max_players, rs.max_players)
               |> put_state(:is_creator, is_creator)
               |> put_state(:creator_id, rs.creator_id)
-              |> put_state(:version, rs.version)
+              # Sequencing: the seq of the last broadcast applied, and of the
+              # last room state / full stroke list applied (stale snapshots,
+              # see :room_resynced).
+              |> put_state(:last_seq, rs.seq)
+              |> put_state(:delta_seq, rs.seq)
+              |> put_state(:strokes_seq, rs.seq)
+              |> put_state(:pending_private, nil)
+              |> put_state(:resync_requested_at, nil)
+              |> put_state(:resync_owed_seq, nil)
+              |> put_state(:stuck_seq, nil)
+              |> put_state(:phase_entered_at, nil)
+              # Stable for this page instance: makes the template's inline
+              # script unique, so it runs once per page shown (:page_shown).
+              |> put_state(:mount_id, System.unique_integer([:positive]))
+              |> put_state(:page_shown?, false)
+              |> put_state(:restoring?, false)
               |> put_state(:current_user_id, user_id)
               |> put_state(:current_user_username, (user && user.username) || "")
               |> put_state(:new_message, "")
@@ -89,6 +120,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:choice_deadline_local, nil)
               |> put_state(:tick_gen, System.unique_integer([:positive]))
               |> put_state(:last_tick_at, nil)
+              |> put_state(:zero_since, nil)
               |> put_state(
                 :current_drawer,
                 if(rs.current_drawer_id,
@@ -102,7 +134,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:revealed_word, rs.revealed_word)
               |> put_state(:is_drawer, rs.is_drawer)
               |> put_state(:correct_guessers, rs.correct_guessers || [])
-              |> put_state(:used_words, [])
               |> put_state(:phase, rs.phase)
               |> put_state(:word_choices, rs.word_choices)
               |> put_state(
@@ -126,6 +157,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:ai_tone, rs.ai_tone || :fun)
               |> put_state(:socket_token, get_session(server, :user_token) || "")
               |> put_state(:channel_connected, false)
+              |> put_state(:channel_connecting, false)
               |> put_state(:past_games, rs.past_games || [])
 
             already_watching =
@@ -133,40 +165,38 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
             server = put_session(server, :watch_mode, nil)
 
-            # A component has a single next_action, so the follow-up rides
-            # along as :mounted's params (see action(:mounted, ...)).
-            # put_page/3 is ignored from init (only next_action is read on
-            # mount), so the score page is reached through an action.
+            # :mounted runs first on every fresh page load; `join` is the
+            # join command it sends, if any. put_page/3 is ignored from init
+            # (only next_action is read on mount), so the score page is
+            # reached through an action.
             component =
               cond do
                 rs.status == :post_game and rs.last_game_id != nil ->
                   put_action(component, :go_score, game_id: rs.last_game_id)
 
-                watch_mode or already_watching ->
+                already_watching ->
                   component
                   |> put_state(:watching?, true)
-                  |> put_mounted(:do_join_as_watcher)
+                  |> put_mounted(nil)
 
-                user_id == nil ->
+                watch_mode or user_id == nil ->
                   component
                   |> put_state(:watching?, true)
-                  |> put_mounted(:do_join_as_watcher)
+                  |> put_mounted(:watcher)
 
                 Enum.any?(rs.players, &(&1.id == user_id)) ->
-                  put_mounted(component, :poll_room, 500)
+                  put_mounted(component, nil)
 
                 rs.status == :lobby and length(rs.players) < rs.max_players ->
-                  put_mounted(component, :do_join_room)
+                  put_mounted(component, :player)
 
                 true ->
                   component
                   |> put_state(:watching?, true)
-                  |> put_mounted(:do_join_as_watcher)
+                  |> put_mounted(:watcher)
               end
 
-            server = put_subscription(server, {:room, room_id})
-
-            {component, server}
+            {component, Commands.subscribe_to_room(server, room_id)}
 
           {:error, _} ->
             {room_missing(component), server}
@@ -195,136 +225,254 @@ defmodule ScrawlyWeb.Pages.GamePage do
     |> put_action(:go_home)
   end
 
-  defp put_mounted(component, next, delay \\ 0) do
-    put_action(component, name: :mounted, params: [next: next, delay: delay])
+  defp put_mounted(component, join) do
+    put_action(component, name: :mounted, params: [join: join])
   end
 
-  # First action after every page load, once the DOM exists. Restores the
+  # First action after every fresh page load, once the DOM exists. Restores the
   # drawer's canvas from the room's strokes (independent of the game socket),
-  # anchors init's countdowns on the browser's clock, then puts the follow-up
-  # init chose, exactly as init used to queue it. The follow-up holds the
-  # single next_action slot, so the tick chain starts from the
-  # :room_refreshed reply every follow-up produces (anchor_countdowns/2).
-  def action(:mounted, %{next: next, delay: delay}, component) do
+  # anchors init's countdowns on the browser's clock and starts their tick
+  # chain, connects the game socket for a member, and sends the join init
+  # chose (`:player` / `:watcher`), whose :room_resynced reply connects it for
+  # a new member (GameChannel refuses non-members).
+  def action(:mounted, %{join: join}, component) do
     JS.call(:mountCanvas, [])
 
     if component.state.is_drawer do
       JS.call(:restoreStrokes, [component.state.drawing_strokes])
     end
 
-    component = put_countdown_anchors(component, component.state)
-
-    if delay > 0,
-      do: put_action(component, name: next, delay: delay),
-      else: put_action(component, next)
-  end
-
-  def action(:do_join_room, _params, component) do
-    put_command(component, :join_room, room_id: component.props.room_id)
-  end
-
-  def action(:poll_room, _params, component) do
-    if component.state.leaving? do
+    component =
       component
-    else
-      put_command(component, :poll_room_state, room_id: component.props.room_id)
+      |> put_state(:phase_entered_at, System.monotonic_time(:millisecond))
+      |> anchor_countdowns(component.state)
+
+    component = if member?(component.state), do: maybe_connect_channel(component), else: component
+
+    case join do
+      :player -> put_command(component, :join_room, room_id: component.props.room_id)
+      :watcher -> put_command(component, :join_as_watcher, room_id: component.props.room_id)
+      _none -> component
     end
   end
 
-  def action(:room_refreshed, params, component) do
-    if component.state.leaving? do
-      component
-    else
-      old_started = component.state.game_started
-      new_game_active = params.game_id != nil
+  # Dispatched by the template's inline script each time this page instance's
+  # markup is put into the document: on its first render, and again when
+  # Back/Forward restores the page from Hologram's snapshot. A restore runs
+  # neither init nor :mounted and brings back the state (and the seq) the page
+  # was left with, while the connection dropped the page's subscriptions when
+  # it was left. So the second time round the page resyncs and subscribes
+  # again. A page left through "leave" holds no membership any more: it loads
+  # afresh instead, as a visit to its URL would.
+  def action(:page_shown, _params, component) do
+    state = component.state
 
-      cond do
-        params.status == :ended and not old_started ->
-          component
-          |> put_state(:chat_messages, params.chat_messages || [])
-          |> put_action(name: :go_home, delay: 2000)
-
-        params.status == :post_game and params.last_game_id != nil ->
-          leave_page(component, ScrawlyWeb.Pages.GameScorePage, game_id: params.last_game_id)
-
-        old_started and not new_game_active and params.last_game_id != nil ->
-          leave_page(component, ScrawlyWeb.Pages.GameScorePage, game_id: params.last_game_id)
-
-        true ->
-          component =
-            component
-            |> handle_game_state_changes(params)
-            |> put_state(:players, params.players)
-            |> put_state(:max_players, params.max_players)
-            |> put_state(:room_status, params.status)
-            |> put_state(:version, params.version)
-            |> put_state(:correct_guessers, params.correct_guessers || [])
-            |> put_state(
-              :can_start_game,
-              component.state.is_creator and length(params.players) >= 2 and params.game_id == nil
-            )
-            |> put_state(:chat_messages, params.chat_messages || [])
-            |> put_state(:watchers, params.watchers || [])
-            |> put_state(:past_games, Map.get(params, :past_games, []))
-            |> sync_drawing_path(params)
-            |> maybe_connect_channel()
-            |> anchor_countdowns(params)
-
-          component
-      end
-    end
-  end
-
-  def action(:room_delta, params, component) do
     cond do
-      component.state.leaving? ->
-        component
+      not state.page_shown? ->
+        put_state(component, :page_shown?, true)
 
-      Map.get(params, :version, 0) <= Map.get(component.state, :version, 0) ->
+      state.leaving? ->
+        JS.exec(~JS"window.location.reload()")
         component
-
-      params.status == :post_game and Map.get(params, :last_game_id) != nil ->
-        leave_page(component, ScrawlyWeb.Pages.GameScorePage, game_id: params.last_game_id)
-
-      params.status == :ended ->
-        component
-        |> put_state(:version, params.version)
-        |> put_action(name: :go_home, delay: 2000)
 
       true ->
-        old_started = component.state.game_started
-        new_active = params.game_id != nil
-        old_round = component.state.round
-        new_round = Map.get(params, :current_round) || 0
-        old_phase = component.state.phase
-        new_phase = Map.get(params, :phase, :idle)
+        component
+        |> put_state(:restoring?, true)
+        |> put_state(:last_tick_at, nil)
+        |> put_state(:zero_since, nil)
+        |> put_state(:resync_requested_at, nil)
+        |> put_state(:stuck_seq, nil)
+        |> send_resync(true)
+    end
+  end
 
-        transition? =
-          old_started != new_active or new_round != old_round or new_phase != old_phase
+  def action(:do_join_as_watcher, _params, component) do
+    put_command(component, :join_as_watcher, room_id: component.props.room_id)
+  end
+
+  def action(:switch_to_watcher, _params, component) do
+    component
+    |> put_state(:watching?, true)
+    |> put_action(:do_join_as_watcher)
+  end
+
+  # ── Room broadcasts ──────────────────────────────────────────────────
+  #
+  # The room pushes every change on {:room, room_id}, each action stamped
+  # with `seq`, one higher than the previous one (RoomServer.Broadcasts).
+  # Realtime is at-most-once and replays nothing, so every {:room} action
+  # follows the gap rule (accept_seq/2):
+  #
+  #   * ignored while leaving;
+  #   * seq <= last_seq: already applied (or covered by a snapshot), dropped;
+  #   * seq == last_seq + 1: applied;
+  #   * seq > last_seq + 1: applied, then a resync is requested (:resync_room
+  #     replies a full snapshot, :room_resynced).
+  #
+  # last_seq advances only from these broadcasts and from full snapshots
+  # (init and :room_resynced), never from another command reply: a reply
+  # carrying a seq but no chat and strokes could overtake broadcasts still in
+  # flight on the stream and make the page drop them as stale.
+  #
+  # The drawer's word choices and word come separately, unsequenced, on the
+  # user's own {:room_player} channel (:private_state), after the delta of
+  # the same transition, and in the choose_word reply.
+
+  def action(:room_delta, params, component) do
+    case accept_seq(component, params) do
+      {:apply, component, seq, gap} ->
+        component
+        |> put_state(:delta_seq, seq)
+        |> apply_view(params, seq)
+        |> after_gap(gap)
+
+      :drop ->
+        component
+    end
+  end
+
+  def action(:chat_appended, %{message: message} = params, component) do
+    case accept_seq(component, params) do
+      {:apply, component, _seq, gap} ->
+        existing = component.state.chat_messages
 
         component =
-          component
-          |> put_state(:version, params.version)
-          |> put_state(:players, params.players)
-          |> put_state(:watchers, Map.get(params, :watchers) || [])
-          |> put_state(:room_status, params.status)
-          |> put_state(:correct_guessers, Map.get(params, :correct_guessers) || [])
-          |> put_state(:past_games, Map.get(params, :past_games) || component.state.past_games)
-          |> put_state(
-            :can_start_game,
-            component.state.is_creator and length(params.players) >= 2 and params.game_id == nil
-          )
-          # The word fields are the same for everyone; the drawer's word and
-          # choices only ever arrive through the poll reply.
-          |> put_state(:current_word_display, Map.get(params, :word_display, ""))
-          |> put_state(:word_length, Map.get(params, :word_length, 0))
-          |> put_state(:revealed_word, Map.get(params, :revealed_word))
-          |> anchor_countdowns(params)
-          |> close_drawing(old_phase, new_phase)
+          if Enum.any?(existing, &(&1.id == message.id)) do
+            component
+          else
+            component
+            |> put_state(:chat_messages, Enum.take([message | existing], @max_chat))
+            |> put_action(:scroll_chat)
+          end
 
-        if transition?,
-          do: put_command(component, :poll_room_state, room_id: component.props.room_id),
-          else: component
+        after_gap(component, gap)
+
+      :drop ->
+        component
+    end
+  end
+
+  # Viewers render the completed strokes; the drawer's tabs already hold
+  # theirs (drawing_manager.mjs) and only advance the seq. Each viewer stroke
+  # keeps the seq it arrived with (stale snapshots, see :room_resynced).
+  def action(:stroke_completed, params, component) do
+    case accept_seq(component, params) do
+      {:apply, component, seq, gap} ->
+        component
+        |> add_viewer_stroke(params, seq)
+        |> after_gap(gap)
+
+      :drop ->
+        component
+    end
+  end
+
+  def action(:drawing_cleared, params, component) do
+    case accept_seq(component, params) do
+      {:apply, component, seq, gap} ->
+        component =
+          if component.state.is_drawer do
+            component
+          else
+            JS.call(:setDrawingPath, [""])
+
+            component
+            |> put_state(:drawing_strokes, [])
+            |> put_state(:strokes_seq, seq)
+          end
+
+        after_gap(component, gap)
+
+      :drop ->
+        component
+    end
+  end
+
+  def action(:drawing_undone, params, component) do
+    case accept_seq(component, params) do
+      {:apply, component, seq, gap} ->
+        component =
+          if component.state.is_drawer do
+            component
+          else
+            strokes = params.strokes || []
+            JS.call(:setStrokes, [strokes])
+
+            component
+            |> put_state(:drawing_strokes, strokes)
+            |> put_state(:strokes_seq, seq)
+          end
+
+        after_gap(component, gap)
+
+      :drop ->
+        component
+    end
+  end
+
+  # The drawer's slice (RoomServer.View.private_slice/1): from the user's own
+  # {:room_player} channel, after the round's delta, or the choose_word reply.
+  # One for an earlier turn is ignored; one for a turn the page has not seen
+  # yet (its delta was lost or is still on its way) is held until a delta
+  # reaches that round.
+  def action(:private_state, slice, component) do
+    state = component.state
+    round = Map.get(slice, :round)
+
+    cond do
+      state.leaving? or not is_integer(round) ->
+        component
+
+      Map.get(slice, :game_id) != state.game_id or round > state.round ->
+        put_state(component, :pending_private, slice)
+
+      round < state.round ->
+        component
+
+      true ->
+        apply_private(component, slice)
+    end
+  end
+
+  # A full snapshot (RoomServer.View.for_viewer/2 with the room's seq): the
+  # join replies and :resync_room. Viewers take its chat and strokes; the
+  # drawer takes everything but the canvas, so their local history and a
+  # stroke in progress survive (except after a Back/Forward restore, which
+  # rebuilt the canvas: then the room's strokes are merged back in).
+  #
+  # A snapshot older than broadcasts already applied (the reply was overtaken
+  # on the stream) only fills in what it covers: chat lines are merged by id
+  # (ids are seqs), room state and strokes newer than the snapshot are kept.
+  def action(:room_resynced, view, component) do
+    if component.state.leaving? do
+      component
+    else
+      seq = view.seq
+      state = component.state
+
+      component =
+        component
+        |> put_state(:resync_requested_at, nil)
+        |> put_state(:last_seq, max_seq(state.last_seq, seq))
+        |> put_state(
+          :chat_messages,
+          merge_chat(view.chat_messages || [], state.chat_messages, seq)
+        )
+
+      component =
+        if is_integer(state.delta_seq) and state.delta_seq > seq,
+          do: component,
+          else: component |> put_state(:delta_seq, seq) |> apply_view(view, seq)
+
+      if component.state.leaving? do
+        component
+      else
+        component
+        |> apply_snapshot_strokes(view, seq)
+        |> apply_snapshot_private(view)
+        |> finish_restore(view)
+        |> settle_owed_resync(seq)
+      end
     end
   end
 
@@ -335,21 +483,24 @@ defmodule ScrawlyWeb.Pages.GamePage do
   #   * The room sends what is left, as relative ms (`round_remaining_ms`,
   #     `choice_remaining_ms`), never a deadline. anchor_countdowns/2 turns
   #     them into deadlines on the browser's monotonic clock on every
-  #     :room_delta and :room_refreshed; :mounted anchors init's values.
+  #     :room_delta and :room_resynced, and on :mounted for init's values.
   #   * :countdown_tick recomputes the seconds from those deadlines (never
   #     decrements: background tabs throttle timers) and re-puts itself, always
-  #     with a delay, timed to land just after the shown second changes. At 0
-  #     the chain stops: the room stays authoritative and its phase change
-  #     arrives as a delta, which re-anchors and starts a new chain.
+  #     with a delay, timed to land just after the shown second changes. The
+  #     room stays authoritative: its phase change arrives as a delta, which
+  #     re-anchors and starts a new chain.
+  #   * Watchdog: at 0 the chain keeps ticking once a second while the page
+  #     still shows the phase the countdown belongs to; after @watchdog_ms the
+  #     phase change counts as lost, the page resyncs and the chain stops.
+  #     While the countdown runs, a tick also notices a drawer whose private
+  #     slice never came (missing_slice?/1). Either asks once per seq.
   #   * One chain at a time: ticks carry `tick_gen`, and anchoring starts a new
   #     chain (gen + 1) only when none is alive, i.e. no tick for
   #     @tick_alive_ms by `last_tick_at` (a Back/Forward snapshot restore
-  #     comes back with no chain; the next delta restarts it).
+  #     comes back with no chain; :page_shown clears last_tick_at so the
+  #     resync's snapshot restarts it).
   #   * Hologram 0.12 drops a delayed action once its page has been left, so a
   #     pending tick never lands on another page.
-  #
-  # Nothing here sends anything to the server: between state changes the
-  # page makes no request and the room pushes nothing.
 
   def action(:countdown_tick, %{gen: gen}, component) do
     state = component.state
@@ -371,28 +522,20 @@ defmodule ScrawlyWeb.Pages.GamePage do
           |> put_state(:time_left, seconds_left(round_ms))
           |> put_state(:choice_time_left, seconds_left(choice_ms))
 
-        if round_ms > 0 or choice_ms > 0 do
-          component
-          |> put_state(:last_tick_at, now)
-          |> put_tick(gen, max(round_ms, choice_ms))
-        else
-          # Clamped at 0: wait for the room's phase change.
-          component
-          |> put_state(:round_deadline_local, nil)
-          |> put_state(:choice_deadline_local, nil)
-          |> put_state(:last_tick_at, nil)
+        cond do
+          round_ms > 0 or choice_ms > 0 ->
+            component
+            |> put_state(:last_tick_at, now)
+            |> check_private_slice(now)
+            |> put_tick(gen, max(round_ms, choice_ms))
+
+          state.phase in [:choosing, :drawing] ->
+            watchdog_tick(component, gen, now)
+
+          true ->
+            stop_tick_chain(component)
         end
     end
-  end
-
-  def action(:do_join_as_watcher, _params, component) do
-    put_command(component, :join_as_watcher, room_id: component.props.room_id)
-  end
-
-  def action(:switch_to_watcher, _params, component) do
-    component
-    |> put_state(:watching?, true)
-    |> put_action(:do_join_as_watcher)
   end
 
   def action(:leave_room, _params, component) do
@@ -417,8 +560,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   # A command was rejected server-side (see ScrawlyWeb.Auth.deny/3): nothing
-  # changed, so resync from the room. A denied stroke op leaves the drawer's
-  # op queue so the next one can go.
+  # changed, but the page may be out of date, so it resyncs. A denied stroke
+  # op leaves the drawer's op queue so the next one can go.
   def action(:command_denied, params, component) do
     if Map.get(params, :command) in [:complete_stroke, :undo_drawing_cmd, :clear_drawing_cmd] do
       JS.call(:rejectStrokeOp, [Map.get(params, :op_seq)])
@@ -426,7 +569,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
     component
     |> put_state(:leaving?, false)
-    |> put_action(:poll_room)
+    |> request_resync()
   end
 
   def action(:choose_word, %{word: word}, component) do
@@ -498,63 +641,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
     component
   end
 
-  def action(:chat_appended, %{message: message}, component) do
-    existing = Map.get(component.state, :chat_messages, [])
-
-    if Enum.any?(existing, &(Map.get(&1, :id) == Map.get(message, :id))) do
-      component
-    else
-      component
-      |> put_state(:chat_messages, [message | existing] |> Enum.take(50))
-      |> put_action(:scroll_chat)
-    end
-  end
-
   # Dispatched on every (re)join of the game channel. Never touches the
   # canvas: the drawer's strokes live in drawing_manager.mjs (restored once per
   # mount by :mounted), the viewers' in :drawing_strokes.
   def action(:channel_connected, _params, component) do
     component
     |> put_state(:channel_connected, true)
-    |> put_action(:poll_room)
-  end
-
-  def action(:stroke_completed, params, component) do
-    if not component.state.is_drawer do
-      stroke = %{
-        id: params.stroke_id,
-        path: params.path || "",
-        color: params.color || "#000000",
-        width: params.width || 2
-      }
-
-      strokes = Map.get(component.state, :drawing_strokes, [])
-
-      JS.call(:removeRemoteOverlay, [params.stroke_id])
-
-      if Enum.any?(strokes, &(&1.id == stroke.id)) do
-        component
-      else
-        put_state(component, :drawing_strokes, strokes ++ [stroke])
-      end
-    else
-      component
-    end
-  end
-
-  def action(:drawing_cleared, _params, component) do
-    JS.call(:setDrawingPath, [""])
-    put_state(component, :drawing_strokes, [])
-  end
-
-  def action(:drawing_undone, params, component) do
-    if not component.state.is_drawer do
-      strokes = params.strokes || []
-      JS.call(:setStrokes, [strokes])
-      put_state(component, :drawing_strokes, strokes)
-    else
-      component
-    end
+    |> put_state(:channel_connecting, false)
   end
 
   # The room decides when drawing ends: the gate is the phase, never the
@@ -609,7 +702,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  # Reply to every stroke op the room applied or ignored as a duplicate.
+  # Reply to every stroke op the room applied or ignored as a duplicate. It
+  # carries no seq: the room's broadcast of the op does.
   def action(:stroke_op_acked, params, component) do
     JS.call(:ackStrokeOp, [Map.get(params, :op_seq)])
     component
@@ -670,9 +764,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   def action(:shortcut_undo, _params, component), do: component
 
-  alias ScrawlyWeb.Pages.GamePage.Commands
-
-  def command(:poll_room_state, params, server), do: Commands.poll_room_state(params, server)
+  def command(:resync_room, params, server), do: Commands.resync_room(params, server)
   def command(:join_room, params, server), do: Commands.join_room(params, server)
   def command(:join_as_watcher, params, server), do: Commands.join_as_watcher(params, server)
   def command(:leave_watcher, params, server), do: Commands.leave_watcher(params, server)
@@ -686,90 +778,359 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def command(:clear_drawing_cmd, params, server), do: Commands.clear_drawing_cmd(params, server)
   def command(:undo_drawing_cmd, params, server), do: Commands.undo_drawing_cmd(params, server)
 
-  defp handle_game_state_changes(component, params) do
-    old_started = component.state.game_started
-    new_game_active = params.game_id != nil
-    old_round = component.state.round
-    new_round = params.current_round || 0
-    new_phase = Map.get(params, :phase, :idle)
+  # ── Sequencing and resync ──────────────────────────────────────────
 
-    is_drawer = params.is_drawer || false
-    word_display = Map.get(params, :word_display, "")
-    word_length = Map.get(params, :word_length, 0)
-    revealed_word = Map.get(params, :revealed_word)
-    current_word = Map.get(params, :current_word)
-    drawer_name = params.drawer_name || "Unknown"
-    word_choices = Map.get(params, :word_choices, [])
+  # The gap rule for one {:room} broadcast: :drop, or {:apply, component, seq,
+  # gap} with last_seq already advanced, where gap is the highest seq that was
+  # skipped (nil when none was).
+  defp accept_seq(component, params) do
+    state = component.state
+    seq = Map.get(params, :seq)
+    last = state.last_seq
 
-    # time_left / choice_time_left are set by anchor_countdowns/2 afterwards.
     cond do
-      not old_started and new_game_active ->
-        JS.call(:setDrawingPath, [""])
+      state.leaving? or not is_integer(seq) ->
+        :drop
 
-        component
-        |> put_state(:drawing?, false)
-        |> put_state(:game_started, true)
-        |> put_state(:game_id, params.game_id)
-        |> put_state(:round, new_round)
-        |> put_state(:total_rounds, params.total_rounds || 5)
-        |> put_state(:current_drawer, %{id: params.current_drawer_id, username: drawer_name})
-        |> put_state(:current_word, current_word)
-        |> put_state(:current_word_display, word_display)
-        |> put_state(:word_length, word_length)
-        |> put_state(:revealed_word, revealed_word)
-        |> put_state(:is_drawer, is_drawer)
-        |> put_state(:phase, new_phase)
-        |> put_state(:word_choices, word_choices)
-        |> put_state(:drawing_strokes, [])
-
-      old_started and not new_game_active ->
-        JS.call(:setDrawingPath, [""])
-
-        component
-        |> put_state(:drawing?, false)
-        |> put_state(:game_started, false)
-        |> put_state(:game_id, nil)
-        |> put_state(:current_drawer, nil)
-        |> put_state(:current_word, nil)
-        |> put_state(:current_word_display, "")
-        |> put_state(:word_length, 0)
-        |> put_state(:revealed_word, nil)
-        |> put_state(:is_drawer, false)
-        |> put_state(:correct_guessers, [])
-        |> put_state(:phase, :idle)
-        |> put_state(:word_choices, [])
-        |> put_state(:drawing_strokes, [])
-
-      old_started and new_round > old_round ->
-        JS.call(:setDrawingPath, [""])
-
-        component
-        |> put_state(:drawing?, false)
-        |> put_state(:round, new_round)
-        |> put_state(:current_drawer, %{id: params.current_drawer_id, username: drawer_name})
-        |> put_state(:current_word, current_word)
-        |> put_state(:current_word_display, word_display)
-        |> put_state(:word_length, word_length)
-        |> put_state(:revealed_word, revealed_word)
-        |> put_state(:is_drawer, is_drawer)
-        |> put_state(:phase, new_phase)
-        |> put_state(:word_choices, word_choices)
-        |> put_state(:drawing_strokes, [])
-
-      old_started ->
-        component
-        |> end_drawing_phase(component.state.phase, new_phase)
-        |> put_state(:current_word_display, word_display)
-        |> put_state(:word_length, word_length)
-        |> put_state(:revealed_word, revealed_word)
-        |> put_state(:is_drawer, is_drawer)
-        |> put_state(:current_word, current_word)
-        |> put_state(:phase, new_phase)
-        |> put_state(:word_choices, word_choices)
+      is_integer(last) and seq <= last ->
+        :drop
 
       true ->
+        gap = if is_integer(last) and seq > last + 1, do: seq - 1, else: nil
+        {:apply, put_state(component, :last_seq, seq), seq, gap}
+    end
+  end
+
+  defp after_gap(component, nil), do: component
+
+  # A resync already in flight may have been built before the skipped
+  # broadcasts: remember the highest one, :room_resynced checks it.
+  defp after_gap(component, gap) do
+    owed = component.state.resync_owed_seq
+
+    component
+    |> put_state(:resync_owed_seq, if(is_integer(owed), do: max(owed, gap), else: gap))
+    |> request_resync()
+  end
+
+  # At most one :resync_room in flight. A reply clears resync_requested_at; a
+  # request still unanswered after @resync_guard_ms may be sent again (a
+  # timestamp from another document's clock, restored by Back/Forward, counts
+  # as expired).
+  defp request_resync(component) do
+    state = component.state
+    now = System.monotonic_time(:millisecond)
+    at = state.resync_requested_at
+
+    cond do
+      state.leaving? -> component
+      is_integer(at) and now >= at and now - at < @resync_guard_ms -> component
+      true -> send_resync(component, false)
+    end
+  end
+
+  # The countdown watchdog and the missing-slice check ask once per seq: a
+  # room that is really stuck (or a drawer with really no choices) costs one
+  # resync, not one every few seconds.
+  defp request_stuck_resync(component) do
+    if component.state.stuck_seq == component.state.last_seq do
+      component
+    else
+      component
+      |> put_state(:stuck_seq, component.state.last_seq)
+      |> request_resync()
+    end
+  end
+
+  defp send_resync(component, resubscribe) do
+    component
+    |> put_state(:resync_requested_at, System.monotonic_time(:millisecond))
+    |> put_command(:resync_room, room_id: component.props.room_id, resubscribe: resubscribe)
+  end
+
+  # The snapshot answered the request; a gap seen meanwhile that it does not
+  # cover gets a new one.
+  defp settle_owed_resync(component, seq) do
+    owed = component.state.resync_owed_seq
+
+    if is_integer(owed) and owed > seq do
+      request_resync(component)
+    else
+      put_state(component, :resync_owed_seq, nil)
+    end
+  end
+
+  defp max_seq(last, seq) when is_integer(last) and last > seq, do: last
+  defp max_seq(_last, seq), do: seq
+
+  # Chat ids are seqs: lines newer than the snapshot stay, in front of it
+  # (both lists are newest first, and every newer id is above the snapshot's).
+  defp merge_chat(snapshot_chat, local_chat, seq) do
+    newer = Enum.filter(local_chat, fn msg -> is_integer(msg.id) and msg.id > seq end)
+    Enum.take(newer ++ snapshot_chat, @max_chat)
+  end
+
+  defp add_viewer_stroke(component, params, seq) do
+    if component.state.is_drawer do
+      component
+    else
+      strokes = component.state.drawing_strokes
+      JS.call(:removeRemoteOverlay, [params.stroke_id])
+
+      if Enum.any?(strokes, &(&1.id == params.stroke_id)) do
+        component
+      else
+        stroke = %{
+          id: params.stroke_id,
+          path: params.path || "",
+          color: params.color || "#000000",
+          width: params.width || 2,
+          seq: seq
+        }
+
+        put_state(component, :drawing_strokes, strokes ++ [stroke])
+      end
+    end
+  end
+
+  # Viewers take the snapshot's strokes, plus strokes that arrived after it
+  # (unless the list was replaced after it: then theirs is newer). Clears the
+  # live overlays.
+  defp apply_snapshot_strokes(component, view, seq) do
+    state = component.state
+
+    cond do
+      state.is_drawer ->
+        component
+
+      is_integer(state.strokes_seq) and state.strokes_seq > seq ->
+        component
+
+      true ->
+        room = view.drawing_strokes || []
+
+        newer =
+          Enum.filter(state.drawing_strokes, fn s ->
+            Map.get(s, :seq, 0) > seq and not Enum.any?(room, &(&1.id == s.id))
+          end)
+
+        strokes = room ++ newer
+        JS.call(:setStrokes, [strokes])
+
+        component
+        |> put_state(:drawing_strokes, strokes)
+        |> put_state(:strokes_seq, seq)
+    end
+  end
+
+  # The drawer's word fields in a snapshot, applied like a pushed slice.
+  defp apply_snapshot_private(component, view) do
+    if Map.get(view, :is_drawer) == true do
+      slice = %{
+        game_id: view.game_id || "",
+        round: view.current_round || 0,
+        phase: view.phase,
+        current_word: view.current_word,
+        word_choices: view.word_choices || []
+      }
+
+      if slice.game_id == component.state.game_id and slice.round == component.state.round,
+        do: apply_private(component, slice),
+        else: component
+    else
+      component
+    end
+  end
+
+  # After a Back/Forward restore: the canvas markup was rebuilt from state, so
+  # the drawer's strokes are merged back in from the room, and the game socket
+  # (closed or stale since the page was left) is joined again for a member.
+  defp finish_restore(component, view) do
+    if component.state.restoring? do
+      if component.state.is_drawer do
+        JS.call(:restoreStrokes, [view.drawing_strokes || []])
+      end
+
+      component = put_state(component, :restoring?, false)
+
+      if member?(component.state) and component.state.socket_token != "" do
+        JS.call(:ensureGameChannel, [component.state.socket_token, component.state.room_code])
+        component
+      else
+        component
+      end
+    else
+      maybe_connect_member_channel(component)
+    end
+  end
+
+  defp maybe_connect_member_channel(component) do
+    if member?(component.state), do: maybe_connect_channel(component), else: component
+  end
+
+  # Applies a slice for the page's current turn. Phases only move forward
+  # within a turn, so a slice behind the page's phase (a :choosing one landing
+  # after the commit) changes nothing.
+  defp apply_private(component, slice) do
+    if phase_rank(slice.phase) >= phase_rank(component.state.phase) do
+      component
+      |> put_state(:current_word, slice.current_word)
+      |> put_state(:word_choices, slice.word_choices || [])
+    else
+      component
+    end
+  end
+
+  defp apply_pending_private(component) do
+    state = component.state
+
+    case state.pending_private do
+      %{game_id: game_id, round: round} = slice ->
+        cond do
+          game_id == state.game_id and round == state.round ->
+            component
+            |> put_state(:pending_private, nil)
+            |> apply_private(slice)
+
+          game_id == state.game_id and round < state.round ->
+            put_state(component, :pending_private, nil)
+
+          true ->
+            component
+        end
+
+      _none ->
         component
     end
+  end
+
+  defp phase_rank(:choosing), do: 1
+  defp phase_rank(:drawing), do: 2
+  defp phase_rank(:round_end), do: 3
+  defp phase_rank(_phase), do: 0
+
+  # The drawer is choosing with nothing to choose from, or drawing without a
+  # word: their slice was lost.
+  defp missing_slice?(state) do
+    state.is_drawer and
+      ((state.phase == :choosing and state.word_choices == [] and state.current_word == nil) or
+         (state.phase == :drawing and state.current_word in [nil, ""]))
+  end
+
+  defp check_private_slice(component, now) do
+    entered = component.state.phase_entered_at
+
+    if missing_slice?(component.state) and is_integer(entered) and
+         now - entered >= @slice_grace_ms,
+       do: request_stuck_resync(component),
+       else: component
+  end
+
+  defp member?(state) do
+    uid = state.current_user_id
+
+    uid != nil and
+      (Enum.any?(state.players, &(&1.id == uid)) or Enum.any?(state.watchers, &(&1.id == uid)))
+  end
+
+  # ── The one reducer ─────────────────────────────────────────────────
+  #
+  # Applies the room's public state from a :room_delta (View.delta/1) or a
+  # snapshot (View.for_viewer/2) whose `seq` is given: membership, game,
+  # round, phase, drawer, the word fields everyone sees, the countdowns, the
+  # canvas reset on a new game or turn, and the redirects.
+  defp apply_view(component, view, seq) do
+    cond do
+      view.status == :post_game and Map.get(view, :last_game_id) != nil ->
+        leave_page(component, ScrawlyWeb.Pages.GameScorePage, game_id: view.last_game_id)
+
+      view.status == :ended ->
+        component
+        |> put_state(:room_status, :ended)
+        |> put_action(name: :go_home, delay: 2000)
+
+      true ->
+        update_from_view(component, view, seq)
+    end
+  end
+
+  defp update_from_view(component, view, seq) do
+    state = component.state
+    players = view.players || []
+    game_id = view.game_id
+    active = game_id != nil
+    round = view.current_round || 0
+    phase = view.phase || :idle
+    drawer_id = view.current_drawer_id
+    uid = state.current_user_id
+
+    new_game = active and (not state.game_started or game_id != state.game_id)
+    new_turn = new_game or (active and round != state.round)
+    game_over = state.game_started and not active
+
+    component =
+      component
+      |> put_state(:players, players)
+      |> put_state(:max_players, Map.get(view, :max_players) || state.max_players)
+      |> put_state(:watchers, view.watchers || [])
+      |> put_state(:room_status, view.status)
+      |> put_state(:correct_guessers, view.correct_guessers || [])
+      |> put_state(:past_games, Map.get(view, :past_games) || state.past_games)
+      |> put_state(
+        :can_start_game,
+        state.is_creator and length(players) >= 2 and game_id == nil
+      )
+      |> put_state(:game_started, active)
+      |> put_state(:game_id, game_id || "")
+      |> put_state(:round, round)
+      |> put_state(:total_rounds, view.total_rounds || state.total_rounds)
+      |> put_state(:current_drawer, drawer_of(view, players, drawer_id))
+      |> put_state(:is_drawer, is_binary(uid) and uid == drawer_id)
+      |> put_state(:phase, phase)
+      |> put_state(:current_word_display, Map.get(view, :word_display, ""))
+      |> put_state(:word_length, Map.get(view, :word_length, 0))
+      |> put_state(:revealed_word, Map.get(view, :revealed_word))
+
+    component =
+      if new_turn or game_over,
+        do: reset_turn(component, seq),
+        else: end_drawing_phase(component, state.phase, phase)
+
+    component =
+      if new_turn or game_over or phase != state.phase,
+        do: put_state(component, :phase_entered_at, System.monotonic_time(:millisecond)),
+        else: component
+
+    component
+    |> apply_pending_private()
+    |> anchor_countdowns(view)
+  end
+
+  defp drawer_of(_view, _players, nil), do: nil
+
+  defp drawer_of(view, players, drawer_id) do
+    name =
+      Map.get(view, :drawer_name) ||
+        case Enum.find(players, &(&1.id == drawer_id)) do
+          nil -> "Unknown"
+          player -> player.username
+        end
+
+    %{id: drawer_id, username: name}
+  end
+
+  # A new game, a new turn or the end of the game: an empty canvas for
+  # everyone (the drawer's local history and op queue included) and no word
+  # until the new drawer's slice arrives.
+  defp reset_turn(component, seq) do
+    JS.call(:setDrawingPath, [""])
+
+    component
+    |> put_state(:drawing?, false)
+    |> put_state(:drawing_strokes, [])
+    |> put_state(:strokes_seq, seq)
+    |> put_state(:current_word, nil)
+    |> put_state(:word_choices, [])
   end
 
   # Anchors the countdowns from a view, delta or init state (see the
@@ -788,6 +1149,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     component
     |> put_state(:round_deadline_local, local_deadline(now, round_ms))
     |> put_state(:choice_deadline_local, local_deadline(now, choice_ms))
+    |> put_state(:zero_since, nil)
     |> put_state(:time_left, seconds_left(round_ms))
     |> put_state(:choice_time_left, seconds_left(choice_ms))
     |> put_state(
@@ -816,6 +1178,30 @@ defmodule ScrawlyWeb.Pages.GamePage do
     else
       component
     end
+  end
+
+  # The countdown reached 0 but the phase it counts down is still shown.
+  defp watchdog_tick(component, gen, now) do
+    since = component.state.zero_since || now
+
+    if now - since >= @watchdog_ms do
+      component
+      |> stop_tick_chain()
+      |> request_stuck_resync()
+    else
+      component
+      |> put_state(:zero_since, since)
+      |> put_state(:last_tick_at, now)
+      |> put_tick(gen, 0)
+    end
+  end
+
+  defp stop_tick_chain(component) do
+    component
+    |> put_state(:round_deadline_local, nil)
+    |> put_state(:choice_deadline_local, nil)
+    |> put_state(:last_tick_at, nil)
+    |> put_state(:zero_since, nil)
   end
 
   # A tick ran (or a chain started) less than @tick_alive_ms ago. `last` is
@@ -857,18 +1243,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   defp end_drawing_phase(component, _old_phase, _new_phase), do: component
 
-  # A :room_delta that ends :drawing (time up, everyone guessed) closes the
-  # canvas at once: drawing follows the room's phase, and waiting for the poll
-  # reply would leave the drawer a round trip of strokes the room rejects.
-  # The reply fills in the rest of :round_end.
-  defp close_drawing(component, :drawing, :round_end) do
-    component
-    |> end_drawing_phase(:drawing, :round_end)
-    |> put_state(:phase, :round_end)
-  end
-
-  defp close_drawing(component, _old_phase, _new_phase), do: component
-
   # Shared by the toolbar buttons and the keyboard shortcuts.
   defp toggle_eraser(component) do
     is_eraser = not Map.get(component.state, :draw_eraser, false)
@@ -891,9 +1265,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   # Every navigation away from GamePage that the page itself starts: the game
   # socket would otherwise stay joined (header links are handled by the
-  # marker check in game_channel.mjs).
+  # marker check in game_channel.mjs). Sets leaving?, so nothing that is
+  # still queued for this page acts on it.
   defp leave_page(component, page, params \\ []) do
     JS.call(:disconnectGameChannel, [])
+    component = put_state(component, :leaving?, true)
 
     if params == [],
       do: put_page(component, page),
@@ -914,36 +1290,14 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  defp sync_drawing_path(component, params) do
-    channel_connected = Map.get(component.state, :channel_connected, false)
-
-    cond do
-      params.is_drawer ->
-        component
-
-      # Only a non-empty list longer than ours can be newer: the list is
-      # maintained by init, the stroke actions and the round resets.
-      channel_connected ->
-        server_strokes = Map.get(params, :drawing_strokes) || []
-        local_strokes = Map.get(component.state, :drawing_strokes, [])
-
-        if server_strokes != [] and length(server_strokes) > length(local_strokes) do
-          put_state(component, :drawing_strokes, server_strokes)
-        else
-          component
-        end
-
-      # Replies carry no strokes (stripped server-side): keep the list that
-      # init, the stroke actions and round resets maintain.
-      true ->
-        component
-    end
-  end
-
   # An unknown or dissolved room only sets :room_missing?, so the placeholder
   # must read no other state ({%if} compiles to `if`: the else branch is never
   # evaluated). The marker stays out of it: the placeholder is no game page
   # for drawing_manager.mjs / game_channel.mjs.
+  #
+  # The inline script dispatches :page_shown whenever this page instance's
+  # markup is inserted (Hologram runs the inline scripts a patch inserts, and
+  # keys a script by its text, so @mount_id makes it run once per instance).
   def template do
     ~HOLO"""
     {%if @room_missing?}
@@ -952,6 +1306,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     </div>
     {%else}
     <span id="game-page-marker" hidden={true}></span>
+    <script>Hologram.dispatchAction("page_shown", "page", \{mount_id: "{@mount_id}"\});</script>
     {%if !@game_started}
     <div class="page page-mid">
       <div class="row" style="margin-bottom: 24px;">

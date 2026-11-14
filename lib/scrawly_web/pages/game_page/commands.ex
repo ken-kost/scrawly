@@ -8,22 +8,54 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   The acting user always comes from the session via `ScrawlyWeb.Auth`, never from
   params. Rejected commands reply with `:command_denied` (see `Auth.deny/3`).
 
-  Every `:room_refreshed` reply is the session user's own view of the room
-  (`RoomServer.get_view/2`): the word and the word choices are only ever sent
-  to the current drawer.
+  The page is push-only: room changes reach it as sequenced broadcasts
+  (`RoomServer.Broadcasts`). Only full snapshots carry a seq: the join replies
+  and `resync_room/2` reply `:room_resynced` with the session user's own view
+  of the room (`RoomServer.get_view/2`, chat and strokes included; the word
+  and the word choices only for the current drawer). Other replies carry no
+  seq, so they can never make the page drop a broadcast still on its way.
   """
 
   require Logger
 
-  import Hologram.Component, only: [put_action: 2, put_action: 3, put_broadcast_except: 5]
+  import Hologram.Component, only: [put_action: 2, put_action: 3, put_subscription: 2]
 
   alias Scrawly.{Accounts, Games}
   alias Scrawly.Games.{RoomServer, StrokeRules}
-  alias Scrawly.Games.RoomServer.GameFlow
+  alias Scrawly.Games.RoomServer.{Broadcasts, GameFlow}
   alias ScrawlyWeb.Auth
 
-  def poll_room_state(%{room_id: room_id}, server) do
-    reply_with_view(server, room_id)
+  @doc """
+  Replies `:room_resynced` with the session user's snapshot of the room
+  (`:room_dissolved` once it is gone). The page asks after a seq gap, when
+  the drawer's private slice is missing, after a denied command and when a
+  countdown stays at 0.
+
+  With `resubscribe: true` (a page brought back by Back/Forward, whose
+  subscriptions the connection dropped when it was left) it also subscribes
+  the page to the room's channels again, as `GamePage.init/3` does.
+  """
+  def resync_room(%{room_id: room_id} = params, server) do
+    server =
+      if Map.get(params, :resubscribe) == true,
+        do: subscribe_to_room(server, room_id),
+        else: server
+
+    reply_with_snapshot(server, room_id)
+  end
+
+  @doc """
+  The room's channels for the session user's page: the public `{:room}` one
+  and, with an account, the user's own `{:room_player}` one (the drawer's
+  private slice). Used by `GamePage.init/3` and `resync_room/2`.
+  """
+  def subscribe_to_room(server, room_id) do
+    server = put_subscription(server, Broadcasts.room_channel(room_id))
+
+    case Auth.user_id(server) do
+      nil -> server
+      uid -> put_subscription(server, Broadcasts.player_channel(room_id, uid))
+    end
   end
 
   def join_room(%{room_id: room_id}, server) do
@@ -42,7 +74,7 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
             Accounts.join_room(user, room_id)
             Games.join_room(room_id, user.id)
 
-            reply_with_view(server, room_id)
+            reply_with_snapshot(server, room_id)
 
           {:error, :room_full} ->
             put_action(server, :switch_to_watcher)
@@ -69,7 +101,7 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
           end
 
         case RoomServer.join_as_watcher(room_id, %{id: key, username: username}) do
-          {:ok, _state} -> reply_with_view(server, room_id)
+          {:ok, _state} -> reply_with_snapshot(server, room_id)
           {:error, :room_full} -> Auth.deny(server, :join_as_watcher, :room_full)
           {:error, _} -> server
         end
@@ -81,6 +113,12 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     put_action(server, :go_home)
   end
 
+  @doc """
+  Starts a game as the session user (the room's creator). Replies nothing on
+  success: the caller's page is subscribed and gets the start as broadcasts
+  (the drawer's choices on their private channel). Denials go through
+  `Auth.deny/3`.
+  """
   def start_game(%{room_id: room_id}, server) do
     with {:ok, uid} <- session_user_id(server),
          {:ok, state} <- RoomServer.get_state(room_id),
@@ -94,7 +132,7 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
       case RoomServer.start_game(room_id, uid, %{word_choices: choices, ai_words: remaining_ai}) do
         {:ok, _state} ->
           if ai_status, do: RoomServer.system_message(room_id, ai_status)
-          reply_with_view(server, room_id)
+          server
 
         {:error, reason} ->
           Auth.deny(server, :start_game, reason)
@@ -107,12 +145,16 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   @doc """
   Commits `word` for the session user, who must be the current drawer while
   the room is `:choosing` and `word` one of their choices (checked by the room
-  process). Replies with the drawer's view, or `:command_denied`.
+  process). Replies `:private_state` with the drawer's slice (no seq), so the
+  word shows at once, or `:command_denied`.
   """
   def choose_word(%{room_id: room_id, word: word}, server) do
     with {:ok, uid} <- session_user_id(server),
          {:ok, _state} <- RoomServer.choose_word(room_id, uid, word) do
-      reply_with_view(server, room_id)
+      case RoomServer.get_private_slice(room_id, uid) do
+        {:ok, slice} -> put_action(server, :private_state, slice)
+        {:error, _} -> server
+      end
     else
       {:error, reason} when is_atom(reason) -> Auth.deny(server, :choose_word, reason)
       {:error, _reason} -> Auth.deny(server, :choose_word, :choose_failed)
@@ -202,9 +244,10 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   end
 
   @doc """
-  Stores a completed stroke drawn by the session user and fans it out to the
-  room's other tabs. Only `room_id`, `stroke_id`, `path`, `color`, `width`,
-  `op_epoch` and `op_seq` are read from params.
+  Stores a completed stroke drawn by the session user; the room publishes it
+  as `:stroke_completed` to every page (the drawer's own tabs ignore it).
+  Only `room_id`, `stroke_id`, `path`, `color`, `width`, `op_epoch` and
+  `op_seq` are read from params.
 
   The room process checks that the session user is the current drawer while
   `:drawing` and validates the stroke (`StrokeRules`, including the stroke id).
@@ -229,9 +272,7 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
     with {:ok, uid} <- session_user_id(server),
          :ok <- RoomServer.append_drawing(room_id, uid, stroke, op_tag(params)) do
-      server
-      |> broadcast_to_other_tabs(room_id, :stroke_completed, stroke_completed(stroke))
-      |> ack_stroke_op(params)
+      ack_stroke_op(server, params)
     else
       :duplicate ->
         ack_stroke_op(server, params)
@@ -255,15 +296,14 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   end
 
   @doc """
-  Clears the canvas as the session user (current drawer, `:drawing` only).
-  An op of the drawer's queue: see `complete_stroke/2`.
+  Clears the canvas as the session user (current drawer, `:drawing` only);
+  the room publishes `:drawing_cleared`. An op of the drawer's queue: see
+  `complete_stroke/2`.
   """
   def clear_drawing_cmd(%{room_id: room_id} = params, server) do
     with {:ok, uid} <- session_user_id(server),
          :ok <- RoomServer.clear_drawing(room_id, uid, op_tag(params)) do
-      server
-      |> broadcast_to_other_tabs(room_id, :drawing_cleared, %{})
-      |> ack_stroke_op(params)
+      ack_stroke_op(server, params)
     else
       :duplicate -> ack_stroke_op(server, params)
       {:error, reason} -> deny_stroke_op(server, :clear_drawing_cmd, reason, params)
@@ -272,40 +312,20 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
   @doc """
   Removes the stroke `stroke_id` as the session user (current drawer,
-  `:drawing` only) and broadcasts the remaining strokes. An unknown id changes
-  nothing and broadcasts nothing. An op of the drawer's queue: see
-  `complete_stroke/2`.
+  `:drawing` only); the room publishes the remaining strokes as
+  `:drawing_undone`. An unknown id changes nothing and publishes nothing. An
+  op of the drawer's queue: see `complete_stroke/2`.
   """
   def undo_drawing_cmd(%{room_id: room_id} = params, server) do
     stroke_id = Map.get(params, :stroke_id)
 
     with {:ok, uid} <- session_user_id(server),
-         {:ok, strokes} <- RoomServer.undo_drawing(room_id, uid, stroke_id, op_tag(params)) do
-      server
-      |> broadcast_to_other_tabs(room_id, :drawing_undone, %{strokes: strokes})
-      |> ack_stroke_op(params)
+         {:ok, _strokes} <- RoomServer.undo_drawing(room_id, uid, stroke_id, op_tag(params)) do
+      ack_stroke_op(server, params)
     else
       :duplicate -> ack_stroke_op(server, params)
       {:error, reason} -> deny_stroke_op(server, :undo_drawing_cmd, reason, params)
     end
-  end
-
-  # Excludes only the tab that sent the command: it already shows the change.
-  # Never exclude by {:user, id}: this app does not set Hologram's user id.
-  defp broadcast_to_other_tabs(server, room_id, action, params) do
-    put_broadcast_except(
-      server,
-      {:instance, server.instance_id},
-      {:room, room_id},
-      action,
-      params
-    )
-  end
-
-  # The stored stroke, with the id under the key viewers already use for the
-  # live overlay.
-  defp stroke_completed(stroke) do
-    %{stroke_id: stroke.id, path: stroke.path, color: stroke.color, width: stroke.width}
   end
 
   defp op_tag(params),
@@ -376,14 +396,12 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
   end
 
-  # Strokes are stripped: the page keeps its own list (init, stroke actions).
-  defp reply_with_view(server, room_id) do
+  # A full snapshot, built in one room call so its seq, chat and strokes
+  # belong together: the only kind of reply that carries a seq.
+  defp reply_with_snapshot(server, room_id) do
     case RoomServer.get_view(room_id, Auth.user_id(server)) do
-      {:ok, view} ->
-        put_action(server, :room_refreshed, Map.put(view, :drawing_strokes, []))
-
-      {:error, :not_found} ->
-        put_action(server, :room_dissolved)
+      {:ok, view} -> put_action(server, :room_resynced, view)
+      {:error, :not_found} -> put_action(server, :room_dissolved)
     end
   end
 

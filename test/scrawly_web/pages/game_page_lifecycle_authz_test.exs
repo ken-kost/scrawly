@@ -23,7 +23,7 @@ defmodule ScrawlyWeb.Pages.GamePageLifecycleAuthzTest do
 
   defp join!(room, user) do
     result = GamePage.command(:join_room, %{room_id: room.id}, server_for(user))
-    assert result.next_action.name == :room_refreshed
+    assert result.next_action.name == :room_resynced
     result
   end
 
@@ -106,8 +106,10 @@ defmodule ScrawlyWeb.Pages.GamePageLifecycleAuthzTest do
       forged = %{room_id: room.id, players: [%{id: player.id}, %{id: "ghost"}]}
       result = GamePage.command(:start_game, forged, server_for(creator))
 
-      assert result.next_action.name == :room_refreshed
-      assert result.next_action.params.is_drawer == true
+      # No reply: the creator's page gets the start as broadcasts.
+      assert result.next_action == nil
+      assert result.broadcasts == []
+      assert {:ok, %{is_drawer: true}} = RoomServer.get_view(room.id, creator.id)
       state = room_state!(room.id)
       assert state.status == :playing
       assert state.current_drawer_id == creator.id
@@ -130,7 +132,7 @@ defmodule ScrawlyWeb.Pages.GamePageLifecycleAuthzTest do
     end
   end
 
-  describe ":poll_room_state" do
+  describe ":resync_room" do
     test "a forged user_id doesn't yield the drawer's view", ctx do
       %{room: room, creator: creator, player: player} = ctx
       seed_test_words()
@@ -138,17 +140,43 @@ defmodule ScrawlyWeb.Pages.GamePageLifecycleAuthzTest do
       GamePage.command(:start_game, %{room_id: room.id}, server_for(creator))
 
       forged = %{room_id: room.id, user_id: creator.id}
-      as_player = GamePage.command(:poll_room_state, forged, server_for(player))
+      as_player = GamePage.command(:resync_room, forged, server_for(player))
+      assert as_player.next_action.name == :room_resynced
       assert as_player.next_action.params.is_drawer == false
       assert as_player.next_action.params.word_choices == []
 
-      as_anon = GamePage.command(:poll_room_state, forged, anon_server("x"))
+      as_anon = GamePage.command(:resync_room, forged, anon_server("x"))
       assert as_anon.next_action.params.is_drawer == false
       assert as_anon.next_action.params.word_choices == []
 
-      as_creator = GamePage.command(:poll_room_state, %{room_id: room.id}, server_for(creator))
+      as_creator = GamePage.command(:resync_room, %{room_id: room.id}, server_for(creator))
       assert as_creator.next_action.params.is_drawer == true
       assert as_creator.next_action.params.word_choices != []
+    end
+
+    test "resubscribes only when asked, to the session user's own channel", ctx do
+      %{room: room, player: player} = ctx
+      join!(room, player)
+
+      plain = GamePage.command(:resync_room, %{room_id: room.id}, server_for(player))
+      assert plain.subscriptions == []
+
+      forged = %{room_id: room.id, resubscribe: true, user_id: "someone-else"}
+      again = GamePage.command(:resync_room, forged, server_for(player))
+
+      assert Enum.sort(Enum.map(again.subscriptions, &elem(&1, 0))) ==
+               Enum.sort([{:room, room.id}, {:room_player, room.id, player.id}])
+
+      anon = GamePage.command(:resync_room, %{room_id: room.id, resubscribe: true}, anon_server())
+      assert Enum.map(anon.subscriptions, &elem(&1, 0)) == [{:room, room.id}]
+    end
+
+    test "a room that is gone replies :room_dissolved", ctx do
+      stop_room(ctx.room.id)
+      assert_room_stopped(ctx.room.id)
+
+      result = GamePage.command(:resync_room, %{room_id: ctx.room.id}, server_for(ctx.player))
+      assert result.next_action.name == :room_dissolved
     end
   end
 
@@ -320,12 +348,23 @@ defmodule ScrawlyWeb.Pages.GamePageLifecycleAuthzTest do
       %{component: component}
     end
 
-    test "join, poll, watch and leave only send the room id", %{component: c, room: room} do
+    test "join, resync, watch and leave only send the room id", %{component: c, room: room} do
       expected = %{room_id: room.id}
 
-      assert GamePage.action(:do_join_room, %{}, c).next_command.params == expected
-      assert GamePage.action(:poll_room, %{}, c).next_command.params == expected
+      mounted = %{c | state: Map.merge(c.state, mounted_state())}
+
+      for {join, command} <- [player: :join_room, watcher: :join_as_watcher] do
+        sent = GamePage.action(:mounted, %{join: join}, mounted).next_command
+        assert {sent.name, sent.params} == {command, expected}
+      end
+
+      assert GamePage.action(:mounted, %{join: nil}, mounted).next_command == nil
       assert GamePage.action(:do_join_as_watcher, %{}, c).next_command.params == expected
+
+      resync = GamePage.action(:command_denied, %{command: :x, reason: :y}, mounted).next_command
+
+      assert {resync.name, resync.params} ==
+               {:resync_room, Map.put(expected, :resubscribe, false)}
 
       leave = GamePage.action(:leave_room, %{}, c).next_command
       assert {leave.name, leave.params} == {:leave_room, expected}
@@ -336,13 +375,37 @@ defmodule ScrawlyWeb.Pages.GamePageLifecycleAuthzTest do
     end
 
     test ":command_denied clears leaving? and resyncs", %{component: c} do
-      leaving = put_in(c.state.leaving?, true)
+      leaving = %{c | state: Map.merge(c.state, %{mounted_state() | leaving?: true})}
 
       result =
         GamePage.action(:command_denied, %{command: :start_game, reason: :not_creator}, leaving)
 
       assert result.state.leaving? == false
-      assert result.next_action.name == :poll_room
+      assert result.next_command.name == :resync_room
     end
+  end
+
+  # What :mounted and a resync request read besides the identity keys above.
+  defp mounted_state do
+    %{
+      is_drawer: false,
+      drawing_strokes: [],
+      players: [],
+      watchers: [],
+      round_remaining_ms: 0,
+      choice_remaining_ms: 0,
+      choice_duration: 15,
+      round_duration: 60,
+      round_deadline_local: nil,
+      choice_deadline_local: nil,
+      zero_since: nil,
+      time_left: 0,
+      choice_time_left: 0,
+      tick_gen: 1,
+      last_tick_at: nil,
+      phase_entered_at: nil,
+      resync_requested_at: nil,
+      leaving?: false
+    }
   end
 end

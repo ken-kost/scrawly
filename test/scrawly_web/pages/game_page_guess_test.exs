@@ -27,7 +27,7 @@ defmodule ScrawlyWeb.Pages.GamePageGuessTest do
 
     for user <- [guesser, other] do
       assert GamePage.command(:join_room, %{room_id: room.id}, server_for(user)).next_action.name ==
-               :room_refreshed
+               :room_resynced
     end
 
     GamePage.command(:join_as_watcher, %{room_id: room.id}, server_for(spectator))

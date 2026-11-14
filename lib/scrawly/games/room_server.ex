@@ -1,8 +1,12 @@
 defmodule Scrawly.Games.RoomServer do
   @moduledoc """
   GenServer representing a game room. Single source of truth for room membership,
-  game state, chat messages, and drawing data. State changes are projected to
-  subscribed game pages via Hologram realtime (`:room_delta` / `:chat_appended`).
+  game state, chat messages, and drawing data. Every change is pushed to the
+  subscribed game pages through Hologram Realtime, sequenced
+  (`RoomServer.Broadcasts`): `:room_delta`, `:chat_appended`,
+  `:stroke_completed`, `:drawing_cleared` and `:drawing_undone` on
+  `{:room, room_id}`, and the drawer's word choices and word on their own
+  `{:room_player, room_id, user_id}` channel, after the public delta.
 
   Rounds run against monotonic deadlines (`round_deadline`, `choice_deadline`):
   the room broadcasts the remaining ms in its deltas and clients count down
@@ -20,6 +24,7 @@ defmodule Scrawly.Games.RoomServer do
     Scoring,
     StrokeRules,
     WordHints,
+    RoomServer.Broadcasts,
     RoomServer.GameFlow,
     RoomServer.View
   }
@@ -43,7 +48,11 @@ defmodule Scrawly.Games.RoomServer do
     :max_players,
     players: [],
     watchers: [],
-    version: 0,
+    # Seq of the last {:room} broadcast (Broadcasts.publish/3). Seeded from
+    # the wall clock in µs in init/1, so a restarted room (the child is
+    # :temporary) keeps counting up from above anything its previous process
+    # sent unless that one averaged more than a broadcast per µs.
+    seq: 0,
     word_count: 1,
     word_source: :local,
     prompt: nil,
@@ -134,6 +143,17 @@ defmodule Scrawly.Games.RoomServer do
   @spec get_view(term, term) :: {:ok, map} | {:error, :not_found}
   def get_view(room_id, viewer_id) do
     GenServer.call(via(room_id), {:get_view, viewer_id})
+  catch
+    :exit, _ -> {:error, :not_found}
+  end
+
+  @doc """
+  The current drawer's private slice (`View.private_slice/1`) when
+  `viewer_id` is the drawer, `{:error, :not_drawer}` otherwise.
+  """
+  @spec get_private_slice(term, term) :: {:ok, map} | {:error, :not_drawer | :not_found}
+  def get_private_slice(room_id, viewer_id) do
+    GenServer.call(via(room_id), {:get_private_slice, viewer_id})
   catch
     :exit, _ -> {:error, :not_found}
   end
@@ -348,7 +368,8 @@ defmodule Scrawly.Games.RoomServer do
 
   Returns `:ok`, `:duplicate`, `{:error, :not_drawer | :wrong_phase | :not_found}`,
   or `{:error, :invalid_stroke | :stroke_limit, strokes}` with the canvas as
-  stored, so the drawer can resync.
+  stored, so the drawer can resync. A stored stroke is published to the whole
+  room as `:stroke_completed` (`%{stroke_id, path, color, width, seq}`).
   """
   @spec append_drawing(term, term, term, stroke_op) ::
           :ok
@@ -362,8 +383,9 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   @doc """
-  Clears the canvas for the current drawer (`authorize/3` `:draw`). A stale
-  `op` changes nothing and returns `:duplicate`.
+  Clears the canvas for the current drawer (`authorize/3` `:draw`) and
+  publishes `:drawing_cleared`. A stale `op` changes nothing and returns
+  `:duplicate`.
   """
   @spec clear_drawing(term, term, stroke_op) ::
           :ok | :duplicate | {:error, :not_drawer | :wrong_phase | :not_found}
@@ -375,8 +397,9 @@ defmodule Scrawly.Games.RoomServer do
 
   @doc """
   Removes the stroke with id `stroke_id` for the current drawer
-  (`authorize/3` `:draw`) and returns the remaining strokes. An unknown id or
-  a stale `op` changes nothing and returns `:duplicate`.
+  (`authorize/3` `:draw`), publishes the remaining strokes as
+  `:drawing_undone` and returns them. An unknown id or a stale `op` changes
+  nothing and returns `:duplicate`.
   """
   @spec undo_drawing(term, term, term, stroke_op) ::
           {:ok, [StrokeRules.stroke()]}
@@ -451,7 +474,7 @@ defmodule Scrawly.Games.RoomServer do
           round_duration: room.round_duration || 60,
           round_multiplier: room.round_multiplier || 1,
           ai_tone: room.ai_tone || :fun,
-          version: 0
+          seq: System.system_time(:microsecond)
         }
 
         notify_lobby()
@@ -469,6 +492,12 @@ defmodule Scrawly.Games.RoomServer do
 
   def handle_call({:get_view, viewer_id}, _from, state) do
     {:reply, {:ok, View.for_viewer(state, viewer_id)}, state}
+  end
+
+  def handle_call({:get_private_slice, viewer_id}, _from, state) do
+    if is_binary(viewer_id) and viewer_id == state.current_drawer_id,
+      do: {:reply, {:ok, View.private_slice(state)}, state},
+      else: {:reply, {:error, :not_drawer}, state}
   end
 
   def handle_call({:join, player}, _from, state) do
@@ -491,7 +520,6 @@ defmodule Scrawly.Games.RoomServer do
         new_state =
           %{state | players: state.players ++ [player]}
           |> add_sys_msg("#{player.username} joined the room")
-          |> bump_version()
           |> notify_waiters()
 
         notify_lobby()
@@ -513,7 +541,6 @@ defmodule Scrawly.Games.RoomServer do
         new_state =
           %{state | players: Enum.reject(state.players, &(&1.id == player_id))}
           |> add_sys_msg("#{player_name} left the room")
-          |> bump_version()
           |> notify_waiters()
 
         notify_lobby()
@@ -535,7 +562,6 @@ defmodule Scrawly.Games.RoomServer do
         new_state =
           %{state | watchers: state.watchers ++ [watcher]}
           |> add_sys_msg("#{watcher.username} is now watching")
-          |> bump_version()
           |> notify_waiters()
 
         {:reply, {:ok, to_public(new_state)}, new_state}
@@ -551,7 +577,6 @@ defmodule Scrawly.Games.RoomServer do
         new_state =
           %{state | watchers: Enum.reject(state.watchers, &(&1.id == watcher_id))}
           |> add_sys_msg("#{watcher.username} stopped watching")
-          |> bump_version()
           |> notify_waiters()
 
         {:reply, {:ok, to_public(new_state)}, new_state}
@@ -566,7 +591,6 @@ defmodule Scrawly.Games.RoomServer do
 
     new_state =
       %{state | players: updated_players}
-      |> bump_version()
       |> notify_waiters()
 
     {:reply, {:ok, to_public(new_state)}, new_state}
@@ -601,8 +625,8 @@ defmodule Scrawly.Games.RoomServer do
           {:ok, new_state} ->
             new_state =
               new_state
-              |> bump_version()
               |> notify_waiters()
+              |> Broadcasts.push_private_slice()
 
             {:reply, {:ok, to_public(new_state)}, new_state}
 
@@ -628,13 +652,7 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   def handle_call({:system_message, text}, _from, state) do
-    new_state =
-      state
-      |> add_sys_msg(text)
-      |> bump_version()
-      |> notify_waiters(false)
-
-    {:reply, :ok, new_state}
+    {:reply, :ok, add_sys_msg(state, text)}
   end
 
   def handle_call(:end_game, _from, state) do
@@ -673,7 +691,6 @@ defmodule Scrawly.Games.RoomServer do
           post_game_deadline: schedule_return_to_lobby()
       }
       |> add_sys_msg("Game over! Final scores are in.")
-      |> bump_version()
       |> notify_waiters()
 
     notify_lobby()
@@ -693,7 +710,18 @@ defmodule Scrawly.Games.RoomServer do
          :ok <- fresh_stroke_op(state, op),
          :ok <- new_stroke_id(state, stroke),
          {:ok, stroke} <- StrokeRules.check_append(state.drawing_strokes, stroke) do
-      {:reply, :ok, state |> put_stroke_op(op) |> put_strokes(state.drawing_strokes ++ [stroke])}
+      new_state =
+        state
+        |> put_stroke_op(op)
+        |> put_strokes(state.drawing_strokes ++ [stroke])
+        |> Broadcasts.publish(:stroke_completed, %{
+          stroke_id: stroke.id,
+          path: stroke.path,
+          color: stroke.color,
+          width: stroke.width
+        })
+
+      {:reply, :ok, new_state}
     else
       :duplicate ->
         {:reply, :duplicate, state}
@@ -709,7 +737,13 @@ defmodule Scrawly.Games.RoomServer do
   def handle_call({:clear_drawing, actor_id, op}, _from, state) do
     with :ok <- authorize(state, actor_id, :draw),
          :ok <- fresh_stroke_op(state, op) do
-      {:reply, :ok, state |> put_stroke_op(op) |> put_strokes([])}
+      new_state =
+        state
+        |> put_stroke_op(op)
+        |> put_strokes([])
+        |> Broadcasts.publish(:drawing_cleared, %{})
+
+      {:reply, :ok, new_state}
     else
       :duplicate -> {:reply, :duplicate, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -720,7 +754,13 @@ defmodule Scrawly.Games.RoomServer do
     with :ok <- authorize(state, actor_id, :draw),
          :ok <- fresh_stroke_op(state, op),
          {:ok, remaining} <- drop_stroke(state.drawing_strokes, stroke_id) do
-      {:reply, {:ok, remaining}, state |> put_stroke_op(op) |> put_strokes(remaining)}
+      new_state =
+        state
+        |> put_stroke_op(op)
+        |> put_strokes(remaining)
+        |> Broadcasts.publish(:drawing_undone, %{strokes: remaining})
+
+      {:reply, {:ok, remaining}, new_state}
     else
       :duplicate -> {:reply, :duplicate, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -761,7 +801,7 @@ defmodule Scrawly.Games.RoomServer do
       if WordHints.hint_for_stage(state.current_word, stage) ==
            WordHints.hint_for_stage(state.current_word, state.hint_stage),
          do: {:noreply, new_state},
-         else: {:noreply, new_state |> bump_version() |> notify_waiters()}
+         else: {:noreply, notify_waiters(new_state)}
     else
       {:noreply, state}
     end
@@ -801,8 +841,8 @@ defmodule Scrawly.Games.RoomServer do
             new_state =
               new_state
               |> add_sys_msg("Word auto-selected for the drawer")
-              |> bump_version()
               |> notify_waiters()
+              |> Broadcasts.push_private_slice()
 
             {:noreply, new_state}
 
@@ -819,7 +859,6 @@ defmodule Scrawly.Games.RoomServer do
       new_state =
         %{state | status: :lobby, players: [], post_game_deadline: nil}
         |> add_sys_msg("Room is back in the lobby. Start a new game!")
-        |> bump_version()
         |> notify_waiters()
 
       notify_lobby()
@@ -930,15 +969,12 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   defp append_chat(state, sender, text) do
-    state
-    |> GameFlow.push_chat(%{
+    GameFlow.push_chat(state, %{
       player_id: sender.id,
       player_name: Map.get(sender, :username) || "Unknown",
       message: text,
       type: :chat
     })
-    |> bump_version()
-    |> notify_waiters(false)
   end
 
   # Scores a correct guess, posts the :correct_guess line, and ends the round
@@ -999,7 +1035,6 @@ defmodule Scrawly.Games.RoomServer do
       else
         intermediate
       end
-      |> bump_version()
       |> notify_waiters()
 
     {new_state, guess_pts}
@@ -1035,7 +1070,6 @@ defmodule Scrawly.Games.RoomServer do
       }
       |> capture_round_result(drawer_pts)
       |> add_sys_msg(msg)
-      |> bump_version()
       |> notify_waiters()
 
     Process.send_after(self(), :auto_advance_round, 3_000)
@@ -1047,7 +1081,6 @@ defmodule Scrawly.Games.RoomServer do
 
     new_state =
       %{state | players: [], status: :ended}
-      |> bump_version()
       |> notify_waiters()
 
     notify_lobby()
@@ -1106,26 +1139,27 @@ defmodule Scrawly.Games.RoomServer do
       Map.get(opts, :word_choices) || [],
       &schedule_word_choice_timeout/2
     )
-    |> bump_version()
     |> notify_waiters()
+    |> Broadcasts.push_private_slice()
   end
 
+  # The drawer's choices go out after the round's :room_delta (see
+  # Broadcasts.push_private_slice/1).
   defp auto_next_round(state) do
     GameFlow.start_word_choice(
       state,
-      &bump_version/1,
-      &notify_waiters/1,
+      &(&1 |> notify_waiters() |> Broadcasts.push_private_slice()),
       &schedule_word_choice_timeout/2
     )
   end
 
-  # GameFlow.auto_end_game/3 keeps this field (it updates with %{state | ...}),
+  # GameFlow.auto_end_game/2 keeps this field (it updates with %{state | ...}),
   # so the deadline is set before its :room_delta goes out and a page reacting
   # to it reads the time left from get_state/1.
   defp auto_end_game(state) do
     notify_lobby()
     state = %{state | post_game_deadline: schedule_return_to_lobby()}
-    GameFlow.auto_end_game(state, &bump_version/1, &notify_waiters/1)
+    GameFlow.auto_end_game(state, &notify_waiters/1)
   end
 
   # Schedules :return_to_lobby and returns the matching monotonic deadline.
@@ -1171,27 +1205,17 @@ defmodule Scrawly.Games.RoomServer do
     end
   end
 
-  # Stroke changes are fanned out by the stroke commands, not by :room_delta.
-  defp put_strokes(state, strokes) do
-    %{state | drawing_strokes: strokes}
-    |> bump_version()
-    |> notify_waiters(false)
-  end
+  # Stroke changes are published by the handlers (:stroke_completed,
+  # :drawing_cleared, :drawing_undone), not by :room_delta.
+  defp put_strokes(state, strokes), do: %{state | drawing_strokes: strokes}
 
   defp via(room_id), do: {:via, Registry, {@registry, room_id}}
   defp creator_present?(state), do: Enum.any?(state.players, &(&1.id == state.creator_id))
-  defp bump_version(state), do: %{state | version: state.version + 1}
   defp notify_lobby, do: Phoenix.PubSub.broadcast(Scrawly.PubSub, "lobby:rooms", :rooms_updated)
 
-  defp notify_waiters(state, broadcast \\ true) do
-    if broadcast do
-      Hologram.Realtime.broadcast_action({:room, state.room_id}, :room_delta, public_delta(state))
-    end
-
-    state
-  end
-
-  defp public_delta(state), do: View.delta(state)
+  # The room's public state (View.delta/1: no chat, no strokes, no secrets) to
+  # everyone on {:room, room_id}, sequenced.
+  defp notify_waiters(state), do: Broadcasts.publish(state, :room_delta, View.delta(state))
 
   defp to_public(state), do: View.public(state)
 

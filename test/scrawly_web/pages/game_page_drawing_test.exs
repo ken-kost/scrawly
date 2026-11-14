@@ -2,15 +2,16 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
   @moduledoc """
   `:complete_stroke`, `:clear_drawing_cmd` and `:undo_drawing_cmd` act as the
   session user, who must be the current drawer while the room is `:drawing`.
-  Successful changes are broadcast to the room except the sending tab. They
-  are the drawer tab's op queue: every applied or duplicate op is acked with
-  `:stroke_op_acked` and its `op_seq`.
+  The room publishes every successful change to the whole room, sequenced
+  (the sending tab included: it ignores its own echo); the commands broadcast
+  nothing themselves. They are the drawer tab's op queue: every applied or
+  duplicate op is acked with `:stroke_op_acked` and its `op_seq`, never with a
+  seq.
   """
   use Scrawly.DataCase, async: false
 
   import Scrawly.RoomTestHelpers
 
-  alias Hologram.Server.Broadcast
   alias Scrawly.Games
   alias Scrawly.Games.{RoomServer, StrokeRules}
   alias ScrawlyWeb.Pages.GamePage
@@ -32,10 +33,10 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
     room = start_room(creator)
 
     assert GamePage.command(:join_room, %{room_id: room.id}, server_for(player)).next_action.name ==
-             :room_refreshed
+             :room_resynced
 
     assert GamePage.command(:join_as_watcher, %{room_id: room.id}, server_for(spectator)).next_action.name ==
-             :room_refreshed
+             :room_resynced
 
     %{room: room, creator: creator, player: player, spectator: spectator}
   end
@@ -59,6 +60,21 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
     do: GamePage.command(command, Map.merge(%{room_id: room.id}, extra), server)
 
   defp strokes(room), do: room_state!(room.id).drawing_strokes
+
+  defp subscribe_room(room) do
+    Phoenix.PubSub.subscribe(Hologram.PubSub, Hologram.Realtime.channel_topic({:room, room.id}))
+  end
+
+  # The room's own broadcast of a change: sequenced, excluding nobody.
+  defp assert_published(room, action, params) do
+    room_id = room.id
+    assert_receive {:broadcast_action, {:room, ^room_id}, ^action, received, []}
+    assert is_integer(received.seq)
+    assert Map.delete(received, :seq) == params
+    received
+  end
+
+  defp refute_published, do: refute_receive({:broadcast_action, _, _, _, _}, 50)
 
   defp assert_denied(result, command, reason, extra \\ %{}) do
     assert result.next_action.name == :command_denied
@@ -91,32 +107,30 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
   describe "the drawer while :drawing" do
     setup ctx do
       start_drawing!(ctx.room, ctx.creator)
+      subscribe_room(ctx.room)
       :ok
     end
 
-    test ":complete_stroke stores the stroke and broadcasts it to the other tabs", ctx do
+    test ":complete_stroke stores the stroke; the room publishes it to every tab", ctx do
+      seq = room_state!(ctx.room.id).seq
       result = run(:complete_stroke, ctx.room, tab(ctx.creator), @op)
 
       assert_acked(result, 1)
+      assert result.broadcasts == []
       assert strokes(ctx.room) == [@stroke]
 
-      assert result.broadcasts == [
-               %Broadcast{
-                 channel: {:room, ctx.room.id},
-                 action_name: :stroke_completed,
-                 params: Map.put(@drawn, :stroke_id, @stroke_id),
-                 except: [{:instance, @instance}]
-               }
-             ]
+      published =
+        assert_published(ctx.room, :stroke_completed, Map.put(@drawn, :stroke_id, @stroke_id))
+
+      assert published.seq == seq + 1
     end
 
-    test "only id, path, color and width are stored or broadcast", ctx do
+    test "only id, path, color and width are stored or published", ctx do
       extra = %{evil: "x", user_id: ctx.player.id, id: "forged-id"}
-      result = run(:complete_stroke, ctx.room, tab(ctx.creator), extra)
+      run(:complete_stroke, ctx.room, tab(ctx.creator), extra)
 
       assert strokes(ctx.room) == [@stroke]
-      assert [%Broadcast{params: params}] = result.broadcasts
-      assert params == Map.put(@drawn, :stroke_id, @stroke_id)
+      assert_published(ctx.room, :stroke_completed, Map.put(@drawn, :stroke_id, @stroke_id))
     end
 
     test "a stroke without a sane stroke id is rejected", ctx do
@@ -150,26 +164,22 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
       assert_acked(run(:clear_drawing_cmd, ctx.room, server, %{op_epoch: "e", op_seq: "5"}), nil)
     end
 
-    test "duplicates are acked and broadcast nothing", ctx do
+    test "duplicates are acked and publish nothing", ctx do
       server = tab(ctx.creator)
-      first = run(:complete_stroke, ctx.room, server, %{op_epoch: "e", op_seq: 1})
-      assert [_] = first.broadcasts
+      run(:complete_stroke, ctx.room, server, %{op_epoch: "e", op_seq: 1})
+      assert_published(ctx.room, :stroke_completed, Map.put(@drawn, :stroke_id, @stroke_id))
+      seq = room_state!(ctx.room.id).seq
 
       # The same op resent, then the same stroke id under a newer op.
       for op <- [%{op_epoch: "e", op_seq: 1}, %{op_epoch: "e", op_seq: 2}] do
-        result = run(:complete_stroke, ctx.room, server, op)
-        assert_acked(result, op.op_seq)
-        assert result.broadcasts == []
+        assert_acked(run(:complete_stroke, ctx.room, server, op), op.op_seq)
       end
 
-      result = run(:clear_drawing_cmd, ctx.room, server, %{op_epoch: "e", op_seq: 1})
-      assert_acked(result, 1)
-      assert result.broadcasts == []
+      assert_acked(run(:clear_drawing_cmd, ctx.room, server, %{op_epoch: "e", op_seq: 1}), 1)
+      assert_acked(run(:undo_drawing_cmd, ctx.room, server, %{stroke_id: "s-unknown"}), nil)
 
-      result = run(:undo_drawing_cmd, ctx.room, server, %{stroke_id: "s-unknown"})
-      assert_acked(result, nil)
-      assert result.broadcasts == []
-
+      refute_published()
+      assert room_state!(ctx.room.id).seq == seq
       assert strokes(ctx.room) == [@stroke]
     end
 
@@ -181,16 +191,18 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
         run(:undo_drawing_cmd, ctx.room, tab(ctx.creator), Map.put(@op, :stroke_id, @stroke2.id))
 
       assert_acked(result, 1)
+      assert result.broadcasts == []
       assert strokes(ctx.room) == [@stroke]
 
-      assert result.broadcasts == [
-               %Broadcast{
-                 channel: {:room, ctx.room.id},
-                 action_name: :drawing_undone,
-                 params: %{strokes: [@stroke]},
-                 except: [{:instance, @instance}]
-               }
-             ]
+      assert_published(ctx.room, :stroke_completed, Map.put(@drawn, :stroke_id, @stroke_id))
+
+      assert_published(
+        ctx.room,
+        :stroke_completed,
+        Map.put(Map.delete(@stroke2, :id), :stroke_id, "s-2")
+      )
+
+      assert_published(ctx.room, :drawing_undone, %{strokes: [@stroke]})
     end
 
     test ":clear_drawing_cmd empties the canvas and broadcasts", ctx do
@@ -199,27 +211,22 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
       result = run(:clear_drawing_cmd, ctx.room, tab(ctx.creator), @op)
 
       assert_acked(result, 1)
+      assert result.broadcasts == []
       assert strokes(ctx.room) == []
 
-      assert result.broadcasts == [
-               %Broadcast{
-                 channel: {:room, ctx.room.id},
-                 action_name: :drawing_cleared,
-                 params: %{},
-                 except: [{:instance, @instance}]
-               }
-             ]
+      assert_published(ctx.room, :stroke_completed, Map.put(@drawn, :stroke_id, @stroke_id))
+      assert_published(ctx.room, :drawing_cleared, %{})
     end
 
     test "a forged user_id param changes nothing for the drawer", ctx do
       forged = %{user_id: ctx.player.id, player_id: ctx.player.id}
 
-      result = run(:complete_stroke, ctx.room, tab(ctx.creator), forged)
+      run(:complete_stroke, ctx.room, tab(ctx.creator), forged)
       assert strokes(ctx.room) == [@stroke]
-      assert [%Broadcast{except: [{:instance, @instance}]}] = result.broadcasts
+      assert_published(ctx.room, :stroke_completed, Map.put(@drawn, :stroke_id, @stroke_id))
 
-      result = run(:clear_drawing_cmd, ctx.room, tab(ctx.creator), forged)
-      assert [%Broadcast{except: [{:instance, @instance}]}] = result.broadcasts
+      run(:clear_drawing_cmd, ctx.room, tab(ctx.creator), forged)
+      assert_published(ctx.room, :drawing_cleared, %{})
     end
   end
 
@@ -244,7 +251,7 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
       end
 
       # The remaining ms are computed when the state is read.
-      transient = [:round_remaining_ms, :choice_remaining_ms, :version]
+      transient = [:round_remaining_ms, :choice_remaining_ms]
 
       assert room_state!(ctx.room.id) |> Map.drop(transient) == Map.drop(before, transient)
 
@@ -456,8 +463,11 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
       assert cleared.next_command == nil
     end
 
-    test ":stroke_op_acked and stroke :command_denied change no state" do
-      component = %Hologram.Component{state: %{drawing_strokes: [@stroke], leaving?: false}}
+    test ":stroke_op_acked changes nothing; a stroke :command_denied only resyncs" do
+      component = %Hologram.Component{
+        props: %{room_id: "r1"},
+        state: %{drawing_strokes: [@stroke], leaving?: false, resync_requested_at: nil}
+      }
 
       assert GamePage.action(:stroke_op_acked, %{op_seq: 2}, component) == component
 
@@ -468,8 +478,11 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
           component
         )
 
-      assert denied.state == component.state
-      assert denied.next_action.name == :poll_room
+      assert Map.delete(denied.state, :resync_requested_at) ==
+               Map.delete(component.state, :resync_requested_at)
+
+      assert denied.next_command.name == :resync_room
+      assert denied.next_action == nil
     end
 
     test ":stroke_rejected replaces the drawer's strokes with the stored ones" do

@@ -27,7 +27,7 @@ defmodule ScrawlyWeb.GameIntegrationTest do
     room = start_room(creator)
 
     assert GamePage.command(:join_room, %{room_id: room.id}, server_for(player)).next_action.name ==
-             :room_refreshed
+             :room_resynced
 
     %{room: room, creator: creator, player: player}
   end
@@ -45,7 +45,7 @@ defmodule ScrawlyWeb.GameIntegrationTest do
 
   defp watch!(user, room) do
     assert GamePage.command(:join_as_watcher, %{room_id: room.id}, server_for(user)).next_action.name ==
-             :room_refreshed
+             :room_resynced
   end
 
   defp chunk(attrs \\ %{}), do: Map.merge(@chunk, attrs)

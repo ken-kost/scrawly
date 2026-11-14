@@ -15,7 +15,7 @@ defmodule Scrawly.Games.RoomViewTest do
   @watcher "watcher-id"
   @secret_keys [:current_word, :word_choices, :choice_deadline]
 
-  # Every key GamePage reads from a :room_refreshed reply with dot access, plus
+  # Every key GamePage reads from a :room_resynced snapshot with dot access, plus
   # the word fields it reads with Map.get.
   @viewer_keys [
     :is_drawer,
@@ -34,7 +34,7 @@ defmodule Scrawly.Games.RoomViewTest do
     :last_game_id,
     :players,
     :max_players,
-    :version,
+    :seq,
     :correct_guessers,
     :chat_messages,
     :watchers,

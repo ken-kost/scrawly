@@ -76,7 +76,7 @@ defmodule Scrawly.Games.RoomServerTest do
       assert {{:ok, [s1, s3]}, undone} = undo(state, "s-2")
       assert [s1, s3] == [stroke(1), stroke(3)]
       assert undone.drawing_strokes == [stroke(1), stroke(3)]
-      assert undone.version == state.version + 1
+      assert undone.seq == state.seq + 1
 
       assert {{:ok, [_, _]}, _} = undo(state, "s-3")
     end
@@ -282,7 +282,7 @@ defmodule Scrawly.Games.RoomServerTest do
       revealed = info(state, {:hint_reveal, @game, 1, 1})
 
       assert revealed.hint_stage == 1
-      assert revealed.version == state.version + 1
+      assert revealed.seq == state.seq + 1
       assert_received {:broadcast_action, _, :room_delta, delta, _}
       assert delta.word_display == WordHints.hint_for_stage("elephant", 1)
       assert delta.word_display != WordHints.hint_for_stage("elephant", 0)
@@ -300,7 +300,7 @@ defmodule Scrawly.Games.RoomServerTest do
       next = info(state, {:hint_reveal, @game, 1, 2})
 
       assert next.hint_stage == 2
-      assert next.version == state.version
+      assert next.seq == state.seq
       refute_received {:broadcast_action, _, _, _, _}
     end
 

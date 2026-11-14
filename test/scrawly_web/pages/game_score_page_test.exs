@@ -141,7 +141,7 @@ defmodule ScrawlyWeb.Pages.GameScorePageTest do
   describe ":room_delta" do
     test ":lobby only records that the room is ready" do
       component = counting()
-      result = GameScorePage.action(:room_delta, %{status: :lobby, version: 9}, component)
+      result = GameScorePage.action(:room_delta, %{status: :lobby, seq: 9}, component)
 
       assert result == %{component | state: %{component.state | lobby_ready: true}}
     end

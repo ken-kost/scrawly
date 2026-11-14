@@ -94,7 +94,7 @@ defmodule Scrawly.Games.RoomServerAuthzTest do
       assert RoomServer.leave(room.id, "stranger") == {:error, :not_member}
 
       after_state = room_state!(room.id)
-      assert after_state.version == before.version
+      assert after_state.seq == before.seq
       assert after_state.chat_messages == before.chat_messages
       assert after_state.players == before.players
     end
@@ -140,7 +140,7 @@ defmodule Scrawly.Games.RoomServerAuthzTest do
       assert {:ok, _} = RoomServer.leave_watcher(room.id, "nobody")
 
       after_state = room_state!(room.id)
-      assert after_state.version == before.version
+      assert after_state.seq == before.seq
       assert after_state.chat_messages == before.chat_messages
     end
 

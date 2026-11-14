@@ -71,7 +71,7 @@ defmodule Scrawly.Games.RoomServerDrawingTest do
 
       assert {:ok, new_state} = call(state, {:append_drawing, @drawer, extra, nil})
       assert new_state.drawing_strokes == [@stroke]
-      assert new_state.version == state.version + 1
+      assert new_state.seq == state.seq + 1
     end
 
     test "denies non-drawers and the wrong phase without changing state" do

@@ -72,7 +72,9 @@ defmodule Scrawly.Games.RoomServerChatPayloadTest do
       assert %{player_name: "System", message: "TEST line", type: ^type} = msg
 
       assert_received {:broadcast_action, _, :chat_appended, payload, _}
-      assert payload == %{message: msg}
+      # The line's id is its broadcast seq.
+      assert payload == %{message: msg, seq: msg.id}
+      assert msg.id == state.seq
       assert struct_free?(payload)
     end
   end
@@ -89,7 +91,7 @@ defmodule Scrawly.Games.RoomServerChatPayloadTest do
     assert %{player_id: @p1, player_name: "P1", message: "TEST hello", type: :chat} = msg
 
     assert_received {:broadcast_action, _, :chat_appended, payload, _}
-    assert payload == %{message: msg}
+    assert payload == %{message: msg, seq: msg.id}
     assert struct_free?(payload)
   end
 

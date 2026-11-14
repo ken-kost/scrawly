@@ -4,12 +4,16 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
 
   Tests the chat-related actions on GamePage: message submission (the server
   checks guesses via :submit_guess), rate limiting, system messages, and
-  message history management.
+  message history management. Chat lines arrive one by one as sequenced
+  `:chat_appended` broadcasts (a line's id is its seq) and as a whole in
+  `:room_resynced` snapshots.
   Since Hologram actions are pure functions on %Component{} structs, we test
   them directly without needing a running server.
   """
   use ExUnit.Case, async: true
 
+  alias Scrawly.Games.RoomServer
+  alias Scrawly.Games.RoomServer.View
   alias ScrawlyWeb.Pages.GamePage
 
   # ── Helpers ──────────────────────────────────────────────────────────────
@@ -38,7 +42,33 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       is_drawer: false,
       is_creator: true,
       creator_id: "user-1",
-      version: 0,
+      last_seq: 0,
+      delta_seq: 0,
+      strokes_seq: 0,
+      pending_private: nil,
+      resync_requested_at: nil,
+      resync_owed_seq: nil,
+      stuck_seq: nil,
+      phase_entered_at: nil,
+      restoring?: false,
+      max_players: 4,
+      watchers: [],
+      past_games: [],
+      drawing_strokes: [],
+      word_choices: [],
+      round_remaining_ms: 0,
+      choice_remaining_ms: 0,
+      choice_duration: 15,
+      round_duration: 60,
+      choice_time_left: 0,
+      round_deadline_local: nil,
+      choice_deadline_local: nil,
+      zero_since: nil,
+      tick_gen: 1,
+      last_tick_at: nil,
+      socket_token: "",
+      channel_connected: false,
+      channel_connecting: false,
       new_message: "",
       chat_messages: [],
       correct_guessers: [],
@@ -322,210 +352,115 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
 
   # ── 5. System Messages ─────────────────────────────────────────────────
 
-  describe "system messages — game events via room_refreshed" do
-    test "game start syncs chat_messages from server" do
-      comp =
-        base_component(%{game_started: false, chat_messages: [], version: 0, is_creator: true})
+  # A room in game g1 as View.delta/1 projects it, at `seq`.
+  defp delta(seq, attrs) do
+    %RoomServer{
+      room_id: "test-room",
+      status: :playing,
+      creator_id: "user-1",
+      max_players: 4,
+      players: base_component().state.players,
+      game_id: "g1",
+      current_round: 1,
+      total_rounds: 5,
+      current_drawer_id: "user-2",
+      phase: :choosing,
+      choice_deadline: System.monotonic_time(:millisecond) + 15_000
+    }
+    |> struct!(attrs)
+    |> View.delta()
+    |> Map.put(:seq, seq)
+  end
 
-      server_chat = [
-        %{
-          id: 1,
-          player_name: "System",
-          message: "Game started! Bob is drawing first.",
-          timestamp: System.system_time(:millisecond),
-          type: :system
-        }
-      ]
+  defp system_line(id, text),
+    do: %{id: id, player_name: "System", message: text, timestamp: 1, type: :system}
 
-      params = %{
-        room_id: comp.props.room_id,
-        status: :playing,
-        players: comp.state.players,
-        version: 1,
-        game_id: "g1",
-        current_round: 1,
-        total_rounds: 5,
-        current_drawer_id: "user-2",
-        current_word: nil,
-        time_left: 80,
-        round_active: true,
-        correct_guessers: [],
-        chat_messages: server_chat,
-        drawing_strokes: [],
-        name: "Test",
-        code: "ABCD",
-        creator_id: "user-1",
-        max_players: 4,
-        watchers: [],
-        is_drawer: false,
-        word_display: "_ _ _ _ _",
-        word_length: 5,
-        revealed_word: nil,
-        phase: :drawing,
-        word_choices: [],
-        drawer_name: "Bob"
-      }
+  defp appended(line), do: %{message: line, seq: line.id}
 
-      result = GamePage.action(:room_refreshed, params, comp)
+  # A room event is a :chat_appended for its system line, then the :room_delta.
+  defp event(comp, line, delta) do
+    chat = GamePage.action(:chat_appended, appended(line), comp)
+    assert chat.next_action.name == :scroll_chat
+    GamePage.action(:room_delta, delta, %{chat | next_action: nil})
+  end
 
-      msgs = result.state.chat_messages
-      assert length(msgs) == 1
-      system_msg = Enum.find(msgs, &(&1.type == :system))
-      assert system_msg.message =~ "Game started!"
-      assert system_msg.message =~ "Bob"
+  describe "system messages — game events via :chat_appended and :room_delta" do
+    test "game start shows the system line and starts the game" do
+      comp = base_component(%{game_started: false, game_id: "", round: 0, phase: :idle})
+      line = system_line(1, "Game started! Bob is choosing a word …")
+
+      result = event(comp, line, delta(2, []))
+
+      assert result.state.chat_messages == [line]
+      assert result.state.game_started == true
+      assert result.state.phase == :choosing
+      assert result.state.last_seq == 2
     end
 
-    test "new round syncs chat_messages from server" do
-      comp = base_component(%{game_started: true, game_id: "g1", round: 1, version: 5})
+    test "a new round adds its line in front of the earlier ones" do
+      old = system_line(4, "Time's up! The word was butterfly.")
+      comp = base_component(%{game_id: "g1", round: 1, last_seq: 5, chat_messages: [old]})
+      line = system_line(6, "Round 2 — Charlie is choosing a word …")
 
-      server_chat = [
-        %{
-          id: 2,
-          player_name: "System",
-          message: "Round 2! Charlie is drawing.",
-          timestamp: System.system_time(:millisecond),
-          type: :system
-        }
-      ]
+      result = event(comp, line, delta(7, current_round: 2, current_drawer_id: "user-3"))
 
-      params = %{
-        room_id: comp.props.room_id,
-        status: :playing,
-        players: comp.state.players,
-        version: 6,
-        game_id: "g1",
-        current_round: 2,
-        total_rounds: 5,
-        current_drawer_id: "user-3",
-        current_word: nil,
-        time_left: 80,
-        round_active: true,
-        correct_guessers: [],
-        chat_messages: server_chat,
-        drawing_strokes: [],
-        name: "Test",
-        code: "ABCD",
-        creator_id: "user-1",
-        max_players: 4,
-        watchers: [],
-        is_drawer: false,
-        word_display: "_ _ _ _ _",
-        word_length: 5,
-        revealed_word: nil,
-        phase: :drawing,
-        word_choices: [],
-        drawer_name: "Bob"
-      }
-
-      result = GamePage.action(:room_refreshed, params, comp)
-
-      msgs = result.state.chat_messages
-      system_msg = Enum.find(msgs, &(&1.type == :system))
-      assert system_msg.message =~ "Round 2"
-      assert system_msg.message =~ "Charlie"
+      assert result.state.chat_messages == [line, old]
+      assert result.state.round == 2
+      assert result.state.current_drawer.username == "Charlie"
     end
 
-    test "game end redirects to score page" do
-      comp = base_component(%{game_started: true, game_id: "g1", version: 10})
+    test "game end goes to the score page" do
+      comp = base_component(%{game_id: "g1", last_seq: 10})
+      line = system_line(11, "Game over! Final scores are in.")
 
-      params = %{
-        room_id: comp.props.room_id,
-        status: :lobby,
-        players: comp.state.players,
-        version: 11,
-        game_id: nil,
-        current_round: 0,
-        total_rounds: 5,
-        current_drawer_id: nil,
-        current_word: nil,
-        time_left: 0,
-        round_active: false,
-        correct_guessers: [],
-        chat_messages: [],
-        drawing_strokes: [],
-        name: "Test",
-        code: "ABCD",
-        creator_id: "user-1",
-        max_players: 4,
-        watchers: [],
-        is_drawer: false,
-        word_display: "",
-        word_length: 0,
-        revealed_word: nil,
-        phase: :idle,
-        word_choices: [],
-        drawer_name: "Unknown",
-        last_game_id: "g1"
-      }
-
-      result = GamePage.action(:room_refreshed, params, comp)
-
-      # Should redirect to score page (put_page)
-      assert match?(%Hologram.Component{}, result)
-    end
-
-    test "round end syncs chat_messages including time's up from server" do
-      comp =
-        base_component(%{
-          game_started: true,
-          game_id: "g1",
-          time_left: 5,
-          version: 20
-        })
-
-      server_chat = [
-        %{
-          id: 4,
-          player_name: "System",
-          message: "Time's up! The word was butterfly.",
-          timestamp: System.system_time(:millisecond),
-          type: :system
-        }
-      ]
-
-      params = %{
-        room_id: comp.props.room_id,
-        status: :playing,
-        players: comp.state.players,
-        version: 21,
-        game_id: "g1",
-        current_round: 1,
-        total_rounds: 5,
-        current_drawer_id: "user-2",
-        current_word: nil,
-        time_left: 0,
-        round_active: false,
-        correct_guessers: [],
-        chat_messages: server_chat,
-        drawing_strokes: [],
-        name: "Test",
-        code: "ABCD",
-        creator_id: "user-1",
-        max_players: 4,
-        watchers: [],
-        is_drawer: false,
-        word_display: "b _ _ _ e _ _ _ y",
-        word_length: 9,
-        revealed_word: "butterfly",
-        phase: :round_end,
-        word_choices: [],
-        drawer_name: "Bob"
-      }
-
-      result = GamePage.action(:room_refreshed, params, comp)
-
-      msgs = result.state.chat_messages
-
-      timeout_msg =
-        Enum.find(
-          msgs,
-          &(Map.get(&1, :type) == :system && String.contains?(&1.message, "Time's up!"))
+      over =
+        delta(12,
+          status: :post_game,
+          game_id: nil,
+          last_game_id: "g1",
+          current_round: 0,
+          current_drawer_id: nil,
+          phase: :idle
         )
 
-      assert timeout_msg != nil
+      result = event(comp, line, over)
+
+      assert result.next_page == {ScrawlyWeb.Pages.GameScorePage, [game_id: "g1"]}
+    end
+
+    test "round end shows time's up and the revealed word" do
+      comp = base_component(%{game_id: "g1", time_left: 5, last_seq: 20})
+      line = system_line(21, "Time's up! The word was: butterfly. Nobody guessed.")
+
+      result = event(comp, line, delta(22, phase: :round_end, current_word: "butterfly"))
+
+      assert [timeout_msg] = result.state.chat_messages
       assert timeout_msg.message =~ "butterfly"
       assert result.state.revealed_word == "butterfly"
+      assert result.state.phase == :round_end
       assert result.state.current_word == nil
+    end
+
+    test "a line the page already holds is not added twice" do
+      line = system_line(3, "TEST once")
+      comp = base_component(%{chat_messages: [line], last_seq: 2})
+
+      result = GamePage.action(:chat_appended, appended(line), comp)
+
+      assert result.state.chat_messages == [line]
+      assert result.state.last_seq == 3
+      assert result.next_action == nil
+    end
+
+    test "only the newest 50 lines are kept" do
+      lines = for i <- 50..1//-1, do: system_line(i, "msg #{i}")
+      comp = base_component(%{chat_messages: lines, last_seq: 50})
+
+      result = GamePage.action(:chat_appended, appended(system_line(51, "new")), comp)
+
+      assert length(result.state.chat_messages) == 50
+      assert hd(result.state.chat_messages).id == 51
+      assert List.last(result.state.chat_messages).id == 2
     end
   end
 
@@ -589,8 +524,14 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       assert_submits(result, "overflow")
     end
 
-    test "room_refreshed replaces local chat_messages with server state" do
-      comp = base_component(%{game_started: true, game_id: "g1", version: 5})
+    test ":room_resynced replaces local chat_messages with the snapshot's" do
+      comp =
+        base_component(%{
+          game_started: true,
+          game_id: "g1",
+          last_seq: 5,
+          chat_messages: [system_line(2, "TEST stale")]
+        })
 
       server_messages =
         for i <- 1..3 do
@@ -607,16 +548,16 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
         room_id: comp.props.room_id,
         status: :playing,
         players: comp.state.players,
-        version: 6,
+        seq: 6,
         game_id: "g1",
         current_round: 1,
         total_rounds: 5,
         current_drawer_id: "user-2",
         current_word: nil,
-        time_left: 55,
+        round_remaining_ms: 55_000,
         round_active: true,
         correct_guessers: [],
-        chat_messages: server_messages,
+        chat_messages: Enum.reverse(server_messages),
         drawing_strokes: [],
         name: "Test",
         code: "ABCD",
@@ -632,11 +573,12 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
         drawer_name: "Bob"
       }
 
-      result = GamePage.action(:room_refreshed, params, comp)
+      result = GamePage.action(:room_resynced, params, comp)
 
-      # Chat messages come from the server
+      # Chat messages come from the snapshot (newest first).
       assert length(result.state.chat_messages) == 3
-      assert hd(result.state.chat_messages).message == "server msg 1"
+      assert hd(result.state.chat_messages).message == "server msg 3"
+      assert result.state.last_seq == 6
     end
   end
 

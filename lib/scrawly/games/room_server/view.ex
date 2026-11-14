@@ -24,12 +24,18 @@ defmodule Scrawly.Games.RoomServer.View do
   0 otherwise, plus the full `round_duration` / `choice_duration` in seconds.
   Clients anchor those on their own monotonic clock and count down; the
   node-local deadlines themselves are never sent.
+
+  `public/1` and `for_viewer/2` are full snapshots: they carry the room's
+  `seq` (the seq of the last `{:room}` broadcast, see
+  `RoomServer.Broadcasts`) together with the chat and the strokes, so a page
+  that applies one may drop every broadcast up to that seq. `delta/1` carries
+  neither chat nor strokes; it gets its own seq when it is published.
   """
 
   alias Scrawly.Games.{RoomServer, WordHints}
   alias Scrawly.Games.RoomServer.GameFlow
 
-  # Read by GamePage init and room_refreshed, HomePage (name, code, players,
+  # Read by GamePage init and :room_resynced, HomePage (name, code, players,
   # max_players), fetch_room_game_settings (the room settings) and
   # GameScorePage (status, post_game_remaining_ms).
   @public_keys [
@@ -41,7 +47,7 @@ defmodule Scrawly.Games.RoomServer.View do
     :max_players,
     :players,
     :watchers,
-    :version,
+    :seq,
     :game_id,
     :current_round,
     :total_rounds,
@@ -62,13 +68,13 @@ defmodule Scrawly.Games.RoomServer.View do
     :phase
   ]
 
-  # The `:room_delta` broadcast to everyone in the room.
+  # The `:room_delta` broadcast to everyone in the room (its `seq` is put by
+  # Broadcasts.publish/3, one higher than the room's).
   @delta_keys [
     :room_id,
     :status,
     :players,
     :watchers,
-    :version,
     :game_id,
     :current_round,
     :total_rounds,
@@ -126,6 +132,23 @@ defmodule Scrawly.Games.RoomServer.View do
       current_word: if(is_drawer, do: state.current_word),
       word_choices: if(is_drawer, do: state.word_choices || [], else: [])
     })
+  end
+
+  @doc """
+  The drawer's private slice, sent only on their own `{:room_player}` channel
+  and in their `choose_word` reply: the word choices while `:choosing`, the
+  word once committed. `game_id` and `round` say which turn it belongs to.
+  Carries no seq.
+  """
+  @spec private_slice(struct) :: map
+  def private_slice(state) do
+    %{
+      game_id: state.game_id,
+      round: state.current_round,
+      phase: state.phase,
+      current_word: state.current_word,
+      word_choices: state.word_choices || []
+    }
   end
 
   defp derived_fields(state) do

@@ -19,7 +19,7 @@ defmodule ScrawlyWeb.Pages.GameScorePageAuthzTest do
     room = start_room(creator)
 
     joined = GamePage.command(:join_room, %{room_id: room.id}, server_for(player))
-    assert joined.next_action.name == :room_refreshed
+    assert joined.next_action.name == :room_resynced
 
     player = Ash.update!(reload_user!(player), %{score: 12}, action: :update_score)
     %{creator: creator, player: player, stranger: stranger, room: room}

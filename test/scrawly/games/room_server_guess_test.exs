@@ -111,7 +111,8 @@ defmodule Scrawly.Games.RoomServerGuessTest do
       assert score_of(new_state, @p2) == 0
       assert score_of(new_state, @drawer) == 0
       assert new_state.phase == :drawing
-      assert new_state.version == state.version + 1
+      # The :correct_guess line, then the :room_delta.
+      assert new_state.seq == state.seq + 2
 
       assert [line] = new_state.chat_messages
       assert line.type == :correct_guess
@@ -387,7 +388,7 @@ defmodule Scrawly.Games.RoomServerGuessTest do
 
     for user <- [guesser, other] do
       assert GamePage.command(:join_room, %{room_id: room.id}, server_for(user)).next_action.name ==
-               :room_refreshed
+               :room_resynced
     end
 
     {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: [@word, "TEST"]})

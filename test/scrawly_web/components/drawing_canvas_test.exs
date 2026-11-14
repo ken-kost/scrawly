@@ -2,9 +2,13 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
   @moduledoc """
   Tests for drawing actions on GamePage including tool selection,
   multi-stroke state, undo, the canvas lifecycle (`:mounted`) and the round
-  resets.
+  resets. Stroke broadcasts are sequenced like every `{:room}` action (see
+  game_page_test.exs for the gap rule).
   """
-  use ExUnit.Case, async: true
+  # js_calls/1 traces Hologram.JS.call/4 globally.
+  use ExUnit.Case, async: false
+
+  import Scrawly.JsCallTrace, only: [js_calls: 1, js_call_names: 1]
 
   alias ScrawlyWeb.Pages.GamePage
 
@@ -19,7 +23,27 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       game_started: true,
       phase: :drawing,
       time_left: 60,
-      current_user_id: "test-user"
+      current_user_id: "test-user",
+      players: [],
+      watchers: [],
+      leaving?: false,
+      last_seq: 1,
+      strokes_seq: 1,
+      resync_requested_at: nil,
+      resync_owed_seq: nil,
+      phase_entered_at: nil,
+      zero_since: nil,
+      tick_gen: 1,
+      last_tick_at: nil,
+      round_deadline_local: nil,
+      choice_deadline_local: nil,
+      choice_time_left: 0,
+      choice_duration: 15,
+      round_duration: 60,
+      socket_token: "",
+      room_code: "ABCD",
+      channel_connected: false,
+      channel_connecting: false
     }
 
     %Hologram.Component{props: %{room_id: "test-room"}, state: Map.merge(defaults, overrides)}
@@ -50,7 +74,17 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       can_start_game: false,
       leaving?: false,
       room_status: :playing,
-      version: 4,
+      last_seq: 4,
+      delta_seq: 4,
+      strokes_seq: 4,
+      pending_private: nil,
+      resync_requested_at: nil,
+      resync_owed_seq: nil,
+      stuck_seq: nil,
+      phase_entered_at: nil,
+      zero_since: nil,
+      restoring?: false,
+      channel_connecting: false,
       game_id: "g1",
       game_started: true,
       round: 1,
@@ -78,7 +112,8 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
     %Hologram.Component{props: %{room_id: "r1"}, state: Map.merge(state, overrides)}
   end
 
-  # A :room_refreshed reply for user-1 (strokes stripped, as Commands sends it).
+  # A :room_resynced snapshot for user-1 at seq 5 (a :room_delta carries the
+  # same keys but chat, strokes and the viewer's own).
   defp refreshed(overrides) do
     Map.merge(
       %{
@@ -93,7 +128,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
         past_games: [],
         chat_messages: [],
         correct_guessers: [],
-        version: 5,
+        seq: 5,
         game_id: "g1",
         last_game_id: nil,
         current_round: 1,
@@ -195,31 +230,35 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
   describe "stroke_completed" do
     test "appends completed stroke to non-drawer's strokes" do
       comp = drawing_component(%{is_drawer: false})
-      params = %{stroke_id: "s1", path: "M 10 20 L 30 40", color: "#EF4444", width: 5}
+      params = %{stroke_id: "s1", path: "M 10 20 L 30 40", color: "#EF4444", width: 5, seq: 2}
 
       result = GamePage.action(:stroke_completed, params, comp)
 
+      # The stroke keeps the seq it arrived with.
       assert result.state.drawing_strokes == [
-               %{id: "s1", path: "M 10 20 L 30 40", color: "#EF4444", width: 5}
+               %{id: "s1", path: "M 10 20 L 30 40", color: "#EF4444", width: 5, seq: 2}
              ]
+
+      assert result.state.last_seq == 2
     end
 
     test "ignores a stroke id the viewer already has" do
       comp = drawing_component(%{is_drawer: false, drawing_strokes: [@s1]})
-      params = %{stroke_id: "s-1", path: "M 9 9", color: "#000000", width: 2}
+      params = %{stroke_id: "s-1", path: "M 9 9", color: "#000000", width: 2, seq: 2}
 
       result = GamePage.action(:stroke_completed, params, comp)
 
       assert result.state.drawing_strokes == [@s1]
     end
 
-    test "does nothing for drawer" do
+    test "the drawer ignores its own echo but takes the seq" do
       comp = drawing_component(%{is_drawer: true})
-      params = %{stroke_id: "s1", path: "M 10 20", color: "#000000", width: 2}
+      params = %{stroke_id: "s1", path: "M 10 20", color: "#000000", width: 2, seq: 2}
 
       result = GamePage.action(:stroke_completed, params, comp)
 
       assert result.state.drawing_strokes == []
+      assert result.state.last_seq == 2
     end
 
     test "accumulates multiple strokes" do
@@ -229,7 +268,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
           drawing_strokes: [@s1]
         })
 
-      params = %{stroke_id: "s2", path: "M 10 20", color: "#3B82F6", width: 10}
+      params = %{stroke_id: "s2", path: "M 10 20", color: "#3B82F6", width: 10, seq: 2}
 
       result = GamePage.action(:stroke_completed, params, comp)
 
@@ -238,39 +277,105 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
   end
 
   describe "drawing_cleared" do
-    test "clears all strokes" do
-      comp =
-        drawing_component(%{
-          drawing_strokes: [@s1]
-        })
+    test "clears a viewer's strokes" do
+      comp = drawing_component(%{is_drawer: false, drawing_strokes: [@s1]})
 
-      result = GamePage.action(:drawing_cleared, %{}, comp)
+      {result, names} =
+        js_call_names(fn -> GamePage.action(:drawing_cleared, %{seq: 2}, comp) end)
 
       assert result.state.drawing_strokes == []
+      assert result.state.strokes_seq == 2
+      assert :setDrawingPath in names
+    end
+
+    test "never wipes the drawer's canvas (its own echo, or another tab's)" do
+      comp = drawing_component(%{is_drawer: true, drawing_strokes: [@s1]})
+
+      {result, names} =
+        js_call_names(fn -> GamePage.action(:drawing_cleared, %{seq: 2}, comp) end)
+
+      assert result.state.drawing_strokes == [@s1]
+      assert result.state.last_seq == 2
+      assert names == []
+    end
+  end
+
+  describe "drawing_undone" do
+    test "replaces a viewer's strokes; the drawer only takes the seq" do
+      viewer = drawing_component(%{is_drawer: false, drawing_strokes: [@s1, @s2]})
+      result = GamePage.action(:drawing_undone, %{strokes: [@s1], seq: 2}, viewer)
+      assert result.state.drawing_strokes == [@s1]
+
+      drawer = drawing_component(%{drawing_strokes: [@s1, @s2]})
+
+      {result, names} =
+        js_call_names(fn ->
+          GamePage.action(:drawing_undone, %{strokes: [@s1], seq: 2}, drawer)
+        end)
+
+      assert result.state.drawing_strokes == [@s1, @s2]
+      assert result.state.last_seq == 2
+      assert names == []
     end
   end
 
   describe ":mounted" do
-    test "puts the follow-up init chose, exactly as init used to queue it" do
-      comp = drawing_component()
+    test "sends the join init chose, and no poll" do
+      comp = drawing_component(%{round_remaining_ms: 0, choice_remaining_ms: 0})
 
-      assert GamePage.action(:mounted, %{next: :poll_room, delay: 500}, comp).next_action ==
-               %Hologram.Component.Action{name: :poll_room, delay: 500}
+      assert GamePage.action(:mounted, %{join: nil}, comp).next_command == nil
 
-      for next <- [:do_join_as_watcher, :do_join_room] do
-        result = GamePage.action(:mounted, %{next: next, delay: 0}, comp)
-        assert result.next_action == %Hologram.Component.Action{name: next}
+      for {join, command} <- [player: :join_room, watcher: :join_as_watcher] do
+        result = GamePage.action(:mounted, %{join: join}, comp)
+        assert result.next_command.name == command
       end
     end
 
-    test "only anchors init's countdowns, for the drawer or a viewer" do
+    test "restores the drawer's strokes and connects a member's game socket" do
+      member = [%{id: "test-user", username: "T", score: 0}]
+
+      comp =
+        drawing_component(%{
+          drawing_strokes: [@s1],
+          players: member,
+          socket_token: "tok",
+          round_remaining_ms: 0,
+          choice_remaining_ms: 0
+        })
+
+      {result, calls} = js_calls(fn -> GamePage.action(:mounted, %{join: nil}, comp) end)
+
+      assert [
+               {:mountCanvas, []},
+               {:restoreStrokes, [[@s1]]},
+               {:connectGameChannel, ["tok", "ABCD"]}
+             ] =
+               calls
+
+      assert result.state.channel_connecting == true
+
+      # Not a member yet: the join reply connects it (GameChannel refuses
+      # non-members).
+      outsider = %{comp | state: %{comp.state | players: []}}
+
+      {_result, names} =
+        js_call_names(fn -> GamePage.action(:mounted, %{join: :player}, outsider) end)
+
+      refute :connectGameChannel in names
+    end
+
+    test "anchors init's countdowns and starts the tick chain, for the drawer or a viewer" do
       countdown_keys = [
         :round_deadline_local,
         :choice_deadline_local,
         :time_left,
         :choice_time_left,
         :choice_duration,
-        :round_duration
+        :round_duration,
+        :zero_since,
+        :phase_entered_at,
+        :tick_gen,
+        :last_tick_at
       ]
 
       for is_drawer <- [true, false] do
@@ -285,37 +390,40 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
           })
 
         before = System.monotonic_time(:millisecond)
-        result = GamePage.action(:mounted, %{next: :poll_room, delay: 500}, comp)
+        result = GamePage.action(:mounted, %{join: nil}, comp)
 
         assert Map.drop(result.state, countdown_keys) == Map.drop(comp.state, countdown_keys)
         assert (result.state.round_deadline_local - before) in 41_500..42_000
         assert result.state.choice_deadline_local == nil
         assert result.state.time_left == 42
         assert result.state.choice_time_left == 0
-        # init's follow-up keeps the single next_action slot.
-        assert result.next_action == %Hologram.Component.Action{name: :poll_room, delay: 500}
+        # The next_action slot is free: the chain starts here.
+        assert result.next_action.name == :countdown_tick
       end
     end
   end
 
-  describe ":room_refreshed keeps the viewer's strokes" do
-    test "replies carry drawing_strokes: [], with or without the channel" do
-      for connected <- [false, true] do
+  describe ":room_resynced gives a viewer the room's strokes" do
+    test "snapshots carry the real strokes, with or without the channel" do
+      longer = [@s1, @s2, %{@s2 | id: "s-3"}]
+
+      for connected <- [false, true], strokes <- [longer, [@s1]] do
         comp = page_component(%{channel_connected: connected})
-        result = GamePage.action(:room_refreshed, refreshed(%{}), comp)
-        assert result.state.drawing_strokes == [@s1, @s2]
+
+        {result, calls} =
+          js_calls(fn ->
+            GamePage.action(:room_resynced, refreshed(%{drawing_strokes: strokes}), comp)
+          end)
+
+        assert result.state.drawing_strokes == strokes
+        assert {:setStrokes, [strokes]} in calls
       end
     end
 
-    test "a longer non-empty list replaces it only once the channel is connected" do
-      longer = [@s1, @s2, %{@s2 | id: "s-3"}]
-
-      comp = page_component(%{channel_connected: true})
-      result = GamePage.action(:room_refreshed, refreshed(%{drawing_strokes: longer}), comp)
-      assert result.state.drawing_strokes == longer
-
-      comp = page_component(%{channel_connected: true})
-      result = GamePage.action(:room_refreshed, refreshed(%{drawing_strokes: [@s1]}), comp)
+    test "a late joiner's canvas is not wiped by a delta" do
+      comp = page_component(%{})
+      delta = refreshed(%{}) |> Map.drop([:drawing_strokes, :chat_messages]) |> Map.put(:seq, 5)
+      result = GamePage.action(:room_delta, delta, comp)
       assert result.state.drawing_strokes == [@s1, @s2]
     end
   end
@@ -331,7 +439,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
           drawing?: true
         })
 
-      started = GamePage.action(:room_refreshed, refreshed(%{phase: :choosing}), lobby)
+      started = GamePage.action(:room_delta, refreshed(%{phase: :choosing}), lobby)
       assert started.state.game_started == true
       assert started.state.drawing? == false
 
@@ -339,7 +447,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
 
       next_round =
         GamePage.action(
-          :room_refreshed,
+          :room_delta,
           refreshed(%{current_round: 2, phase: :choosing, current_drawer_id: "user-1"}),
           in_round
         )
@@ -350,7 +458,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
 
       ended =
         GamePage.action(
-          :room_refreshed,
+          :room_delta,
           refreshed(%{status: :lobby, game_id: nil, current_round: 0, phase: :idle}),
           in_round
         )
@@ -365,7 +473,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
 
       result =
         GamePage.action(
-          :room_refreshed,
+          :room_delta,
           refreshed(%{phase: :round_end, round_remaining_ms: 0, revealed_word: "abc"}),
           comp
         )
@@ -375,9 +483,9 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       assert result.state.drawing_strokes == [@s1, @s2]
     end
 
-    test "a refresh within :drawing leaves drawing? alone" do
+    test "a delta within :drawing leaves drawing? alone" do
       comp = page_component(%{is_drawer: true, drawing?: true})
-      result = GamePage.action(:room_refreshed, refreshed(%{round_remaining_ms: 30_000}), comp)
+      result = GamePage.action(:room_delta, refreshed(%{round_remaining_ms: 30_000}), comp)
 
       assert result.state.drawing? == true
       assert result.state.time_left == 30

@@ -162,7 +162,7 @@ defmodule ScrawlyWeb.Pages.CurrentUserPagesTest do
       {result, queries} =
         capture_queries(fn ->
           server = run_page_middleware(GamePage, server)
-          GamePage.command(:poll_room_state, %{room_id: room.id}, server)
+          GamePage.command(:resync_room, %{room_id: room.id}, server)
         end)
 
       assert %Server{} = result
@@ -174,7 +174,7 @@ defmodule ScrawlyWeb.Pages.CurrentUserPagesTest do
       {_result, queries} =
         capture_queries(fn ->
           server = run_page_middleware(GamePage, %Server{session: %{}, session_id: "anon-1"})
-          GamePage.command(:poll_room_state, %{room_id: room.id}, server)
+          GamePage.command(:resync_room, %{room_id: room.id}, server)
         end)
 
       assert selects(queries, "tokens") == 0

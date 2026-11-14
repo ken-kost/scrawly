@@ -10,6 +10,8 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
   """
   use ExUnit.Case, async: false
 
+  import Scrawly.JsCallTrace, only: [js_calls: 1]
+
   alias Hologram.Component
   alias Hologram.Server
   alias Scrawly.Accounts.User
@@ -30,45 +32,6 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
       },
       overrides
     )
-  end
-
-  # Runs `fun` and returns `{result, [{js_function, args}]}` for every
-  # Hologram.JS.call it made, in order. A trace session keeps the pattern
-  # private to this test; a collector process receives the trace messages.
-  defp js_calls(fun) do
-    Code.ensure_loaded!(Hologram.JS)
-    collector = spawn_link(fn -> collect_js_calls([]) end)
-    session = :trace.session_create(:keyboard_shortcuts_test, collector, [])
-
-    try do
-      1 = :trace.function(session, {Hologram.JS, :call, 4}, true, [:global])
-      1 = :trace.process(session, self(), true, [:call])
-      result = fun.()
-
-      ref = :erlang.trace_delivered(self())
-
-      receive do
-        {:trace_delivered, _pid, ^ref} -> :ok
-      end
-
-      send(collector, {:calls, self()})
-
-      receive do
-        {:js_calls, calls} -> {result, calls}
-      end
-    after
-      :trace.session_destroy(session)
-    end
-  end
-
-  defp collect_js_calls(acc) do
-    receive do
-      {:trace, _pid, :call, {Hologram.JS, :call, [_receiver, name, args, _module]}} ->
-        collect_js_calls([{name, args} | acc])
-
-      {:calls, from} ->
-        send(from, {:js_calls, Enum.reverse(acc)})
-    end
   end
 
   describe "HomePage :shortcut_new (N)" do
