@@ -38,7 +38,7 @@ defmodule ScrawlyWeb.Pages.GameScorePageRestoreTest do
 
   # A finished game: the room in :post_game, creator and player in it.
   defp finish_game!(room, creator) do
-    {:ok, _} = RoomServer.start_game(room.id, creator.id, %{word_choices: ["zzyzx"]})
+    {:ok, _} = RoomServer.start_game(room.id, creator.id, %{word_choices: choices(["zzyzx"])})
     {:ok, ended} = RoomServer.end_game(room.id)
     ended.last_game_id
   end

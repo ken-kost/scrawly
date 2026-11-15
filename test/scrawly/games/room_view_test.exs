@@ -9,7 +9,12 @@ defmodule Scrawly.Games.RoomViewTest do
   alias Scrawly.Games.RoomServer.{GameFlow, View}
 
   @word "zzyzx"
-  @choices ["zzyzx", "quokka", "fjord"]
+  @choice_texts ["zzyzx", "quokka", "fjord"]
+  @choices [
+    %{text: "zzyzx", difficulty: :easy},
+    %{text: "quokka", difficulty: :medium},
+    %{text: "fjord", difficulty: :hard}
+  ]
   @drawer "drawer-id"
   @p1 "p1-id"
   @watcher "watcher-id"
@@ -25,6 +30,7 @@ defmodule Scrawly.Games.RoomViewTest do
     :word_display,
     :word_length,
     :revealed_word,
+    :word_difficulty,
     :round_remaining_ms,
     :choice_remaining_ms,
     :round_duration,
@@ -129,8 +135,27 @@ defmodule Scrawly.Games.RoomViewTest do
 
     test "carry no candidate word while choosing" do
       state = choosing()
-      refute_leaks(View.public(state), @choices)
-      refute_leaks(View.delta(state), @choices)
+      refute_leaks(View.public(state), @choice_texts)
+      refute_leaks(View.delta(state), @choice_texts)
+    end
+
+    test "carry no difficulty while choosing, the chosen word's once it is drawn" do
+      # A choosing state never holds a current difficulty, but even one
+      # left over would not show.
+      for state <- [choosing(), choosing(current_difficulty: :hard)],
+          map <- [View.public(state), View.delta(state), View.for_viewer(state, @p1)] do
+        assert map.word_difficulty == nil
+        refute dump(Map.delete(map, :word_difficulty)) =~ ~r/easy|medium|hard/
+      end
+
+      for state <- [room(current_difficulty: :hard), round_end(current_difficulty: :hard)],
+          map <- [View.public(state), View.delta(state), View.for_viewer(state, @watcher)] do
+        assert map.word_difficulty == :hard
+      end
+
+      # An AI word has none; the lobby and a game's end neither.
+      assert View.public(room(current_difficulty: nil)).word_difficulty == nil
+      assert View.public(lobby()).word_difficulty == nil
     end
 
     test "drop round_results, keep the strokes init reads" do
@@ -191,6 +216,7 @@ defmodule Scrawly.Games.RoomViewTest do
         assert view.word_choices == []
         refute dump(Map.drop(view, [:revealed_word])) =~ @word
         refute dump(view) =~ "quokka"
+        refute dump(view) =~ ":medium"
       end
     end
 
@@ -404,6 +430,7 @@ defmodule Scrawly.Games.RoomViewTest do
           drawer_id: @drawer,
           drawer_name: "Drawer",
           word: @word,
+          difficulty: :hard,
           drawer_points: 275,
           player_scores: [
             %{id: @drawer, username: "Drawer", points: 275, guessed: false, is_drawer: true},
@@ -439,6 +466,7 @@ defmodule Scrawly.Games.RoomViewTest do
       assert summary == %{
                round: 1,
                word: @word,
+               difficulty: :hard,
                players: [
                  %{id: "p2-id", username: "P2", points: 350, guessed: true},
                  %{id: @p1, username: "P1", points: 200, guessed: true},
@@ -471,6 +499,14 @@ defmodule Scrawly.Games.RoomViewTest do
     test "is nil when the round has no result (the drawer left while choosing)" do
       assert View.round_summary(ended(round_results: [result(round: 0)])) == nil
       assert View.round_summary(ended(round_results: [])) == nil
+    end
+
+    test "an AI word's round, or a result without a difficulty, has none" do
+      ai = ended(round_results: [result(difficulty: nil)])
+      assert View.round_summary(ai).difficulty == nil
+
+      legacy = ended(round_results: [Map.delete(result([]), :difficulty)])
+      assert View.round_summary(legacy).difficulty == nil
     end
 
     test "next drawer: the first queued drawer still in the room, none after the last round" do

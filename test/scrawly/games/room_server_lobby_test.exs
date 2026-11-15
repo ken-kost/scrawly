@@ -125,7 +125,7 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
       join!(playing, create_user())
 
       {:ok, _started} =
-        RoomServer.start_game(playing.id, ctx.player.id, %{word_choices: ["zzyzx"]})
+        RoomServer.start_game(playing.id, ctx.player.id, %{word_choices: choices(["zzyzx"])})
 
       rooms = RoomServer.list_lobby_rooms()
       ids = Enum.map(rooms, & &1.room_id)
@@ -171,7 +171,9 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
       join!(room, ctx.player)
       subscribe_lobby()
 
-      {:ok, _started} = RoomServer.start_game(room.id, ctx.creator.id, %{word_choices: ["zzyzx"]})
+      {:ok, _started} =
+        RoomServer.start_game(room.id, ctx.creator.id, %{word_choices: choices(["zzyzx"])})
+
       assert lobby_events(room.id) == [:removed]
 
       {:ok, _} = RoomServer.end_game(room.id)

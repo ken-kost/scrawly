@@ -666,7 +666,9 @@ defmodule Scrawly.Games.RoomServerGuessTest do
                :room_resynced
     end
 
-    {:ok, _started} = RoomServer.start_game(room.id, creator.id, %{word_choices: [word, "TEST"]})
+    {:ok, _started} =
+      RoomServer.start_game(room.id, creator.id, %{word_choices: choices([word, "TEST"])})
+
     {:ok, drawing} = RoomServer.choose_word(room.id, creator.id, word)
     assert drawing.phase == :drawing
     assert drawing.current_drawer_id == creator.id

@@ -122,6 +122,11 @@ defmodule Scrawly.Games.RoomServer do
     total_rounds: 5,
     current_drawer_id: nil,
     current_word: nil,
+    # The word's difficulty (:easy | :medium | :hard, nil for an AI word),
+    # taken from the drawer's own choice when it is committed; its guesses
+    # score with Scoring.multiplier/1. Kept through :round_end (shown with
+    # the revealed word), cleared when the next turn starts or the game ends.
+    current_difficulty: nil,
     # Monotonic ms (node-local) at which the :drawing phase times out; nil in
     # every other phase. Never sent: View sends the remaining ms.
     round_deadline: nil,
@@ -132,6 +137,8 @@ defmodule Scrawly.Games.RoomServer do
     correct_guessers: [],
     last_game_id: nil,
     phase: :idle,
+    # The drawer's choices while :choosing (GameFlow.choice/0 maps:
+    # `%{text, difficulty}`).
     word_choices: [],
     choice_deadline: nil,
     # Monotonic ms (node-local, like choice_deadline) at which a :post_game
@@ -311,9 +318,10 @@ defmodule Scrawly.Games.RoomServer do
   room's own player list, never from the caller. Persists the room status and
   the Game row before touching room state.
 
-  `opts` may carry `:word_choices` (first round's choices, picked for the
-  room's `answer_kind` with `GameFlow.pick_word_choices/4`) and `:ai_words`
-  (the remaining AI pool); without choices the room picks them itself.
+  `opts` may carry `:word_choices` (first round's choices, `t:GameFlow.choice/0`
+  maps picked for the room's `answer_kind` with
+  `GameFlow.pick_word_choices/4`) and `:ai_words` (the remaining AI pool);
+  without choices the room picks them itself.
   Returns `{:ok, public_state}` or `{:error, reason}`.
   """
   def start_game(room_id, actor_id, opts \\ %{}) do
@@ -374,6 +382,12 @@ defmodule Scrawly.Games.RoomServer do
     :exit, _ -> {:error, :not_found}
   end
 
+  @doc """
+  Commits the choice whose text is `word` for `player_id`, who must be the
+  drawer while the room is `:choosing`. Only the text is taken from the
+  caller: the round's difficulty is the room's own for that choice.
+  `{:error, :invalid_word}` when no choice has that text.
+  """
   def choose_word(room_id, player_id, word) do
     GenServer.call(via(room_id), {:choose_word, player_id, word})
   catch
@@ -762,7 +776,10 @@ defmodule Scrawly.Games.RoomServer do
     end
   end
 
+  # `word` is the chosen choice's text; its difficulty is the room's own.
   def handle_call({:choose_word, player_id, word}, _from, state) do
+    choice = GameFlow.find_choice(state.word_choices, word)
+
     cond do
       state.phase != :choosing ->
         {:reply, {:error, :not_choosing}, state}
@@ -770,11 +787,11 @@ defmodule Scrawly.Games.RoomServer do
       player_id != state.current_drawer_id ->
         {:reply, {:error, :not_drawer}, state}
 
-      word not in state.word_choices ->
+      choice == nil ->
         {:reply, {:error, :invalid_word}, state}
 
       true ->
-        case GameFlow.commit_word_choice(state, word) do
+        case GameFlow.commit_word_choice(state, choice) do
           {:ok, new_state} ->
             new_state =
               new_state
@@ -916,6 +933,8 @@ defmodule Scrawly.Games.RoomServer do
       state.word_choices == [] ->
         {:noreply, auto_end_game(state, @no_word_text)}
 
+      # The drawer let the timer run out: a random one of their choices,
+      # with its own difficulty.
       true ->
         chosen = Enum.random(state.word_choices)
 
@@ -1135,13 +1154,20 @@ defmodule Scrawly.Games.RoomServer do
     })
   end
 
-  # Scores a correct guess, posts the :correct_guess line, and ends the round
+  # Scores a correct guess (times the word's difficulty multiplier), posts
+  # the :correct_guess line with the points awarded, and ends the round
   # early (scoring the drawer) once every non-drawer player has guessed. The
   # guesser's own channel then gets the word (after the delta that lists
   # them in correct_guessers); nobody else's does.
   defp award_guess(state, player_id) do
     order = length(state.correct_guessers) + 1
-    guess_pts = Scoring.guesser_points(time_left(state), state.round_duration, order: order)
+
+    guess_pts =
+      Scoring.guesser_points(time_left(state), state.round_duration,
+        order: order,
+        multiplier: Scoring.multiplier(state.current_difficulty)
+      )
+
     player_name = get_player_name(state.players, player_id)
 
     new_state =
@@ -1501,6 +1527,7 @@ defmodule Scrawly.Games.RoomServer do
         current_drawer_id: drawer_id,
         turn_queue: turn_queue,
         current_word: nil,
+        current_difficulty: nil,
         round_deadline: nil,
         hint_stage: 0,
         round_active: false,

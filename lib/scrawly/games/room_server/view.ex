@@ -7,17 +7,21 @@ defmodule Scrawly.Games.RoomServer.View do
   The secret word and the drawer's word choices therefore never appear in
   `public/1` or `delta/1` before the round ends; only `for_viewer/2` and
   `private_slice/2` add the word, and only for the current drawer and for a
-  player who has guessed it this round (`guessed?/2`). The choices go to the
-  drawer alone.
+  player who has guessed it this round (`guessed?/2`). The choices, each
+  with its difficulty (`%{text, difficulty}`), go to the drawer alone.
 
-  Every map carries the word as three derived fields:
+  Every map carries the word as four derived fields:
 
     * `word_display` - the masked hint for the room's current `hint_stage`
       (`WordHints.hint_for_stage/3`) while `:drawing` or `:round_end`,
       otherwise `""`;
     * `word_length` - the number of letters (spaces, hyphens and apostrophes
       excluded);
-    * `revealed_word` - the word itself, only in `:round_end`.
+    * `revealed_word` - the word itself, only in `:round_end`;
+    * `word_difficulty` - the chosen word's difficulty (`:easy`, `:medium`,
+      `:hard`) while `:drawing` or `:round_end`, so everyone can see what a
+      guess is worth; `nil` for an AI word and in every other phase. Before
+      the drawer chooses, no difficulty reaches anyone but the drawer.
 
   and, only in `:round_end`, the round's results as `round_summary`
   (`round_summary/1`): the answer, every player's points this round, the
@@ -261,6 +265,7 @@ defmodule Scrawly.Games.RoomServer.View do
       word_display: WordHints.hint_for_stage(word, state.hint_stage || 0),
       word_length: WordHints.word_length_hint(word),
       revealed_word: if(state.phase == :round_end, do: word),
+      word_difficulty: if(word, do: Map.get(state, :current_difficulty)),
       round_summary: round_summary(state),
       round_remaining_ms: RoomServer.round_remaining_ms(state, now),
       choice_remaining_ms: RoomServer.choice_remaining_ms(state, now),
@@ -274,7 +279,8 @@ defmodule Scrawly.Games.RoomServer.View do
   `nil` in any other phase and when the round has no result (a drawer who
   left while choosing: no word was drawn).
 
-    * `round`, `word` - the round and its answer;
+    * `round`, `word`, `difficulty` - the round, its answer and the
+      answer's difficulty (`nil` for an AI word);
     * `players` - every player but the drawer as `%{id, username, points,
       guessed}`, the highest `points` first (players with equal points keep
       the room's order);
@@ -293,6 +299,7 @@ defmodule Scrawly.Games.RoomServer.View do
         %{
           round: round,
           word: Map.get(result, :word),
+          difficulty: Map.get(result, :difficulty),
           players:
             result
             |> Map.get(:player_scores, [])

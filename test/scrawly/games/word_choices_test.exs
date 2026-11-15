@@ -5,23 +5,52 @@ defmodule Scrawly.Games.WordChoicesTest do
   every Mixed set has exactly one phrase. Checked for the curated words, the
   built-in fallback, the AI's (`Scrawly.FakeAiModel` replies like a model
   that ignores the rule), refills, and a room restored after a restart.
+
+  Every set of curated choices is one easy, one medium and one hard entry,
+  in that order, each labelled with its real difficulty (also when a
+  difficulty runs out); AI choices carry no difficulty.
   """
   use Scrawly.DataCase, async: false
 
   import Scrawly.RoomTestHelpers
 
   alias Scrawly.{FakeAiModel, Games}
-  alias Scrawly.Games.{AiWords, AnswerKind, RoomServer}
+  alias Scrawly.Games.{AiWords, AnswerKind, RoomServer, Word, WordList}
   alias Scrawly.Games.RoomServer.GameFlow
   alias ScrawlyWeb.Pages.GamePage
 
   @moduletag :capture_log
 
+  doctest GameFlow, only: [slot_difficulties: 1]
+
   @sets 60
 
   # ── Helpers ───────────────────────────────────────────────────────────────
 
-  defp phrases_in(choices), do: Enum.count(choices, &(AnswerKind.of(&1) == :phrase))
+  defp texts(choices), do: Enum.map(choices, & &1.text)
+
+  defp phrases_in(choices), do: Enum.count(choices, &(AnswerKind.of(&1.text) == :phrase))
+
+  defp difficulties(choices), do: Enum.map(choices, & &1.difficulty)
+
+  # Every curated entry's difficulty, by text.
+  defp file_difficulty(text) do
+    Enum.find_value(WordList.entries(), fn entry ->
+      if entry.text == text, do: entry.difficulty
+    end)
+  end
+
+  # Each choice carries its entry's real difficulty, and the set reads easy
+  # to hard.
+  defp assert_labelled(choices) do
+    for %{text: text, difficulty: difficulty} <- choices,
+        do: assert(file_difficulty(text) == difficulty, "#{text} is not #{difficulty}")
+
+    ranks =
+      Enum.map(choices, &Enum.find_index(WordList.difficulties(), fn d -> d == &1.difficulty end))
+
+    assert ranks == Enum.sort(ranks), "#{inspect(choices)}"
+  end
 
   defp assert_kind(:words, choices) do
     assert length(choices) == 3 and phrases_in(choices) == 0, "#{inspect(choices)}"
@@ -42,9 +71,9 @@ defmodule Scrawly.Games.WordChoicesTest do
       Enum.map_reduce(1..@sets, {ai_pool, []}, fn _turn, {pool, used} ->
         {choices, pool, _from_ai} = GameFlow.pick_word_choices(pool, used, answer_kind, 3)
         assert_kind(answer_kind, choices)
-        assert Enum.uniq(choices) == choices
+        assert Enum.uniq(texts(choices)) == texts(choices)
         assert Enum.all?(pool, &AnswerKind.allows?(answer_kind, &1))
-        {choices, {pool, [hd(choices) | used]}}
+        {choices, {pool, [hd(choices).text | used]}}
       end)
 
     sets
@@ -79,7 +108,10 @@ defmodule Scrawly.Games.WordChoicesTest do
   # Picks the first choice, ends the round and starts the next turn.
   defp next_turn!(room) do
     state = state!(room)
-    {:ok, _} = RoomServer.choose_word(room.id, state.current_drawer_id, hd(state.word_choices))
+
+    {:ok, _} =
+      RoomServer.choose_word(room.id, state.current_drawer_id, hd(state.word_choices).text)
+
     assert expire_round!(room).phase == :round_end
     send(pid_of(room), :auto_advance_round)
     state!(room)
@@ -104,27 +136,101 @@ defmodule Scrawly.Games.WordChoicesTest do
     for answer_kind <- [:words, :phrases, :mixed] do
       test "#{answer_kind}: #{@sets} sets of choices all follow the kind" do
         sets = play_turns(unquote(answer_kind), [])
-        assert sets |> List.flatten() |> Enum.uniq() |> length() > 100
+        assert sets |> List.flatten() |> texts() |> Enum.uniq() |> length() > 100
+      end
+
+      test "#{answer_kind}: every set is one easy, one medium and one hard, in that order" do
+        for choices <- play_turns(unquote(answer_kind), []) do
+          assert difficulties(choices) == [:easy, :medium, :hard]
+          assert_labelled(choices)
+        end
       end
     end
 
     test "phrases of two, three and four words are all offered" do
       lengths =
-        for _ <- 1..@sets, word <- elem(GameFlow.pick_word_choices([], [], :phrases, 3), 0) do
-          length(String.split(word))
+        for _ <- 1..@sets,
+            %{text: text} <- elem(GameFlow.pick_word_choices([], [], :phrases, 3), 0) do
+          length(String.split(text))
         end
 
       assert Enum.sort(Enum.uniq(lengths)) == [2, 3, 4]
     end
 
-    test "mixed puts the phrase at every position" do
-      positions =
+    test "mixed puts the phrase at every position, with that slot's difficulty" do
+      phrases =
         for _ <- 1..@sets do
           {choices, _, _} = GameFlow.pick_word_choices([], [], :mixed, 3)
-          Enum.find_index(choices, &(AnswerKind.of(&1) == :phrase))
+          index = Enum.find_index(choices, &(AnswerKind.of(&1.text) == :phrase))
+          {index, Enum.at(choices, index).difficulty}
         end
 
-      assert Enum.sort(Enum.uniq(positions)) == [0, 1, 2]
+      assert phrases |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort() == [0, 1, 2]
+      assert Enum.uniq(phrases) |> Enum.sort() == [{0, :easy}, {1, :medium}, {2, :hard}]
+    end
+  end
+
+  describe "when a difficulty runs out" do
+    setup do
+      Games.sync_words()
+      :ok
+    end
+
+    test "a slot takes another difficulty of the same kind, labelled truthfully" do
+      # Every medium word has been played: the medium slot takes an easy one.
+      used = Word.builtin_words(:word, :medium)
+
+      for _ <- 1..10 do
+        {choices, [], 0} = GameFlow.pick_word_choices([], used, :words, 3)
+        assert_kind(:words, choices)
+        assert difficulties(choices) == [:easy, :easy, :hard]
+        assert_labelled(choices)
+        assert Enum.uniq(texts(choices)) == texts(choices)
+        refute Enum.any?(choices, &(&1.text in used))
+      end
+
+      # No hard phrase left: a hard phrase slot takes a medium phrase, never
+      # a word.
+      used = Word.builtin_words(:phrase, :hard)
+
+      for _ <- 1..10 do
+        {choices, [], 0} = GameFlow.pick_word_choices([], used, :phrases, 3)
+        assert_kind(:phrases, choices)
+        assert difficulties(choices) == [:easy, :medium, :medium]
+        assert_labelled(choices)
+        refute Enum.any?(choices, &(&1.text in used))
+      end
+
+      for _ <- 1..@sets do
+        {choices, [], 0} = GameFlow.pick_word_choices([], used, :mixed, 3)
+        assert_kind(:mixed, choices)
+        assert_labelled(choices)
+        assert [%{difficulty: phrase_difficulty}] = Enum.filter(choices, &(&1.text =~ " "))
+        assert phrase_difficulty in [:easy, :medium]
+      end
+    end
+
+    test "with every entry of a kind played, the set is still three distinct ones of that kind" do
+      for answer_kind <- [:words, :phrases] do
+        kind = if answer_kind == :words, do: :word, else: :phrase
+        used = Word.builtin_words(kind)
+
+        {choices, [], 0} = GameFlow.pick_word_choices([], used, answer_kind, 3)
+        assert_kind(answer_kind, choices)
+        assert difficulties(choices) == [:easy, :medium, :hard]
+        assert_labelled(choices)
+        assert Enum.uniq(texts(choices)) == texts(choices)
+      end
+    end
+
+    test "a small words table is topped up from the built-in list of the slot's difficulty" do
+      Games.Word |> Ash.read!() |> Enum.each(&Ash.destroy!/1)
+      seed_test_words()
+      used = for d <- [:easy, :medium, :hard], i <- 1..4, do: "test#{d}#{i}"
+
+      {choices, [], 0} = GameFlow.pick_word_choices([], used, :words, 3)
+      assert difficulties(choices) == [:easy, :medium, :hard]
+      assert_labelled(choices)
     end
   end
 
@@ -148,8 +254,14 @@ defmodule Scrawly.Games.WordChoicesTest do
       for _ <- 1..10 do
         {choices, [], 1} = GameFlow.pick_word_choices(["Test'Cat"], [], :words, 3)
         assert [_, _, _] = choices
-        assert hd(choices) == "test'cat"
-        assert choices |> Enum.map(&Scrawly.Games.Guess.key/1) |> Enum.uniq() |> length() == 3
+        assert hd(choices) == %{text: "test'cat", difficulty: nil}
+
+        assert choices
+               |> texts()
+               |> Enum.map(&Scrawly.Games.Guess.key/1)
+               |> Enum.uniq()
+               |> length() ==
+                 3
       end
     end
   end
@@ -168,12 +280,17 @@ defmodule Scrawly.Games.WordChoicesTest do
         for pool <- [FakeAiModel.reply(), AiWords.filter(FakeAiModel.reply(), answer_kind)] do
           sets = play_turns(answer_kind, pool)
           offered = List.flatten(sets)
+          ai = FakeAiModel.clean_words() ++ FakeAiModel.clean_phrases()
 
-          # The AI's entries are offered first, then the curated words.
-          assert Enum.any?(
-                   offered,
-                   &(&1 in (FakeAiModel.clean_words() ++ FakeAiModel.clean_phrases()))
-                 )
+          # The AI's entries are offered first, without a difficulty, then
+          # the curated words with theirs.
+          assert Enum.any?(offered, &(&1.difficulty == nil))
+
+          for choice <- offered do
+            if choice.difficulty == nil,
+              do: assert(choice.text in ai),
+              else: assert(choice.difficulty == file_difficulty(choice.text))
+          end
         end
       end
     end
@@ -183,23 +300,28 @@ defmodule Scrawly.Games.WordChoicesTest do
 
       {choices, remaining, 3} = GameFlow.pick_word_choices(pool, [], :mixed, 3)
       assert_kind(:mixed, choices)
-      assert Enum.all?(choices, &(&1 in pool))
+      assert Enum.all?(choices, &(&1.text in pool))
+      assert difficulties(choices) == [nil, nil, nil]
       assert length(remaining) == length(pool) - 3
 
-      # Only phrases left: the words come from the curated list.
+      # Only phrases left: the words come from the curated list, with the
+      # difficulties of their slots.
       phrases = FakeAiModel.clean_phrases()
       {choices, remaining, 1} = GameFlow.pick_word_choices(phrases, [], :mixed, 3)
       assert_kind(:mixed, choices)
-      assert [phrase] = Enum.filter(choices, &(&1 in phrases))
+      assert [%{text: phrase, difficulty: nil}] = Enum.filter(choices, &(&1.text in phrases))
       assert remaining == phrases -- [phrase]
+      local = Enum.reject(choices, &(&1.text in phrases))
+      assert length(local) == 2
+      assert_labelled(local)
     end
 
     test "words already played are not offered again, whatever their spelling" do
       {choices, remaining, 1} =
         GameFlow.pick_word_choices(["test lagoon", "beach ball"], ["Test-Lagoon!"], :phrases, 3)
 
-      refute "test lagoon" in choices
-      assert "beach ball" in choices
+      refute "test lagoon" in texts(choices)
+      assert %{text: "beach ball", difficulty: nil} in choices
       assert remaining == []
     end
 
@@ -231,7 +353,9 @@ defmodule Scrawly.Games.WordChoicesTest do
       state = state!(room)
       assert state.status == :playing
       assert_kind(:phrases, drawer_choices(room))
-      assert Enum.all?(drawer_choices(room), &(&1 in FakeAiModel.clean_phrases()))
+      assert Enum.all?(drawer_choices(room), &(&1.text in FakeAiModel.clean_phrases()))
+      # AI answers are shown without a difficulty.
+      assert difficulties(drawer_choices(room)) == [nil, nil, nil]
       assert state.ai_words != []
       assert Enum.all?(state.ai_words, &(AnswerKind.of(&1) == :phrase))
 
@@ -255,7 +379,10 @@ defmodule Scrawly.Games.WordChoicesTest do
         room_with_player(%{answer_kind: :phrases, word_source: :ai, prompt: "TEST ocean"})
 
       {:ok, started} =
-        RoomServer.start_game(room.id, creator.id, %{word_choices: ["sea turtle"], ai_words: []})
+        RoomServer.start_game(room.id, creator.id, %{
+          word_choices: choices(["sea turtle"]),
+          ai_words: []
+        })
 
       ref = make_ref()
       :sys.replace_state(pid_of(room), &%{&1 | ai_refill: {ref, started.game_id}})
@@ -269,7 +396,10 @@ defmodule Scrawly.Games.WordChoicesTest do
         room_with_player(%{answer_kind: :phrases, word_source: :ai, prompt: "TEST ocean"})
 
       {:ok, _} =
-        RoomServer.start_game(room.id, creator.id, %{word_choices: ["sea turtle"], ai_words: []})
+        RoomServer.start_game(room.id, creator.id, %{
+          word_choices: choices(["sea turtle"]),
+          ai_words: []
+        })
 
       send(pid_of(room), {:refill_ai_words, room.id, 4, :fun})
       await(fn -> state!(room).ai_words != [] end)
@@ -311,12 +441,30 @@ defmodule Scrawly.Games.WordChoicesTest do
 
       {:ok, started} = RoomServer.start_game(room.id, creator.id, %{})
       assert_kind(:phrases, drawer_choices(room))
+      assert difficulties(drawer_choices(room)) == [:easy, :medium, :hard]
 
-      # The drawer lets the timer run out: the auto-pick is one of them.
+      # The drawer lets the timer run out: the auto-pick is a random one of
+      # them (Enum.random/1 on the room's own list), with its difficulty.
+      # Seeding the room process pins which one.
       choices = drawer_choices(room)
+      seed = {:exsss, {28, 2, 8}}
+
+      :sys.replace_state(pid_of(room), fn state ->
+        :rand.seed(elem(seed, 0), elem(seed, 1))
+        state
+      end)
+
+      :rand.seed(elem(seed, 0), elem(seed, 1))
+      expected = Enum.random(choices)
+
       send(pid_of(room), {:word_choice_timeout, started.game_id, 1})
-      assert %{phase: :drawing, current_word: word} = state!(room)
-      assert word in choices
+      assert %{phase: :drawing} = state = state!(room)
+
+      assert {state.current_word, state.current_difficulty} ==
+               {expected.text, expected.difficulty}
+
+      assert {:ok, %{word_difficulty: difficulty}} = RoomServer.get_view(room.id, nil)
+      assert difficulty == expected.difficulty
     end
 
     test "a failed AI call falls back to curated words of the room's kind" do
@@ -326,6 +474,7 @@ defmodule Scrawly.Games.WordChoicesTest do
       GamePage.command(:start_game, %{room_id: room.id}, server_for(creator))
 
       assert_kind(:phrases, drawer_choices(room))
+      assert difficulties(drawer_choices(room)) == [:easy, :medium, :hard]
       assert state!(room).ai_words == []
 
       assert Enum.any?(

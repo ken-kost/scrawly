@@ -45,14 +45,27 @@ defmodule Scrawly.RoomTestHelpers do
   end
 
   @doc """
+  Word choices as the room holds them (`GameFlow.choice/0` maps) for
+  `entries`: a plain text gets no difficulty (like an AI word), a `{text,
+  difficulty}` pair gets that difficulty.
+  """
+  def choices(entries), do: Enum.map(entries, &choice/1)
+
+  @doc "One entry of `choices/1`."
+  def choice({text, difficulty}), do: %{text: text, difficulty: difficulty}
+  def choice(text) when is_binary(text), do: %{text: text, difficulty: nil}
+
+  @doc """
   Starts a game in `room` as `creator` (the room needs a second player) with
   `word` as the only choice, and commits it: the room is then in `:drawing`
   with `creator` as the drawer. Returns the public state. (The room's own
-  turn timers die with it when the test stops it.)
+  turn timers die with it when the test stops it.) `word` may be a `{text,
+  difficulty}` pair (`choice/1`).
   """
   def start_drawing!(room, creator, word \\ "zzyzx") do
-    {:ok, _started} = RoomServer.start_game(room.id, creator.id, %{word_choices: [word]})
-    {:ok, %{phase: :drawing} = state} = RoomServer.choose_word(room.id, creator.id, word)
+    %{text: text} = choice = choice(word)
+    {:ok, _started} = RoomServer.start_game(room.id, creator.id, %{word_choices: [choice]})
+    {:ok, %{phase: :drawing} = state} = RoomServer.choose_word(room.id, creator.id, text)
     state
   end
 

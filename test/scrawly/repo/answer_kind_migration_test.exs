@@ -113,6 +113,6 @@ defmodule Scrawly.Repo.AnswerKindMigrationTest do
 
     assert {:ok, %{word_choices: choices}} = RoomServer.get_view(room.id, drawer)
     assert length(choices) == 3
-    assert Enum.all?(choices, &(AnswerKind.of(&1) == :phrase))
+    assert Enum.all?(choices, &(AnswerKind.of(&1.text) == :phrase))
   end
 end

@@ -152,6 +152,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:current_word_display, rs.word_display)
               |> put_state(:word_length, rs.word_length)
               |> put_state(:revealed_word, rs.revealed_word)
+              # The chosen word's difficulty, for everyone once it is chosen
+              # (nil for an AI word); the choices carry their own.
+              |> put_state(:word_difficulty, rs.word_difficulty)
               # The points the user's own guess scored this round (nil until
               # they guess), and the finished round during :round_end.
               |> put_state(:guess_points, rs.guess_points)
@@ -1451,6 +1454,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
       |> put_state(:current_word_display, Map.get(view, :word_display, ""))
       |> put_state(:word_length, Map.get(view, :word_length, 0))
       |> put_state(:revealed_word, Map.get(view, :revealed_word))
+      |> put_state(:word_difficulty, Map.get(view, :word_difficulty))
       |> put_state(:round_summary, Map.get(view, :round_summary))
 
     component =
@@ -1891,6 +1895,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
                     round {@round} of {@total_rounds} · {PlayFeedback.word_label(@current_word_display, @word_length)}
                   {/if}
                 {/if}
+                {%if @word_difficulty}<span class={PlayFeedback.difficulty_class(@word_difficulty)}>{PlayFeedback.difficulty_label(@word_difficulty)}</span>{/if}
               </div>
             {/if}
           </div>
@@ -1923,7 +1928,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
               <div class="choice-sub mono">{@choice_time_left}s to pick · auto-picks at 0</div>
               <div class="choice-options">
                 {%for w <- @word_choices}
-                  <button class="choice-btn" $click={:choose_word, word: w}>{w}</button>
+                  <button class="choice-btn" $click={:choose_word, word: w.text}>
+                    <span class="choice-word">{w.text}</span>
+                    {%if w.difficulty}<span class={PlayFeedback.difficulty_class(w.difficulty)}>{PlayFeedback.difficulty_label(w.difficulty)}</span>{/if}
+                  </button>
                 {/for}
               </div>
             {%else}
@@ -1940,7 +1948,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
       {%if @phase == :round_end and @round_summary}
         <div class="choice-overlay round-summary-overlay">
           <div class="choice-modal round-summary" role="status">
-            <div class="round-summary-head mono">round {@round_summary.round} · the answer was</div>
+            <div class="round-summary-head mono">
+              round {@round_summary.round} · the answer was
+              {%if @round_summary.difficulty}<span class={PlayFeedback.difficulty_class(@round_summary.difficulty)}>{PlayFeedback.difficulty_label(@round_summary.difficulty)}</span>{/if}
+            </div>
             <div class="word-letters round-summary-answer">
               {%for w <- PlayFeedback.word_blocks(String.upcase(@round_summary.word || ""))}<span class="word-chunk">{w}</span>{/for}
             </div>

@@ -165,6 +165,7 @@ defmodule Scrawly.Games.RoundFeedbackTest do
       assert summary == %{
                round: 1,
                word: @word,
+               difficulty: nil,
                players: [
                  %{id: first.id, username: first.username, points: points, guessed: true},
                  %{id: second.id, username: second.username, points: 0, guessed: false}

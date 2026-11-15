@@ -8,8 +8,8 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   route "/game-results/:game_id"
   param :game_id, :string
 
-  alias Scrawly.Games.{RoomServer, StrokeRules}
-  alias ScrawlyWeb.{CommandParams, RoomSubscriptions}
+  alias Scrawly.Games.{RoomServer, StrokeRules, WordList}
+  alias ScrawlyWeb.{CommandParams, PlayFeedback, RoomSubscriptions}
   alias ScrawlyWeb.Pages.{GamePage, HomePage}
 
   @tick_ms 1_000
@@ -66,6 +66,9 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
                 round: rd["round"],
                 drawer_name: rd["drawer_name"],
                 word: rd["word"],
+                # Games saved before rounds had a difficulty, and AI words,
+                # have none.
+                difficulty: difficulty(rd["difficulty"]),
                 drawer_points: rd["drawer_points"] || 0,
                 player_scores: player_scores,
                 drawing_strokes: drawing_strokes,
@@ -119,6 +122,12 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
       {component, server}
     end
   end
+
+  # A saved round's difficulty (JSONB keeps the atom as its name), or nil.
+  defp difficulty(name) when is_binary(name),
+    do: Enum.find(WordList.difficulties(), &(Atom.to_string(&1) == name))
+
+  defp difficulty(_none), do: nil
 
   # Same format as PastGamesPage.
   defp format_date(nil), do: nil
@@ -594,7 +603,8 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
                   <div class="section-label">round {round.round}</div>
                   <div class="word">{String.upcase(round.word || "")}</div>
                   <div class="by">drawn by <span style="color: var(--ink);">{round.drawer_name}</span></div>
-                  <div class="row" style="gap: 6px; margin-top: 8px;">
+                  <div class="row" style="gap: 6px; margin-top: 8px; flex-wrap: wrap;">
+                    {%if round.difficulty}<span class={PlayFeedback.difficulty_class(round.difficulty)}>{PlayFeedback.difficulty_label(round.difficulty)}</span>{/if}
                     <span class="chip mono">{Enum.count(round.player_scores, & &1.guessed)} guessed</span>
                     {%if round.drawing_truncated}<span class="chip mono" title="long drawings are kept up to a size limit">drawing trimmed</span>{/if}
                   </div>

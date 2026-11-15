@@ -31,6 +31,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
     %{id: "user-3", username: "Bob", score: 0}
   ]
   @stroke %{id: "s-1", path: "M0 0 L1 1", color: "#000000", width: 2}
+  # A drawer's choices as the room sends them (GameFlow.choice/0).
+  @two_choices [%{text: "apple", difficulty: :easy}, %{text: "pear", difficulty: :medium}]
 
   setup do
     creator = create_user()
@@ -403,7 +405,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
           current_word: nil,
           round_deadline: nil,
           choice_deadline: System.monotonic_time(:millisecond) + 15_000,
-          word_choices: ["apple", "pear"]
+          word_choices: @two_choices
         ],
         attrs
       )
@@ -417,7 +419,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
         round: round,
         phase: :choosing,
         current_word: nil,
-        word_choices: ["apple", "pear"]
+        word_choices: @two_choices
       },
       Map.new(attrs)
     )
@@ -799,7 +801,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert started.state.word_choices == []
 
       result = GamePage.action(:private_state, slice(1), settled(started))
-      assert result.state.word_choices == ["apple", "pear"]
+      assert result.state.word_choices == @two_choices
       assert result.state.last_seq == 11
     end
 
@@ -820,7 +822,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
 
       assert result.state.round == 2
       assert result.state.is_drawer == true
-      assert result.state.word_choices == ["apple", "pear"]
+      assert result.state.word_choices == @two_choices
       assert result.state.pending_private == nil
     end
 
@@ -831,7 +833,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       result =
         GamePage.action(:room_delta, choosing(1, 11, current_drawer_id: @me), settled(held))
 
-      assert result.state.word_choices == ["apple", "pear"]
+      assert result.state.word_choices == @two_choices
     end
 
     test "a held slice for a round the page has passed is dropped" do
@@ -842,7 +844,13 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
     end
 
     test "the choose_word reply shows the word before the :drawing delta, and a late :choosing slice can't undo it" do
-      drawer = playing(phase: :choosing, is_drawer: true, word_choices: ["zzyzx", "pear"])
+      drawer =
+        playing(
+          phase: :choosing,
+          is_drawer: true,
+          word_choices: [%{text: "zzyzx", difficulty: :easy}, %{text: "pear", difficulty: nil}]
+        )
+
       committed = slice(1, phase: :drawing, current_word: "zzyzx", word_choices: [])
 
       result = GamePage.action(:private_state, committed, drawer)
@@ -1035,11 +1043,11 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
           current_drawer_id: @me,
           current_word: nil,
           round_deadline: nil,
-          word_choices: ["apple", "pear"]
+          word_choices: @two_choices
         )
 
       result = GamePage.action(:room_resynced, view, drawer)
-      assert result.state.word_choices == ["apple", "pear"]
+      assert result.state.word_choices == @two_choices
     end
 
     test "a join reply connects the game socket of a new member" do

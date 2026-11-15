@@ -32,7 +32,9 @@ defmodule ScrawlyWeb.Pages.GamePageGuessTest do
 
     GamePage.command(:join_as_watcher, %{room_id: room.id}, server_for(spectator))
 
-    {:ok, _started} = RoomServer.start_game(room.id, creator.id, %{word_choices: [@word, "TEST"]})
+    {:ok, _started} =
+      RoomServer.start_game(room.id, creator.id, %{word_choices: choices([@word, "TEST"])})
+
     {:ok, %{phase: :drawing}} = RoomServer.choose_word(room.id, creator.id, @word)
 
     %{

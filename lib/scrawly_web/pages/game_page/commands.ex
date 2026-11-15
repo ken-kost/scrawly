@@ -199,8 +199,10 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
   @doc """
   Commits `word` for the session user, who must be the current drawer while
-  the room is `:choosing` and `word` one of their choices (checked by the room
-  process). Replies `:private_state` with the drawer's slice (no seq), so the
+  the room is `:choosing` and `word` the text of one of their choices
+  (checked by the room process). Only the text is read: the round's
+  difficulty is the room's own for that choice, whatever else the params
+  hold. Replies `:private_state` with the drawer's slice (no seq), so the
   word shows at once, or `:command_denied`.
   """
   def choose_word(%{room_id: room_id, word: word}, server) do

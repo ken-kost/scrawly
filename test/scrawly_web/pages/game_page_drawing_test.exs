@@ -320,7 +320,7 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
   describe "the drawer outside :drawing" do
     test "is denied while choosing a word", ctx do
       {:ok, _started} =
-        RoomServer.start_game(ctx.room.id, ctx.creator.id, %{word_choices: ["zz"]})
+        RoomServer.start_game(ctx.room.id, ctx.creator.id, %{word_choices: choices(["zz"])})
 
       assert room_state!(ctx.room.id).phase == :choosing
 

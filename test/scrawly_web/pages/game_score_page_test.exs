@@ -262,7 +262,10 @@ defmodule ScrawlyWeb.Pages.GameScorePageTest do
       player = create_user()
       room = start_room(creator)
       {:ok, _} = RoomServer.join(room.id, %{id: player.id, username: player.username, score: 0})
-      {:ok, _started} = RoomServer.start_game(room.id, creator.id, %{word_choices: ["zzyzx"]})
+
+      {:ok, _started} =
+        RoomServer.start_game(room.id, creator.id, %{word_choices: choices(["zzyzx"])})
+
       {:ok, ended} = RoomServer.end_game(room.id)
       [{pid, _}] = Registry.lookup(Scrawly.RoomRegistry, room.id)
 

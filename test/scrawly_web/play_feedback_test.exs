@@ -2,7 +2,7 @@ defmodule ScrawlyWeb.PlayFeedbackTest do
   @moduledoc """
   The game page's play-feedback text (`ScrawlyWeb.PlayFeedback`): blanks as
   one block per word, the "3 words · 11 letters" label, "you got it", the
-  close-guess line and the round summary's points.
+  close-guess line, the round summary's points and the difficulty chip.
   """
   use ExUnit.Case, async: true
 
@@ -34,6 +34,21 @@ defmodule ScrawlyWeb.PlayFeedbackTest do
       assert PlayFeedback.mask_blocks("_ _ _ _ ' _   n _ _ _") == ["_ _ _ _ ' _", "n _ _ _"]
       assert PlayFeedback.mask_blocks("_ - _ _ _ _ _") == ["_ - _ _ _ _ _"]
       assert PlayFeedback.mask_blocks(nil) == []
+    end
+  end
+
+  describe "difficulty_label/1 and difficulty_class/1" do
+    test "each difficulty reads with its points bonus; an AI word has no chip" do
+      assert Enum.map([:easy, :medium, :hard, nil], &PlayFeedback.difficulty_label/1) ==
+               ["easy", "medium · +25%", "hard · +50%", nil]
+
+      for junk <- ["hard", :extreme, 3], do: assert(PlayFeedback.difficulty_label(junk) == nil)
+    end
+
+    test "chips reuse the chip styles, plainer for easier words" do
+      assert PlayFeedback.difficulty_class(:easy) == "chip difficulty-chip"
+      assert PlayFeedback.difficulty_class(:medium) == "chip chip-strong difficulty-chip"
+      assert PlayFeedback.difficulty_class(:hard) == "chip chip-accent difficulty-chip"
     end
   end
 

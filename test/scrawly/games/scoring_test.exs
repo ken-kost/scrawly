@@ -3,6 +3,8 @@ defmodule Scrawly.Games.ScoringTest do
 
   alias Scrawly.Games.Scoring
 
+  doctest Scoring
+
   describe "guesser_points/3 - speed curve" do
     test "maximum points (excluding order bonus) at start of round" do
       # No order opt → default order 3 → 0 order bonus
@@ -66,6 +68,58 @@ defmodule Scrawly.Games.ScoringTest do
     end
   end
 
+  describe "guesser_points/3 - difficulty multiplier" do
+    test "easy x1, medium x1.25, hard x1.5" do
+      assert Scoring.multiplier(:easy) == 1
+      assert Scoring.multiplier(:medium) == 1.25
+      assert Scoring.multiplier(:hard) == 1.5
+    end
+
+    test "no difficulty (an AI word) or anything else is x1" do
+      for difficulty <- [nil, :extreme, "hard", 1.5] do
+        assert Scoring.multiplier(difficulty) == 1
+      end
+    end
+
+    test "applies to the whole guess and rounds to a whole number" do
+      for time_left <- [0, 1, 17, 30, 59, 60],
+          order <- [1, 2, 3],
+          round_duration <- [30, 60, 90] do
+        easy = Scoring.guesser_points(time_left, round_duration, order: order)
+
+        for difficulty <- [:easy, :medium, :hard] do
+          multiplier = Scoring.multiplier(difficulty)
+
+          points =
+            Scoring.guesser_points(time_left, round_duration,
+              order: order,
+              multiplier: multiplier
+            )
+
+          assert is_integer(points)
+          assert points == round(easy * multiplier)
+        end
+      end
+    end
+
+    test "a hard word pays half as much again, a medium one a quarter" do
+      assert Scoring.guesser_points(60, 60, order: 1, multiplier: 1.5) == 825
+      assert Scoring.guesser_points(30, 60, order: 1, multiplier: 1.5) == round(325 * 1.5)
+      # 550 x 1.25 = 687.5, rounded half up.
+      assert Scoring.guesser_points(60, 60, order: 1, multiplier: 1.25) == 688
+      assert Scoring.guesser_points(0, 60, multiplier: 1.25) == round(50 * 1.25)
+    end
+
+    test "defaults to x1" do
+      assert Scoring.guesser_points(30, 60, order: 2) ==
+               Scoring.guesser_points(30, 60, order: 2, multiplier: 1)
+    end
+
+    test "the bonus shown is the multiplier as a percentage" do
+      assert Enum.map([:easy, :medium, :hard, nil], &Scoring.bonus_percent/1) == [0, 25, 50, 0]
+    end
+  end
+
   describe "drawer_round_points/1" do
     test "empty list returns 0" do
       assert Scoring.drawer_round_points([]) == 0
@@ -123,6 +177,17 @@ defmodule Scrawly.Games.ScoringTest do
 
       drawer = Scoring.drawer_round_points([g1, g2, g3])
       assert drawer == div(g1 + g2 + g3, 3)
+    end
+
+    test "the drawer's points follow the guessers' difficulty bonus" do
+      easy = for order <- [1, 2], do: Scoring.guesser_points(50, 60, order: order)
+
+      hard =
+        for order <- [1, 2], do: Scoring.guesser_points(50, 60, order: order, multiplier: 1.5)
+
+      assert hard == Enum.map(easy, &round(&1 * 1.5))
+      assert Scoring.drawer_round_points(hard) == div(Enum.sum(hard), 2)
+      assert Scoring.drawer_round_points(hard) > Scoring.drawer_round_points(easy)
     end
   end
 end

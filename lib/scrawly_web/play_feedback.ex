@@ -1,13 +1,18 @@
 defmodule ScrawlyWeb.PlayFeedback do
   @moduledoc """
   The game page's play feedback as text: the answer and its blanks as one
-  block per word, the "3 words · 11 letters" label, the "you got it" and
-  "is close" lines, round summary points and who draws next.
+  block per word, the "3 words · 11 letters" label, the word's difficulty
+  chip, the "you got it" and "is close" lines, round summary points and who
+  draws next.
 
   Pure and client-safe: GamePage's template and actions run these in the
   browser on every render, so they use only functions Hologram's client
   runtime has (`String.split/2` with a plain pattern, `Integer.to_string/1`).
   """
+
+  alias Scrawly.Games.Scoring
+
+  @difficulties [:easy, :medium, :hard]
 
   # The room's masks (Scrawly.Games.WordHints) put one space between two
   # characters, so the space between two words becomes three.
@@ -64,6 +69,41 @@ defmodule ScrawlyWeb.PlayFeedback do
       _one_or_none -> letters
     end
   end
+
+  @doc """
+  A word's difficulty as its chip reads, with the points bonus it gives
+  (`Scrawly.Games.Scoring.bonus_percent/1`); `nil` for no difficulty (an AI
+  word):
+
+      iex> ScrawlyWeb.PlayFeedback.difficulty_label(:hard)
+      "hard · +50%"
+      iex> ScrawlyWeb.PlayFeedback.difficulty_label(:medium)
+      "medium · +25%"
+      iex> ScrawlyWeb.PlayFeedback.difficulty_label(:easy)
+      "easy"
+      iex> ScrawlyWeb.PlayFeedback.difficulty_label(nil)
+      nil
+  """
+  @spec difficulty_label(term) :: String.t() | nil
+  def difficulty_label(difficulty) when difficulty in @difficulties do
+    case Scoring.bonus_percent(difficulty) do
+      0 -> Atom.to_string(difficulty)
+      bonus -> Atom.to_string(difficulty) <> " · +" <> Integer.to_string(bonus) <> "%"
+    end
+  end
+
+  def difficulty_label(_difficulty), do: nil
+
+  @doc """
+  The classes of a difficulty chip: the plainer the easier.
+
+      iex> ScrawlyWeb.PlayFeedback.difficulty_class(:hard)
+      "chip chip-accent difficulty-chip"
+  """
+  @spec difficulty_class(term) :: String.t()
+  def difficulty_class(:hard), do: "chip chip-accent difficulty-chip"
+  def difficulty_class(:medium), do: "chip chip-strong difficulty-chip"
+  def difficulty_class(_difficulty), do: "chip difficulty-chip"
 
   @doc """
   True once the page's user has guessed the word this round: the room lists
