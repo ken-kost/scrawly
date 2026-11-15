@@ -46,10 +46,10 @@ defmodule ScrawlyWeb.Components.ChatBox do
         {/for}
       </div>
       {%if @rate_limited}
-        <div style="padding: 4px 14px; font-size: 11px; color: var(--danger);">slow down</div>
+        <div class="chat-note" style="padding: 4px 14px; font-size: 11px; color: var(--danger);">slow down</div>
       {/if}
       {%if @notice}
-        <div style="padding: 4px 14px; font-size: 11px; color: var(--muted);">{@notice}</div>
+        <div class="chat-note" style="padding: 4px 14px; font-size: 11px; color: var(--muted);">{@notice}</div>
       {/if}
       <form class="chat-input" $submit="send_message">
         <input type="text" name="message" maxlength="240"

@@ -175,6 +175,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:draw_color, "#000000")
               |> put_state(:draw_width, 2)
               |> put_state(:draw_eraser, false)
+              # On a phone the scores are a one-line strip; tapping it shows
+              # the full list over the canvas until the next tap.
+              |> put_state(:show_all_scores, false)
               |> put_state(:leaving?, false)
               |> put_state(:watchers, rs.watchers || [])
               |> put_state(:answer_kind, rs.answer_kind)
@@ -957,10 +960,16 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def action(:clear_message, _params, component),
     do: put_state(component, :new_message, "")
 
+  # Shows the newest line: the bottom of the list, or on a phone, where the
+  # list runs newest first (`column-reverse`, whose scroll offsets are
+  # negative), its top. chat_scroll.js does the same on every change.
   def action(:scroll_chat, _params, component) do
     JS.exec(~JS"""
       var el = document.getElementById('chat-messages');
-      if (el) { el.scrollTop = el.scrollHeight; }
+      if (el) {
+        var reversed = getComputedStyle(el).flexDirection === 'column-reverse';
+        el.scrollTop = reversed ? -el.scrollHeight : el.scrollHeight;
+      }
     """)
 
     component
@@ -1089,6 +1098,22 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def action(:toggle_eraser, _params, component), do: toggle_eraser(component)
 
   def action(:undo_drawing, _params, component), do: undo_last_stroke(component)
+
+  # ── Score strip (phones) ───────────────────────────────────────────
+  # Under 720 px the scoreboard is a one-line strip; a tap on it shows the
+  # full list over the canvas, and the next tap, a tap outside it or Escape
+  # hides it again. Wider screens always show the full list, so there the
+  # flag changes nothing on screen.
+
+  def action(:toggle_scores, _params, component),
+    do:
+      put_state(
+        component,
+        :show_all_scores,
+        not Map.get(component.state, :show_all_scores, false)
+      )
+
+  def action(:hide_scores, _params, component), do: put_state(component, :show_all_scores, false)
 
   # ── Drawer keyboard shortcuts ──────────────────────────────────────
   # The `<window>` bindings render only inside the drawer's toolbar. Key
@@ -2039,13 +2064,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
     {/if}
 
     {%if @game_started}
-    <div>
+    <div class="game-screen">
       <div class="game-bar">
         <div class="game-bar-inner">
           <div class="left">
             <button class="app-btn app-btn-ghost app-btn-sm" $click={:leave_room}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="14" height="14"><path d="M19 12H5M11 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              leave
+              <span class="leave-label">leave</span>
             </button>
             <span class="section-label">{@room_name} · {@room_code}</span>
             <span class="chip chip-live">live</span>
@@ -2087,7 +2112,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
             {/if}
           </div>
           <div class="right">
-            <div>
+            <div class="round-pips">
               {%if @total_rounds && @total_rounds > 0}
                 {%for i <- 1..@total_rounds}
                   {%if i < @round}<span class="round-pip on"></span>{%else}{%if i == @round}<span class="round-pip now"></span>{%else}<span class="round-pip"></span>{/if}{/if}
@@ -2097,10 +2122,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
             <div class="col" style="align-items: center; gap: 4px;">
               {%if @phase == :choosing}
                 <div class="timer timer-big mono">{@choice_time_left}s</div>
-                <div class="bar accent" style="width: 80px;"><div style={"width: " <> Integer.to_string(min(100, round((@choice_time_left / max(@choice_duration, 1)) * 100))) <> "%;"}></div></div>
+                <div class="bar accent timer-bar"><div style={"width: " <> Integer.to_string(min(100, round((@choice_time_left / max(@choice_duration, 1)) * 100))) <> "%;"}></div></div>
               {%else}
                 <div class="timer timer-big mono">{@time_left}s</div>
-                <div class="bar accent" style="width: 80px;"><div style={"width: " <> Integer.to_string(min(100, round((@time_left / max(@round_duration, 1)) * 100))) <> "%;"}></div></div>
+                <div class="bar accent timer-bar"><div style={"width: " <> Integer.to_string(min(100, round((@time_left / max(@round_duration, 1)) * 100))) <> "%;"}></div></div>
               {/if}
             </div>
           </div>
@@ -2166,20 +2191,32 @@ defmodule ScrawlyWeb.Pages.GamePage do
       {/if}
 
       <div class="game-layout">
-        <div class="panel">
-          <div class="panel-head">
-            <span>scores</span>
-            <span class="mono">round {@round}/{@total_rounds}</span>
+        <div class={"panel scores-panel" <> if(@show_all_scores, do: " open", else: "")}>
+          <div class="scores-sheet" id="scores-sheet"
+            $click="toggle_scores"
+            $click_outside={if @show_all_scores do :hide_scores end}>
+            <div class="panel-head">
+              <span>scores</span>
+              <span class="mono">round {@round}/{@total_rounds}</span>
+            </div>
+            <div class="panel-body" style="padding: 0;">
+              <ScoreBoard players={@players}
+                drawer_id={@current_drawer && @current_drawer.id}
+                guessed_ids={@correct_guessers} />
+            </div>
+            <button type="button" class="scores-toggle" aria-controls="scores-sheet"
+              aria-expanded={if @show_all_scores do "true" else "false" end}>
+              <span class="visually-hidden">{if @show_all_scores do "hide the scores" else "show all scores" end}</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
           </div>
-          <div class="panel-body" style="padding: 0;">
-            <ScoreBoard players={@players}
-              drawer_id={@current_drawer && @current_drawer.id}
-              guessed_ids={@correct_guessers} />
-          </div>
+          {%if @show_all_scores}
+            <window $key_down.escape="hide_scores" />
+          {/if}
         </div>
 
         <div class="canvas-shell">
-          <div class="between canvas-head" style="padding: 10px 14px; border-bottom: 1px solid var(--hairline);">
+          <div class="between canvas-head">
             <div class="row" style="gap: 8px;">
               {%if @current_drawer}
                 <Avatar avatar_id={@current_drawer.avatar_id} color={@current_drawer.avatar_color} size="xs" />
@@ -2228,7 +2265,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
                 $key_down.meta+z.prevent_default={:shortcut_undo, via: :meta} />
             </div>
           {%else}
-            <div class="toolbar" style="justify-content: space-between;">
+            <div class="toolbar toolbar-viewer" style="justify-content: space-between;">
               <div class="row" style="gap: 8px;">
                 <span class="chip">spectator tools are disabled</span>
               </div>

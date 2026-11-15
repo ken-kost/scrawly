@@ -543,6 +543,18 @@ html, body {
 .page-mid { max-width: 1080px; }
 .row { display: flex; align-items: center; gap: 12px; }
 .col { display: flex; flex-direction: column; gap: 12px; }
+/* Read by screen readers, not shown. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
 .between { display: flex; justify-content: space-between; align-items: center; }
 
 /* ─── Hero / titling ─────────────────────────────────────────────── */
@@ -872,6 +884,8 @@ html, body {
   font-weight: 500;
 }
 
+.timer-bar { width: 80px; }
+
 .round-pip {
   display: inline-block;
   width: 18px;
@@ -936,6 +950,11 @@ html, body {
 .scoreboard .sb-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scoreboard .sb-mark { display: inline-flex; flex: none; color: var(--muted); }
 .scoreboard .sb-mark.guessed { color: var(--success); }
+/* The scores panel's wrapper and its toggle only matter on phones (the
+   strip, see "Play on phones"); here the panel lays out as if they were not
+   there. */
+.scores-sheet { display: contents; }
+.scores-toggle { display: none; }
 
 /* Sized to the canvas and its toolbar: a taller chat panel beside it must
    not stretch it into an empty band under the toolbar. */
@@ -947,6 +966,7 @@ html, body {
   display: flex; flex-direction: column;
   align-self: start;
 }
+.canvas-head { padding: 10px 14px; border-bottom: 1px solid var(--hairline); }
 .canvas-frame {
   background: var(--canvas);
   position: relative;
@@ -1560,6 +1580,192 @@ html, body {
 .round-summary-row.me { font-weight: 600; }
 .round-summary-row.drawer { background: color-mix(in oklch, var(--accent) 10%, transparent); }
 .round-summary-next { margin-top: 14px; }
+
+/* ─── Play on phones (≤ 720 px) ─────────────────────────────────── */
+/* The game fills the screen under the site header, top to bottom: a
+   compact bar (leave, the blanks, the timer), the scores as a one-line
+   strip, the canvas (the drawer's tools under it), the guess input, then
+   the latest chat lines, newest first. Same markup as the desktop grid.
+   The input sits right under the canvas rather than at the foot of the
+   screen: an on-screen keyboard covers the foot without resizing the page
+   (iOS, and Android by default), so the input and the canvas above it stay
+   in view while typing and the browser never has to scroll to reach the
+   input. */
+@media (max-width: 720px) {
+  body:has(.game-screen) .app-footer { display: none; }
+  .game-screen {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 56px);
+    height: calc(100dvh - 56px);
+  }
+
+  /* The bar: one row. The room's name, code and "live" chip and the round
+     pips step aside (the strip's full list says the round). */
+  .game-bar { flex: none; }
+  .game-bar-inner {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 6px 12px;
+  }
+  .word-display { gap: 2px; }
+  .game-bar .left { flex-wrap: nowrap; gap: 0; }
+  .game-bar .left > :not(.app-btn) { display: none; }
+  .game-bar .left .app-btn { position: relative; padding: 0 8px; }
+  .leave-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .game-bar .right { flex-wrap: nowrap; justify-content: flex-end; }
+  .round-pips { display: none; }
+  .timer-big { font-size: 20px; }
+  .timer-bar { width: 44px; }
+  .word-letters { font-size: 16px; }
+  .word-meta { font-size: 10px; }
+
+  .game-layout {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 8px 12px 12px;
+    gap: 8px;
+  }
+
+  /* Scores: avatars with points (and the pencil and tick) in a strip that
+     scrolls sideways. A tap shows the full list over the canvas. */
+  .scores-panel { flex: none; position: relative; height: 40px; cursor: pointer; }
+  .scores-sheet { display: flex; align-items: stretch; height: 100%; }
+  .scores-toggle {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    padding: 0;
+    border: 0;
+    border-left: 1px solid var(--hairline);
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .scores-panel:not(.open) .panel-head { display: none; }
+  .scores-panel:not(.open) .panel-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .scores-panel:not(.open) .panel-body::-webkit-scrollbar { display: none; }
+  .scores-panel:not(.open) .scoreboard {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: max-content;
+    height: 100%;
+    padding: 0 8px;
+  }
+  .scores-panel:not(.open) .scoreboard .item,
+  .scores-panel:not(.open) .scoreboard .item:last-child {
+    /* Positioned, so a hidden name stays inside the strip's scroll box
+       instead of widening the page. */
+    position: relative;
+    display: flex;
+    gap: 6px;
+    padding: 2px 8px 2px 2px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+  }
+  .scores-panel:not(.open) .scoreboard .rank { display: none; }
+  .scores-panel:not(.open) .scoreboard .nm { gap: 3px; }
+  .scores-panel:not(.open) .scoreboard .sb-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  /* The drawer's chip keeps the name: the canvas has no "X is drawing"
+     head on a phone. */
+  .scores-panel:not(.open) .scoreboard .item.drawing .sb-name {
+    position: static;
+    width: auto;
+    height: auto;
+    max-width: 7.5em;
+    clip: auto;
+    font-size: 13px;
+  }
+  .scores-panel:not(.open) .scoreboard .pts { font-size: 12px; }
+
+  .scores-panel.open { z-index: 20; }
+  .scores-panel.open .scores-sheet {
+    position: absolute;
+    top: -1px;
+    left: -1px;
+    right: -1px;
+    height: auto;
+    max-height: min(70dvh, 520px);
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--hairline-2);
+    border-radius: 8px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+    overflow: hidden;
+  }
+  .scores-panel.open .panel-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .scores-panel.open .scores-toggle {
+    width: 100%;
+    height: 36px;
+    border-left: 0;
+    border-top: 1px solid var(--hairline);
+  }
+  .scores-panel.open .scores-toggle svg { transform: rotate(180deg); }
+
+  /* The canvas at full width. Its "X is drawing" head and a viewer's
+     "spectator tools" bar go (the strip names the drawer). */
+  .canvas-shell { flex: none; align-self: stretch; }
+  .canvas-head,
+  .toolbar-viewer { display: none; }
+
+  /* The drawer's tools: the colours on one row, sizes and erase / undo /
+     clear on the next, with finger-sized targets. */
+  .toolbar { padding: 8px 10px; gap: 8px 10px; }
+  .toolbar .swatches { flex: 1 1 100%; flex-wrap: nowrap; justify-content: space-between; }
+  .swatch { width: 28px; height: 28px; }
+  .tool-group { padding-left: 0; border-left: 0; }
+  .tool-group:last-of-type { margin-left: auto; }
+  .tool-btn { height: 32px; min-width: 32px; justify-content: center; }
+
+  /* Chat: the input first, then the private notes, then the lines newest
+     first (column-reverse; chat_scroll.js keeps the newest in view). */
+  .chat-panel { flex: 1 1 0; min-height: 0; }
+  .chat-panel > .panel-head { display: none; }
+  .chat-panel .chat-input { order: -2; border-top: 0; border-bottom: 1px solid var(--hairline); }
+  .chat-panel .chat-input input { font-size: 16px; }
+  .chat-panel .chat-note { order: -1; }
+  .chat-panel #chat-messages {
+    display: flex;
+    flex-direction: column-reverse;
+    max-height: none;
+  }
+  /* Few lines sit at the top, under the input. */
+  .chat-panel #chat-messages > :first-child { margin-bottom: auto; }
+
+  /* Overlays fit a 360 px screen. */
+  .choice-modal { width: calc(100% - 24px); padding: 20px 16px; }
+  .choice-sub { margin-bottom: 16px; }
+  .choice-btn { padding: 12px 14px; }
+  .round-summary { padding: 18px 16px 14px; }
+  .round-summary-answer { font-size: 18px; }
+}
 
 /* ─── Avatar tiles ────────────────────────────────────────────────── */
 /* 24 background tones used by preset avatars. Two HSL rings sampled
