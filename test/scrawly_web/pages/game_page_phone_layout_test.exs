@@ -32,7 +32,8 @@ defmodule ScrawlyWeb.Pages.GamePagePhoneLayoutTest do
   @css_path Path.join(@root, "assets/css/app.css")
   @markup_sources Enum.map(
                     ~w(pages/game_page.ex components/chat_box.ex components/score_board.ex
-                       components/drawing_canvas.ex components/avatar.ex layouts/app_layout.ex),
+                       components/drawing_canvas.ex components/drawing_toolbar.ex
+                       components/avatar.ex layouts/app_layout.ex),
                     &Path.join([@root, "lib/scrawly_web", &1])
                   )
 

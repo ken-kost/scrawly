@@ -13,7 +13,8 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
     3. `#game-canvas-overlay`, JS-owned, for everyone: live strokes from
        other tabs.
 
-  JS only ever inserts into the two empty groups. Pointer input is native
+  JS only ever inserts into the two empty groups, and styles `#drawing-path`
+  when a stroke starts (the tool in draw_tools.mjs). Pointer input is native
   (stroke_engine.mjs), so there are no pointer bindings here. The dot grid is
   drawn by CSS above the strokes (`.canvas-frame::after`), so the white eraser
   never paints over it.
@@ -22,8 +23,6 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
 
   prop :is_drawer, :boolean, required: true
   prop :strokes, :list, required: true
-  prop :active_color, :string, default: "#000000"
-  prop :active_width, :integer, default: 2
 
   def template do
     ~HOLO"""
@@ -44,7 +43,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
         <g id="game-canvas-drawer">
           {%if @is_drawer}
             <g id="game-canvas-drawer-strokes"></g>
-            <path id="drawing-path" stroke={@active_color} stroke-width={@active_width} fill="none" stroke-linecap="round" stroke-linejoin="round" />
+            <path id="drawing-path" fill="none" stroke-linecap="round" stroke-linejoin="round" />
           {/if}
         </g>
         <g id="game-canvas-overlay"></g>

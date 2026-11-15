@@ -7,7 +7,7 @@ too noisy for CI.
 
 | file | what |
 |---|---|
-| `fixtures/{game,demo}-{100,300,500}.json` | stroke sets for the in-game canvas (800x450) and the demo board (400x225) |
+| `fixtures/{game,demo}-{100,300,500}.json` | stroke sets for the in-game canvas and the demo board (both 800x450 since #37; the baseline runs in `results/` had the board at 400x225) |
 | `fixtures/generate.mjs` | writes them (`--check` verifies the stored files) |
 | `lib/fixture_gen.mjs` | the generator: synthetic pointer points through the app's own `createStrokeBuilder` |
 | `drawing_server.exs` | server benchmark (`mix run`, test env, scratch database) |

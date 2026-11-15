@@ -328,9 +328,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
           can_start_game: true,
           chat_messages: [],
           drawing_strokes: [],
-          draw_color: "#000000",
-          draw_width: 2,
-          draw_eraser: false,
+          draw_tool: %{tool: :brush, color: "#0a0a0a", size: 2},
           leaving?: false,
           watchers: [],
           round_duration: 60,
@@ -1108,8 +1106,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       # the tab may hold go with the resync.
       assert [
                {:restoreCanvas, [_mount_id]},
-               {:setToolColor, ["#000000"]},
-               {:setToolWidth, [2]},
+               {:setDrawTool, [%{tool: "brush", color: "#0a0a0a", size: 2}]},
                {:takeStaleRoomChannels, ["r1"]}
              ] = shown_calls
 

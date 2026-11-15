@@ -6,16 +6,21 @@ defmodule ScrawlyWeb.Components.GameDemo do
   strokes are committed to the DOM directly by `demo_board.mjs`, so Hologram
   never runs an action or re-renders per pointer move.
 
+  The board has the game canvas's coordinates (`viewBox="0 0 800 450"`), so
+  a size draws as thick, relative to the canvas, on both. Its tools are the
+  game's DrawingToolbar without undo; `tool` is HomePage's `draw_tool`.
+
   The svg's layers, bottom to top: the JS-owned `#demo-board-strokes` and
   `#demo-board-overlay` groups (JS only inserts into these), then
-  `#demo-board-active-path`. The dot grid is drawn by CSS above the strokes
-  (`.demo-canvas::after`), so the white eraser never paints over it.
+  `#demo-board-active-path` (styled by JS when a stroke starts). The dot grid
+  is drawn by CSS above the strokes (`.demo-canvas::after`), so the white
+  eraser never paints over it.
   """
   use Hologram.Component
 
-  prop :color, :string, default: "#000000"
-  prop :width, :integer, default: 2
-  prop :eraser, :boolean, default: false
+  alias ScrawlyWeb.Components.DrawingToolbar
+
+  prop :tool, :map, required: true
 
   def template do
     ~HOLO"""
@@ -25,49 +30,21 @@ defmodule ScrawlyWeb.Components.GameDemo do
           <span class="chip chip-live">live demo</span>
           <span class="section-label">shared board · everyone draws together</span>
         </div>
-        <button type="button" class="app-btn app-btn-ghost app-btn-sm" $click={:demo_clear}>clear</button>
       </div>
 
       <div class="demo-canvas" style="aspect-ratio: 16/9; min-height: 220px; position: relative;">
         <svg
           id="demo-board-svg"
-          viewBox="0 0 400 225"
+          viewBox="0 0 800 450"
           preserveAspectRatio="xMidYMid meet"
           style="touch-action: none; width: 100%; height: 100%;">
           <g id="demo-board-strokes"></g>
           <g id="demo-board-overlay"></g>
-          <path id="demo-board-active-path" d="" stroke={@color} stroke-width={@width} fill="none" stroke-linecap="round" stroke-linejoin="round" />
+          <path id="demo-board-active-path" d="" fill="none" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </div>
 
-      <div class="between" style="padding: 10px 14px; gap: 12px; flex-wrap: wrap;">
-        <div class="row" style="gap: 4px;">
-          {%for c <- ["#000000", "#EF4444", "#F97316", "#EAB308", "#22C55E", "#3B82F6", "#A855F7", "#EC4899"]}
-            <button
-              type="button"
-              class={"swatch " <> if(@color == c and !@eraser, do: "active", else: "")}
-              style={"background: " <> c <> ";"}
-              $click={:demo_set_color, value: c}></button>
-          {/for}
-        </div>
-
-        <div class="row" style="gap: 4px;">
-          {%for {wv, lbl} <- [{2, "s"}, {4, "m"}, {8, "l"}]}
-            <button
-              type="button"
-              class={"tool-btn " <> if(@width == wv and !@eraser, do: "active", else: "")}
-              $click={:demo_set_width, value: wv}>
-              <span class="size-dot" style={"width: " <> Integer.to_string(wv * 2) <> "px; height: " <> Integer.to_string(wv * 2) <> "px;"}></span>
-              <span class="mono" style="font-size: 11px; color: var(--muted); margin-left: 4px;">{lbl}</span>
-            </button>
-          {/for}
-        </div>
-
-        <button
-          type="button"
-          class={"tool-btn " <> if(@eraser, do: "active", else: "")}
-          $click={:demo_toggle_eraser}>erase</button>
-      </div>
+      <DrawingToolbar tool={@tool} controls={[:colors, :sizes, :eraser, :clear]} />
     </div>
     """
   end

@@ -5,9 +5,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
   js_import :connectDemoBoard, from: "./demo_board.mjs"
   js_import :disconnectDemoBoard, from: "./demo_board.mjs"
   js_import :clearBoard, from: "./demo_board.mjs"
-  js_import :setColor, from: "./demo_board.mjs"
-  js_import :setWidth, from: "./demo_board.mjs"
-  js_import :setEraser, from: "./demo_board.mjs"
+  js_import :setDrawTool, from: "./draw_tools.mjs"
 
   js_import :copyRecoveryCode, from: "../components/recovery_code.mjs"
   js_import :downloadRecoveryCode, from: "../components/recovery_code.mjs"
@@ -23,7 +21,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
   alias ScrawlyWeb.{CommandParams, RoomCodes, RoomSettings, RoomSubscriptions}
   alias ScrawlyWeb.Components.RoomList
   alias ScrawlyWeb.Components.RoomSettingsForm
-  alias ScrawlyWeb.Components.GameDemo
+  alias ScrawlyWeb.Components.{DrawingToolbar, GameDemo}
   alias ScrawlyWeb.Components.RecoveryCodePanel
 
   # The lobby chat keeps this many lines (newest first in state).
@@ -85,10 +83,8 @@ defmodule ScrawlyWeb.Pages.HomePage do
       |> put_state(:recovery_code, nil)
       |> put_state(:recovery_code_saved, false)
       |> put_state(:recovery_code_copied, false)
-      # Demo board tool state — sent down as props to GameDemo
-      |> put_state(:demo_color, "#000000")
-      |> put_state(:demo_width, 2)
-      |> put_state(:demo_eraser, false)
+      # The demo board's tool (DrawingToolbar's model), shown by GameDemo.
+      |> put_state(:draw_tool, DrawingToolbar.default_tool())
       |> put_action(:connect_lobby)
 
     {component, put_subscription(server, Broadcasts.lobby_channel())}
@@ -199,7 +195,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
             <h2>demo</h2>
             <span class="mono" style="font-size: 11px; color: var(--muted);">one shared board · everyone draws</span>
           </div>
-          <GameDemo color={@demo_color} width={@demo_width} eraser={@demo_eraser} />
+          <GameDemo tool={@draw_tool} />
           <div style="margin-top: 16px; padding: 16px; border: 1px solid var(--hairline); border-radius: 8px;">
             <div class="section-label">how it works</div>
             <ol style="margin: 12px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.65;">
@@ -642,45 +638,37 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_state(:room_code_input, "")
   end
 
-  # ── Demo board tools ──────────────────────────────────────────────
+  # ── Demo board tools (DrawingToolbar) ─────────────────────────────
   # Pointer input is native (stroke_engine.mjs via demo_board.mjs); only the
-  # tool state lives here and reaches JS through these calls.
+  # tool lives here, and every change reaches JS (draw_tools.mjs) at once.
 
-  def action(:demo_clear, _params, component) do
+  def action(:clear_canvas, _params, component) do
     JS.call(:clearBoard, [])
     component
   end
 
-  def action(:demo_set_color, %{value: color}, component) do
-    JS.call(:setColor, [color])
+  def action(:select_color, params, component),
+    do:
+      put_tool(
+        component,
+        DrawingToolbar.select_color(draw_tool(component.state), Map.get(params, :color))
+      )
 
-    component
-    |> put_state(:demo_color, color)
-    |> put_state(:demo_eraser, false)
-  end
+  def action(:select_size, params, component),
+    do:
+      put_tool(
+        component,
+        DrawingToolbar.select_size(draw_tool(component.state), Map.get(params, :size))
+      )
 
-  def action(:demo_set_width, %{value: width}, component) do
-    JS.call(:setWidth, [width])
-
-    component
-    |> put_state(:demo_width, width)
-    |> put_state(:demo_eraser, false)
-  end
-
-  def action(:demo_toggle_eraser, _params, component) do
-    new_eraser = not component.state.demo_eraser
-
-    if new_eraser,
-      do: JS.call(:setEraser, []),
-      else: JS.call(:setColor, [component.state.demo_color])
-
-    put_state(component, :demo_eraser, new_eraser)
-  end
+  def action(:toggle_eraser, _params, component),
+    do: put_tool(component, DrawingToolbar.toggle_eraser(draw_tool(component.state)))
 
   # ── Lobby & Room Actions ──────────────────────────────────────────
 
   def action(:connect_lobby, _params, component) do
-    JS.call(:connectDemoBoard, [demo_tools(component.state)])
+    push_tool(component.state)
+    JS.call(:connectDemoBoard, [])
     component
   end
 
@@ -701,7 +689,8 @@ defmodule ScrawlyWeb.Pages.HomePage do
     component = %{component | next_page: nil}
 
     if component.state.page_shown? do
-      JS.call(:connectDemoBoard, [demo_tools(component.state)])
+      push_tool(component.state)
+      JS.call(:connectDemoBoard, [])
       stale_rooms = JS.call(:takeStaleRoomChannels, [nil])
 
       put_command(component, :resync_lobby,
@@ -827,14 +816,18 @@ defmodule ScrawlyWeb.Pages.HomePage do
       else: component
   end
 
-  # The demo board's tool as the page's toolbar shows it.
-  defp demo_tools(state) do
-    %{
-      color: Map.get(state, :demo_color, "#000000"),
-      width: Map.get(state, :demo_width, 2),
-      eraser: Map.get(state, :demo_eraser, false)
-    }
+  # The demo board's tool, as the page's toolbar shows it.
+  defp draw_tool(state), do: Map.get(state, :draw_tool) || DrawingToolbar.default_tool()
+
+  defp put_tool(component, tool) do
+    component = put_state(component, :draw_tool, tool)
+    push_tool(component.state)
+    component
   end
+
+  # Into draw_tools.mjs: on connect (after init), after a Back/Forward
+  # restore and on every change.
+  defp push_tool(state), do: JS.call(:setDrawTool, [DrawingToolbar.js_tool(draw_tool(state))])
 
   defp chat_notice(:rate_limited), do: "slow down: at most 4 messages every 5 seconds."
   defp chat_notice(_reason), do: "message not sent. reload the page and try again."

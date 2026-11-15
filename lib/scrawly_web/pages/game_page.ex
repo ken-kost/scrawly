@@ -11,8 +11,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :setDrawingEnabled, from: "./drawing_manager.mjs"
   js_import :clearDrawing, from: "./drawing_manager.mjs"
   js_import :setDrawingPath, from: "./drawing_manager.mjs"
-  js_import :setToolColor, from: "./drawing_manager.mjs"
-  js_import :setToolWidth, from: "./drawing_manager.mjs"
   js_import :undoStroke, from: "./drawing_manager.mjs"
   js_import :removeRemoteOverlay, from: "./drawing_manager.mjs"
   js_import :settleRemoteStrokes, from: "./drawing_manager.mjs"
@@ -28,6 +26,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :ackStrokeOp, from: "./drawing_manager.mjs"
   js_import :rejectStrokeOp, from: "./drawing_manager.mjs"
   js_import :applyRejectedStrokes, from: "./drawing_manager.mjs"
+  js_import :setDrawTool, from: "./draw_tools.mjs"
 
   js_import :noteRoomChannel, from: "./room_channels.mjs"
   js_import :takeStaleRoomChannels, from: "./room_channels.mjs"
@@ -38,7 +37,15 @@ defmodule ScrawlyWeb.Pages.GamePage do
   route "/game/:room_id"
   param :room_id, :string
 
-  alias ScrawlyWeb.Components.{Avatar, ChatBox, ScoreBoard, DrawingCanvas, RoomSettingsForm}
+  alias ScrawlyWeb.Components.{
+    Avatar,
+    ChatBox,
+    ScoreBoard,
+    DrawingCanvas,
+    DrawingToolbar,
+    RoomSettingsForm
+  }
+
   alias ScrawlyWeb.{PlayFeedback, RoomSettings}
   alias ScrawlyWeb.Pages.GamePage.Commands
   alias Scrawly.Games.RoomServer
@@ -172,9 +179,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
               )
               |> put_state(:chat_messages, rs.chat_messages || [])
               |> put_state(:drawing_strokes, rs.drawing_strokes || [])
-              |> put_state(:draw_color, "#000000")
-              |> put_state(:draw_width, 2)
-              |> put_state(:draw_eraser, false)
+              # The drawer's tool (DrawingToolbar's model): every page
+              # instance starts with the default one.
+              |> put_state(:draw_tool, DrawingToolbar.default_tool())
               # On a phone the scores are a one-line strip; tapping it shows
               # the full list over the canvas until the next tap.
               |> put_state(:show_all_scores, false)
@@ -1080,20 +1087,19 @@ defmodule ScrawlyWeb.Pages.GamePage do
     put_state(component, :drawing_strokes, [])
   end
 
-  def action(:select_color, params, component) do
-    color = params.color || "#000000"
-    JS.call(:setToolColor, [color])
+  def action(:select_color, params, component),
+    do:
+      put_tool(
+        component,
+        DrawingToolbar.select_color(draw_tool(component.state), Map.get(params, :color))
+      )
 
-    component
-    |> put_state(:draw_color, color)
-    |> put_state(:draw_eraser, false)
-  end
-
-  def action(:select_width, params, component) do
-    width = params.width || 2
-    JS.call(:setToolWidth, [width])
-    put_state(component, :draw_width, width)
-  end
+  def action(:select_size, params, component),
+    do:
+      put_tool(
+        component,
+        DrawingToolbar.select_size(draw_tool(component.state), Map.get(params, :size))
+      )
 
   def action(:toggle_eraser, _params, component), do: toggle_eraser(component)
 
@@ -1116,7 +1122,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def action(:hide_scores, _params, component), do: put_state(component, :show_all_scores, false)
 
   # ── Drawer keyboard shortcuts ──────────────────────────────────────
-  # The `<window>` bindings render only inside the drawer's toolbar. Key
+  # The `<window>` bindings render only inside the drawer's toolbar
+  # (DrawingToolbar with `shortcuts`), and the drawer's chat input is
+  # disabled meanwhile (ChatBox `disabled`), so typing never reaches them. Key
   # filters match a superset of modifiers and fire on auto-repeat, so these
   # clauses keep only the plain press: E alone toggles once even when held,
   # Ctrl+Z / Cmd+Z undo once (no Shift: that is redo elsewhere). Ctrl+Cmd+Z
@@ -1819,27 +1827,22 @@ defmodule ScrawlyWeb.Pages.GamePage do
     component
   end
 
-  # Shared by the toolbar buttons and the keyboard shortcuts.
-  defp toggle_eraser(component) do
-    component =
-      put_state(component, :draw_eraser, not Map.get(component.state, :draw_eraser, false))
+  # Shared by the toolbar button and the E shortcut.
+  defp toggle_eraser(component),
+    do: put_tool(component, DrawingToolbar.toggle_eraser(draw_tool(component.state)))
 
+  defp draw_tool(state), do: Map.get(state, :draw_tool) || DrawingToolbar.default_tool()
+
+  defp put_tool(component, tool) do
+    component = put_state(component, :draw_tool, tool)
     push_tool(component.state)
     component
   end
 
-  # The tool the toolbar shows, into drawing_manager.mjs (whose tool is
-  # shared by every page instance of the tab): on :mounted, after a
-  # Back/Forward restore, and when the eraser toggles.
-  defp push_tool(state) do
-    if Map.get(state, :draw_eraser, false) do
-      JS.call(:setToolColor, ["#FFFFFF"])
-      JS.call(:setToolWidth, [20])
-    else
-      JS.call(:setToolColor, [Map.get(state, :draw_color, "#000000")])
-      JS.call(:setToolWidth, [Map.get(state, :draw_width, 2)])
-    end
-  end
+  # The tool the toolbar shows, into draw_tools.mjs (one tool per tab, shared
+  # by every page instance; drawing_manager.mjs mountCanvas resets it): on
+  # :mounted, after a Back/Forward restore, and on every change.
+  defp push_tool(state), do: JS.call(:setDrawTool, [DrawingToolbar.js_tool(draw_tool(state))])
 
   defp undo_last_stroke(component) do
     JS.call(:undoStroke, [])
@@ -2229,41 +2232,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
             </span>
           </div>
 
-          <DrawingCanvas is_drawer={@is_drawer}
-            strokes={@drawing_strokes}
-            active_color={if(@draw_eraser, do: "#FFFFFF", else: @draw_color)}
-            active_width={if(@draw_eraser, do: 20, else: @draw_width)} />
+          <DrawingCanvas is_drawer={@is_drawer} strokes={@drawing_strokes} />
 
           {%if @is_drawer}
-            <div class="toolbar">
-              <div class="swatches">
-                {%for c <- ["#0a0a0a", "#d63838", "#2a6df4", "#1f9a4a", "#eab308", "#f97316", "#a855f7", "#ec4899"]}
-                  <button class={"swatch " <> if(@draw_color == c && !@draw_eraser, do: "active", else: "")}
-                          style={"background: " <> c <> ";"}
-                          $click={:select_color, color: c}></button>
-                {/for}
-              </div>
-              <div class="tool-group">
-                {%for {wv, sz} <- [{2, 4}, {5, 7}, {10, 10}, {20, 14}]}
-                  <button class={"tool-btn " <> if(@draw_width == wv && !@draw_eraser, do: "active", else: "")}
-                          $click={:select_width, width: wv}>
-                    <span class="size-dot" style={"width: " <> Integer.to_string(sz) <> "px; height: " <> Integer.to_string(sz) <> "px;"}></span>
-                  </button>
-                {/for}
-              </div>
-              <div class="tool-group">
-                <button class={"tool-btn " <> if(@draw_eraser, do: "active", else: "")} $click={:toggle_eraser}>erase</button>
-                <button class="tool-btn" $click={:undo_drawing}>undo</button>
-                <button class="tool-btn" $click={:clear_canvas}>clear</button>
-              </div>
-              <span class="mono" style="font-size: 11px; color: var(--muted); margin-left: auto;">
-                <span class="kbd">⌘/Ctrl+Z</span> undo · <span class="kbd">E</span> eraser
-              </span>
-              <window
-                $key_down.e="shortcut_eraser"
-                $key_down.ctrl+z.prevent_default={:shortcut_undo, via: :ctrl}
-                $key_down.meta+z.prevent_default={:shortcut_undo, via: :meta} />
-            </div>
+            <DrawingToolbar tool={@draw_tool} shortcuts={true} />
           {%else}
             <div class="toolbar toolbar-viewer" style="justify-content: space-between;">
               <div class="row" style="gap: 8px;">

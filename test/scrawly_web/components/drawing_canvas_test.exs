@@ -18,9 +18,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
   defp drawing_component(overrides) do
     defaults = %{
       drawing_strokes: [],
-      draw_color: "#000000",
-      draw_width: 2,
-      draw_eraser: false,
+      draw_tool: ScrawlyWeb.Components.DrawingToolbar.default_tool(),
       is_drawer: true,
       game_started: true,
       phase: :drawing,
@@ -330,8 +328,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       assert [
                {:mountCanvas, [42]},
                {:noteRoomChannel, ["test-room"]},
-               {:setToolColor, ["#000000"]},
-               {:setToolWidth, [2]},
+               {:setDrawTool, [%{tool: "brush", color: "#0a0a0a", size: 2}]},
                {:restoreStrokes, [[@s1]]},
                {:setDrawingEnabled, [true]},
                {:connectGameChannel, ["tok", "ABCD"]}
@@ -533,37 +530,44 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
   end
 
   describe "tool selection actions" do
-    test "select_color updates draw_color and disables eraser" do
-      comp = drawing_component(%{draw_eraser: true, draw_color: "#000000"})
+    @eraser %{tool: :eraser, color: "#0a0a0a", size: 2}
 
-      result = GamePage.action(:select_color, %{color: "#EF4444"}, comp)
+    test "select_color picks the brush in that colour, and pushes the tool" do
+      comp = drawing_component(%{draw_tool: @eraser})
 
-      assert result.state.draw_color == "#EF4444"
-      assert result.state.draw_eraser == false
+      {result, calls} =
+        js_calls(fn -> GamePage.action(:select_color, %{color: "#d63838"}, comp) end)
+
+      assert result.state.draw_tool == %{tool: :brush, color: "#d63838", size: 2}
+      assert calls == [{:setDrawTool, [%{tool: "brush", color: "#d63838", size: 2}]}]
     end
 
-    test "select_width updates draw_width" do
-      comp = drawing_component(%{draw_width: 2})
+    test "select_size picks the brush at that size, and pushes the tool" do
+      comp = drawing_component(%{draw_tool: @eraser})
 
-      result = GamePage.action(:select_width, %{width: 10}, comp)
+      {result, calls} = js_calls(fn -> GamePage.action(:select_size, %{size: 10}, comp) end)
 
-      assert result.state.draw_width == 10
+      assert result.state.draw_tool == %{tool: :brush, color: "#0a0a0a", size: 10}
+      assert calls == [{:setDrawTool, [%{tool: "brush", color: "#0a0a0a", size: 10}]}]
     end
 
-    test "toggle_eraser enables eraser" do
-      comp = drawing_component(%{draw_eraser: false})
+    test "toggle_eraser turns the eraser on, and off again with the brush as it was" do
+      comp = drawing_component(%{draw_tool: %{tool: :brush, color: "#2a6df4", size: 5}})
 
-      result = GamePage.action(:toggle_eraser, %{}, comp)
+      {on, calls} = js_calls(fn -> GamePage.action(:toggle_eraser, %{}, comp) end)
 
-      assert result.state.draw_eraser == true
+      assert on.state.draw_tool == %{tool: :eraser, color: "#2a6df4", size: 5}
+      assert calls == [{:setDrawTool, [%{tool: "eraser", color: "#2a6df4", size: 5}]}]
+
+      off = GamePage.action(:toggle_eraser, %{}, on)
+      assert off.state.draw_tool == comp.state.draw_tool
     end
 
-    test "toggle_eraser disables eraser on second toggle" do
-      comp = drawing_component(%{draw_eraser: true})
+    test "a page state without a tool starts from the default one" do
+      comp = drawing_component(%{}) |> Map.update!(:state, &Map.delete(&1, :draw_tool))
 
-      result = GamePage.action(:toggle_eraser, %{}, comp)
-
-      assert result.state.draw_eraser == false
+      assert GamePage.action(:toggle_eraser, %{}, comp).state.draw_tool ==
+               %{ScrawlyWeb.Components.DrawingToolbar.default_tool() | tool: :eraser}
     end
   end
 end

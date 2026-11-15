@@ -13,6 +13,7 @@ defmodule ScrawlyWeb.Pages.ForeignBroadcastsTest do
 
   alias Hologram.Component
   alias Scrawly.Games.RoomServer.Broadcasts
+  alias ScrawlyWeb.Components.DrawingToolbar
   alias ScrawlyWeb.Pages.{GamePage, GameScorePage, HomePage, PastGamesPage, ProfilePage}
 
   @moduletag :capture_log
@@ -193,7 +194,7 @@ defmodule ScrawlyWeb.Pages.ForeignBroadcastsTest do
     left = {GamePage, room_id: "r1"}
 
     pages = [
-      {HomePage, %{page_shown?: true, demo_color: "#000000", demo_width: 2, demo_eraser: false}},
+      {HomePage, %{page_shown?: true, draw_tool: DrawingToolbar.default_tool()}},
       {ProfilePage, %{page_shown?: true}},
       {PastGamesPage, %{page_shown?: true}},
       {GameScorePage, %{page_shown?: true, room_id: nil, room_dissolved: true, leaving: true}},
@@ -216,7 +217,7 @@ defmodule ScrawlyWeb.Pages.ForeignBroadcastsTest do
     # Server-side JS.call returns :ok, which the pages send as [].
     home =
       HomePage.action(:page_shown, %{}, %Component{
-        state: %{page_shown?: true, demo_color: "#000000", demo_width: 2, demo_eraser: false}
+        state: %{page_shown?: true, draw_tool: DrawingToolbar.default_tool()}
       })
 
     assert home.next_command.params == %{stale_rooms: []}

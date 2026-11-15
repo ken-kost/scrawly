@@ -24,6 +24,8 @@ const MODULE = "../../lib/scrawly_web/pages/drawing_manager.mjs";
 // reach GamePage: a second URL gives node a second module instance.
 const dm = await import(MODULE);
 const copy = await import(MODULE + "?bundle=home");
+// GamePage pushes its toolbar's tool to draw_tools.mjs (setDrawTool).
+const tools = await import("../../lib/scrawly_web/pages/draw_tools.mjs");
 const channels = await import("../../lib/scrawly_web/pages/room_channels.mjs");
 
 const ops = () => dispatched.filter((d) => d.name === "send_stroke_op").map((d) => d.params);
@@ -33,8 +35,7 @@ const lastOp = () => ops().at(-1);
 function mountDrawer(mount, strokes = []) {
   const svg = renderGamePage(root, { mount });
   dm.mountCanvas(mount);
-  dm.setToolColor("#000000");
-  dm.setToolWidth(2);
+  tools.setDrawTool({ tool: "brush", color: "#0a0a0a", size: 2 });
   dm.restoreStrokes(strokes);
   dm.setDrawingEnabled(true);
   return svg;
@@ -48,9 +49,12 @@ beforeEach(() => {
 
 test("the eraser of an earlier page instance doesn't leak into the next one", () => {
   // Instance 1: the drawer turns the eraser on (GamePage toggle_eraser).
-  mountDrawer(1);
-  dm.setToolColor("#FFFFFF");
-  dm.setToolWidth(20);
+  const first = mountDrawer(1);
+  tools.setDrawTool({ tool: "eraser", color: "#d63838", size: 5 });
+  tap(first);
+  assert.equal(lastOp().color, tools.ERASER.color);
+  assert.equal(lastOp().width, tools.ERASER.size);
+  dm.ackStrokeOp(lastOp().op_seq);
 
   // Instance 2: mountCanvas puts the default tool back before :mounted
   // pushes the page's own.
@@ -59,13 +63,13 @@ test("the eraser of an earlier page instance doesn't leak into the next one", ()
   dm.setDrawingEnabled(true);
   tap(svg);
   assert.equal(lastOp().kind, "commit");
-  assert.equal(lastOp().color, "#000000");
-  assert.equal(lastOp().width, 2);
+  assert.equal(lastOp().color, tools.DEFAULT_TOOL.color);
+  assert.equal(lastOp().width, tools.DEFAULT_TOOL.size);
   dm.ackStrokeOp(lastOp().op_seq);
 
-  // The page's tool (pushed on :mounted and after a restore) is the one drawn with.
-  dm.setToolColor("#d63838");
-  dm.setToolWidth(10);
+  // The page's tool (pushed on :mounted, after a restore and on every
+  // change) is the one drawn with, read when the stroke starts.
+  tools.setDrawTool({ tool: "brush", color: "#d63838", size: 10 });
   tap(svg, 30, 30);
   assert.equal(lastOp().color, "#d63838");
   assert.equal(lastOp().width, 10);

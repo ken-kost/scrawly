@@ -293,19 +293,25 @@ defmodule ScrawlyWeb.Pages.HomePageLobbyTest do
       assert %{name: :resync_lobby, params: %{stale_rooms: []}} = again.next_command
       # The demo board gets the tool the restored toolbar shows.
       assert calls == [
-               connectDemoBoard: [%{color: "#000000", width: 2, eraser: false}],
+               setDrawTool: [%{tool: "brush", color: "#0a0a0a", size: 2}],
+               connectDemoBoard: [],
                takeStaleRoomChannels: [nil]
              ]
 
-      red_eraser =
-        put_in(first.state, Map.merge(first.state, %{demo_color: "#d63838", demo_eraser: true}))
+      red_eraser = %{
+        first
+        | state: Map.put(first.state, :draw_tool, %{tool: :eraser, color: "#d63838", size: 5})
+      }
 
       {_again, calls} =
         Scrawly.JsCallTrace.js_calls(fn ->
           HomePage.action(:page_shown, %{mount_id: "1"}, red_eraser)
         end)
 
-      assert {:connectDemoBoard, [%{color: "#d63838", width: 2, eraser: true}]} in calls
+      assert [
+               {:setDrawTool, [%{tool: "eraser", color: "#d63838", size: 5}]},
+               {:connectDemoBoard, []} | _
+             ] = calls
     end
 
     test ":resync_lobby re-subscribes and replies with both lists" do

@@ -16,26 +16,21 @@ import { createStrokeBuilder, roundCoord, SPLIT_AT } from "../../lib/scrawly_web
 
 export const SEED = 36;
 
-// The two canvases: viewBox size, the toolbar's colours and widths, and the
-// eraser (DrawingCanvas in game_page.ex, GameDemo in game_demo.ex).
-export const CANVASES = {
-  game: {
-    w: 800,
-    h: 450,
-    colors: ["#0a0a0a", "#d63838", "#2a6df4", "#1f9a4a", "#eab308", "#f97316", "#a855f7", "#ec4899"],
-    widths: [2, 5, 10, 20],
-    eraser: { color: "#FFFFFF", width: 20 },
-    step: [3, 7],
-  },
-  demo: {
-    w: 400,
-    h: 225,
-    colors: ["#000000", "#EF4444", "#F97316", "#EAB308", "#22C55E", "#3B82F6", "#A855F7", "#EC4899"],
-    widths: [2, 4, 8],
-    eraser: { color: "#ffffff", width: 18 },
-    step: [1.5, 3.5],
-  },
+// The canvases: viewBox size, the toolbar's colours and widths, and the
+// eraser (DrawingToolbar and draw_tools.mjs). Since draw-toolbar (#37) the
+// home board (GameDemo) has the game canvas's size and tools, so its strokes
+// are made the same way, from their own seed. The baseline runs in results/
+// were taken on its earlier 400x225 board (widths 2/4/8, eraser 18).
+const CANVAS = {
+  w: 800,
+  h: 450,
+  colors: ["#0a0a0a", "#d63838", "#2a6df4", "#1f9a4a", "#eab308", "#f97316", "#a855f7", "#ec4899"],
+  widths: [2, 5, 10, 20],
+  eraser: { color: "#FFFFFF", width: 20 },
+  step: [3, 7],
 };
+
+export const CANVASES = { game: CANVAS, demo: CANVAS };
 
 // Target path lengths in characters (= bytes: path data is ASCII).
 const KINDS = [

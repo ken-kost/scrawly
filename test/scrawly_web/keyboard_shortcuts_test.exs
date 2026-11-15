@@ -147,9 +147,7 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
       state =
         Map.merge(
           %{
-            draw_color: "#d63838",
-            draw_width: 5,
-            draw_eraser: false,
+            draw_tool: %{tool: :brush, color: "#d63838", size: 5},
             is_drawer: true,
             new_message: "hello"
           },
@@ -163,24 +161,24 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
       {on, calls} =
         js_calls(fn -> GamePage.action(:shortcut_eraser, %{event: key("e")}, drawer()) end)
 
-      assert on.state.draw_eraser == true
-      assert calls == [{:setToolColor, ["#FFFFFF"]}, {:setToolWidth, [20]}]
+      assert on.state.draw_tool == %{tool: :eraser, color: "#d63838", size: 5}
+      assert calls == [{:setDrawTool, [%{tool: "eraser", color: "#d63838", size: 5}]}]
 
       {off, calls} = js_calls(fn -> GamePage.action(:shortcut_eraser, %{event: key("e")}, on) end)
 
-      assert off.state.draw_eraser == false
-      assert calls == [{:setToolColor, ["#d63838"]}, {:setToolWidth, [5]}]
+      assert off.state.draw_tool == %{tool: :brush, color: "#d63838", size: 5}
+      assert calls == [{:setDrawTool, [%{tool: "brush", color: "#d63838", size: 5}]}]
 
       {toolbar, toolbar_calls} =
         js_calls(fn -> GamePage.action(:toggle_eraser, %{}, drawer()) end)
 
       assert toolbar.state == on.state
-      assert toolbar_calls == [{:setToolColor, ["#FFFFFF"]}, {:setToolWidth, [20]}]
+      assert toolbar_calls == [{:setDrawTool, [%{tool: "eraser", color: "#d63838", size: 5}]}]
     end
 
     test "Shift+E toggles too" do
       result = GamePage.action(:shortcut_eraser, %{event: key("E", %{shift_key: true})}, drawer())
-      assert result.state.draw_eraser == true
+      assert result.state.draw_tool.tool == :eraser
     end
 
     test "a held E (auto-repeat) toggles nothing after the first press" do

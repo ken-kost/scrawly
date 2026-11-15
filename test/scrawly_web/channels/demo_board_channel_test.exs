@@ -10,6 +10,7 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
   use ScrawlyWeb.ChannelCase, async: false
 
   alias Scrawly.Games.DemoBoardServer
+  alias ScrawlyWeb.Components.DrawingToolbar
   alias ScrawlyWeb.DemoBoardChannel
 
   setup do
@@ -71,16 +72,6 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
 
   @bad_colors ["red", "#fff", "#GGGGGG", "#0000000", "000000", "#00000 ", 123, nil, %{}]
   @bad_widths ["4", 4.0, 0, 41, -2, nil, [4]]
-  @palette [
-    "#000000",
-    "#EF4444",
-    "#F97316",
-    "#EAB308",
-    "#22C55E",
-    "#3B82F6",
-    "#A855F7",
-    "#EC4899"
-  ]
 
   test "a valid stroke is acked, echoed to its sender and stored", %{socket: socket} do
     ref = push(socket, "stroke_complete", stroke("d-ok-1"))
@@ -236,9 +227,11 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
       assert :sys.get_state(socket.channel_pid).assigns.open_stroke_ids == []
     end
 
-    test "palette colours, widths 2/4/8 and the eraser still work", %{socket: socket} do
+    test "the toolbar's colours and sizes and the eraser all work", %{socket: socket} do
+      # The eraser: ERASER in draw_tools.mjs.
       styles =
-        for(color <- @palette, width <- [2, 4, 8], do: {color, width}) ++ [{"#ffffff", 18}]
+        for(color <- DrawingToolbar.colors(), size <- DrawingToolbar.sizes(), do: {color, size}) ++
+          [{"#ffffff", 20}]
 
       for {{color, width}, i} <- Enum.with_index(styles) do
         # Stay under the per-second stroke limit.
