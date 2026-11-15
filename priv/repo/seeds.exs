@@ -2,10 +2,9 @@
 #
 #     mix run priv/repo/seeds.exs
 #
-# It is idempotent: running it again adds nothing that is already there.
+# It makes the `words` table match priv/words/words.csv, the curated drawing
+# words (every deploy does the same through bin/migrate). Running it again
+# changes nothing.
 
-# The curated drawing words (900: 300 each of 1-, 2- and 3-word entries).
-# Without them rooms still get word choices (Scrawly.Games.get_random_word/1
-# falls back to the built-in Scrawly.Games.Word list), but the table is where
-# words can be added or curated.
-Scrawly.SeedData.run()
+%{inserted: inserted, updated: updated, deleted: deleted} = Scrawly.Games.sync_words()
+IO.puts("words: #{inserted} inserted, #{updated} updated, #{deleted} deleted")

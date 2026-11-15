@@ -11,9 +11,7 @@ defmodule Scrawly.Integration.ReconnectionHandlingTest do
 
   describe "reconnection handling during active game" do
     setup do
-      {:ok, existing} = Games.get_all_words()
-      Enum.each(existing, fn w -> Ash.destroy!(w) end)
-      Scrawly.Games.Word.seed_words()
+      Games.sync_words()
 
       players =
         for i <- 1..3 do

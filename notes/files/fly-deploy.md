@@ -250,18 +250,15 @@ fly logs --app scrawly
 
 ---
 
-## Step 6: Seed the Database (Optional)
+## Step 6: Words (automatic)
 
-If you have seed data to load:
-
-```bash
-fly ssh console --app scrawly -C "/app/bin/scrawly eval 'Scrawly.Release.migrate()'"
-```
-
-Or to run a seeds file directly:
+There is nothing to seed by hand. The drawing words live in
+`priv/words/words.csv`, and `/app/bin/migrate` (the `release_command`) runs
+`Scrawly.Release.sync_words` after the migrations on every deploy, so the
+`words` table always matches the file. To check the count read-only:
 
 ```bash
-fly ssh console --app scrawly -C "/app/bin/scrawly eval 'Code.eval_file(\"priv/repo/seeds.exs\")'"
+fly ssh console --app scrawly -C '/app/bin/scrawly rpc "IO.inspect(Scrawly.Games.get_word_count())"'
 ```
 
 ---

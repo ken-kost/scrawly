@@ -164,11 +164,7 @@ defmodule Scrawly.RoomTestHelpers do
   @doc "A handful of local words of every difficulty, enough to pick word choices."
   def seed_test_words do
     for difficulty <- [:easy, :medium, :hard], i <- 1..4 do
-      Ash.create!(Games.Word, %{
-        text: "test#{difficulty}#{i}",
-        difficulty: difficulty,
-        word_count: 1
-      })
+      Ash.create!(Games.Word, %{text: "test#{difficulty}#{i}", difficulty: difficulty})
     end
   end
 

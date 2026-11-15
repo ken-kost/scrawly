@@ -3,6 +3,10 @@ defmodule Scrawly.Games do
     otp_app: :scrawly,
     extensions: [AshAdmin.Domain]
 
+  require Ash.Query
+
+  alias Scrawly.Games.{Word, WordList}
+
   admin do
     show? true
   end
@@ -126,7 +130,7 @@ defmodule Scrawly.Games do
     with {:ok, words} <- get_words_by_difficulty_and_word_count(difficulty, word_count) do
       texts =
         case Enum.map(words, & &1.text) do
-          [] -> Scrawly.Games.Word.builtin_words(word_count, difficulty)
+          [] -> Word.builtin_words(word_count, difficulty)
           texts -> texts
         end
 
@@ -141,6 +145,80 @@ defmodule Scrawly.Games do
           {:ok, Enum.random(pool)}
       end
     end
+  end
+
+  @doc """
+  Makes the `words` table match `Scrawly.Games.WordList`
+  (priv/words/words.csv): inserts the entries it lacks, updates the
+  difficulty and theme of the ones that differ, and deletes the rows no
+  longer in the file. Entries match rows by text.
+
+  Runs in one transaction and raises on failure, leaving the table as it
+  was. A second run changes nothing. Called on every deploy
+  (`Scrawly.Release.sync_words/0` from `bin/migrate`) and by
+  priv/repo/seeds.exs.
+  """
+  @spec sync_words() :: %{
+          inserted: non_neg_integer,
+          updated: non_neg_integer,
+          deleted: non_neg_integer
+        }
+  def sync_words do
+    {:ok, counts} =
+      Ash.transaction(Word, fn ->
+        entries = Map.new(WordList.entries(), &{String.downcase(&1.text), &1})
+        rows = get_all_words!()
+        stored = MapSet.new(rows, & &1.text)
+
+        missing = Enum.reject(entries, fn {text, _entry} -> text in stored end)
+        {kept, gone} = Enum.split_with(rows, &Map.has_key?(entries, &1.text))
+
+        changed =
+          Enum.flat_map(kept, fn row ->
+            entry = entries[row.text]
+
+            if {row.difficulty, row.theme} == {entry.difficulty, entry.theme},
+              do: [],
+              else: [{row.id, Map.take(entry, [:difficulty, :theme])}]
+          end)
+
+        insert_words(Enum.map(missing, fn {_text, entry} -> entry end))
+        update_words(changed)
+        delete_words(Enum.map(gone, & &1.id))
+
+        %{inserted: length(missing), updated: length(changed), deleted: length(gone)}
+      end)
+
+    counts
+  end
+
+  defp insert_words([]), do: :ok
+
+  defp insert_words(entries) do
+    Ash.bulk_create!(entries, Word, :create,
+      return_errors?: true,
+      stop_on_error?: true,
+      return_records?: false
+    )
+  end
+
+  # One UPDATE per distinct {difficulty, theme}.
+  defp update_words(changed) do
+    changed
+    |> Enum.group_by(fn {_id, values} -> values end, fn {id, _values} -> id end)
+    |> Enum.each(fn {values, ids} ->
+      Word
+      |> Ash.Query.filter(id in ^ids)
+      |> Ash.bulk_update!(:update, values, strategy: :atomic, return_errors?: true)
+    end)
+  end
+
+  defp delete_words([]), do: :ok
+
+  defp delete_words(ids) do
+    Word
+    |> Ash.Query.filter(id in ^ids)
+    |> Ash.bulk_destroy!(:destroy, %{}, strategy: :atomic, return_errors?: true)
   end
 
   def get_word_count do

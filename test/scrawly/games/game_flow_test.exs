@@ -42,10 +42,7 @@ defmodule Scrawly.Games.GameFlowTest do
         |> Ash.Changeset.for_update(:join_room, %{current_room_id: room.id})
         |> Ash.update()
 
-      # Clear stale words and re-seed with difficulty data
-      {:ok, existing} = Games.get_all_words()
-      Enum.each(existing, fn w -> Ash.destroy!(w) end)
-      Scrawly.Games.Word.seed_words()
+      Games.sync_words()
 
       %{
         room: room,

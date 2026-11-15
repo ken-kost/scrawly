@@ -9,7 +9,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
   import Scrawly.RoomTestHelpers
 
   alias Scrawly.{Accounts, Games}
-  alias Scrawly.Games.{Game, RoomServer, Scoring, Word}
+  alias Scrawly.Games.{Game, RoomServer, Scoring, WordList}
   alias Scrawly.Games.RoomServer.{GameFlow, View}
   alias ScrawlyWeb.Pages.{GamePage, GameScorePage}
 
@@ -71,9 +71,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
   end
 
   defp builtin_words(word_count) do
-    Word.word_list()
-    |> Enum.filter(fn {{n, _difficulty}, _words} -> n == word_count end)
-    |> Enum.flat_map(fn {_key, words} -> words end)
+    for %{text: text} <- WordList.entries(), length(String.split(text)) == word_count, do: text
   end
 
   # ── G1 ────────────────────────────────────────────────────────────────────

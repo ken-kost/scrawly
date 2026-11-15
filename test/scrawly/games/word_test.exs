@@ -2,13 +2,18 @@ defmodule Scrawly.Games.WordTest do
   use Scrawly.DataCase
 
   alias Scrawly.Games
+  alias Scrawly.Games.{Word, WordList}
 
   setup do
-    # Clear stale words from previous seeds, then re-seed with difficulty data
-    {:ok, existing} = Games.get_all_words()
-    Enum.each(existing, fn w -> Ash.destroy!(w) end)
-    Scrawly.Games.Word.seed_words()
+    Games.sync_words()
     :ok
+  end
+
+  defp file_count(difficulty, word_count) do
+    Enum.count(
+      WordList.entries(),
+      &(&1.difficulty == difficulty and WordList.word_count(&1.text) == word_count)
+    )
   end
 
   describe "word selection" do
@@ -29,10 +34,8 @@ defmodule Scrawly.Games.WordTest do
       assert length(unique_words) > 1
     end
 
-    test "word list contains words across all word counts" do
-      word_count = Games.get_word_count()
-      # 100 1-word + 100 2-word + 100 3-word = ~300 total
-      assert word_count > 200
+    test "the table holds every entry of the word file" do
+      assert Games.get_word_count() == length(WordList.entries())
     end
 
     test "all words are valid strings" do
@@ -44,7 +47,7 @@ defmodule Scrawly.Games.WordTest do
         assert is_binary(word.text)
         assert String.length(word.text) > 0
         assert String.length(word.text) <= 60
-        assert Regex.match?(~r/^[a-zA-Z\s]+$/, word.text)
+        assert Regex.match?(~r/\A[a-z' -]+\z/, word.text)
       end)
     end
   end
@@ -87,7 +90,7 @@ defmodule Scrawly.Games.WordTest do
   describe "word_count filtering" do
     test "get_words_by_difficulty_and_word_count filters correctly" do
       {:ok, one_word_easy} = Games.get_words_by_difficulty_and_word_count(:easy, 1)
-      assert length(one_word_easy) == 30
+      assert length(one_word_easy) == file_count(:easy, 1)
 
       Enum.each(one_word_easy, fn w ->
         assert w.difficulty == :easy
@@ -136,44 +139,127 @@ defmodule Scrawly.Games.WordTest do
         Games.get_random_word(
           difficulty: :easy,
           word_count: 1,
-          exclude: Scrawly.Games.Word.all_words_flat()
+          exclude: Enum.map(WordList.entries(), & &1.text)
         )
 
       assert is_binary(word)
     end
   end
 
-  describe "seeding (QA env note)" do
-    test "seed_words/0 is idempotent" do
-      expected =
-        Scrawly.Games.Word.word_list()
-        |> Enum.flat_map(fn {{word_count, _difficulty}, words} ->
-          Enum.map(words, &{&1, word_count})
-        end)
-        |> Enum.uniq()
+  describe "sync_words/0" do
+    defp table, do: Map.new(Games.get_all_words!(), &{&1.text, &1})
 
-      assert Games.get_word_count() == length(expected)
+    test "fills an empty table with exactly the file's entries" do
+      Enum.each(Games.get_all_words!(), &Ash.destroy!/1)
 
-      Scrawly.Games.Word.seed_words()
-      Scrawly.Games.Word.seed_words()
+      entries = WordList.entries()
+      assert Games.sync_words() == %{inserted: length(entries), updated: 0, deleted: 0}
 
-      assert Games.get_word_count() == length(expected)
+      table = table()
+      assert map_size(table) == length(entries)
+
+      for entry <- entries do
+        row = Map.fetch!(table, entry.text)
+        assert {row.difficulty, row.theme} == {entry.difficulty, entry.theme}
+        assert row.word_count == WordList.word_count(entry.text)
+      end
     end
 
-    test "priv/repo/seeds.exs seeds the words, and running it again adds none" do
-      {:ok, existing} = Games.get_all_words()
-      Enum.each(existing, &Ash.destroy!/1)
+    test "inserts the entries the table lacks" do
+      [first, second | _] = WordList.entries()
+      Enum.each([first, second], &Ash.destroy!(table()[&1.text]))
 
-      ExUnit.CaptureIO.capture_io(fn -> Code.eval_file("priv/repo/seeds.exs") end)
+      assert Games.sync_words() == %{inserted: 2, updated: 0, deleted: 0}
+      assert Map.has_key?(table(), first.text) and Map.has_key?(table(), second.text)
+    end
 
-      count = Games.get_word_count()
-      # The curated list: 300 each of 1-, 2- and 3-word entries.
-      assert count >= 850
+    test "updates the difficulty and theme of rows that differ from the file" do
+      entry = hd(WordList.entries())
+      other_difficulty = hd(WordList.difficulties() -- [entry.difficulty])
+      row = table()[entry.text]
+
+      Ash.update!(row, %{difficulty: other_difficulty, theme: :sports})
+
+      assert Games.sync_words() == %{inserted: 0, updated: 1, deleted: 0}
+
+      synced = table()[entry.text]
+      assert synced.id == row.id
+      assert {synced.difficulty, synced.theme} == {entry.difficulty, entry.theme}
+    end
+
+    test "deletes rows that are no longer in the file" do
+      Games.create_word!(%{text: "test stale word", difficulty: :easy})
+      Games.create_word!(%{text: "teststale", difficulty: :hard})
+
+      assert Games.sync_words() == %{inserted: 0, updated: 0, deleted: 2}
+      refute Map.has_key?(table(), "test stale word")
+      assert Games.get_word_count() == length(WordList.entries())
+    end
+
+    test "a second run changes nothing" do
+      ids = Map.new(table(), fn {text, row} -> {text, row.id} end)
+
+      assert Games.sync_words() == %{inserted: 0, updated: 0, deleted: 0}
+      assert Map.new(table(), fn {text, row} -> {text, row.id} end) == ids
+    end
+
+    test "priv/repo/seeds.exs runs it" do
+      Enum.each(Games.get_all_words!(), &Ash.destroy!/1)
+
+      first = ExUnit.CaptureIO.capture_io(fn -> Code.eval_file("priv/repo/seeds.exs") end)
+      assert first =~ "words: #{length(WordList.entries())} inserted, 0 updated, 0 deleted"
 
       second = ExUnit.CaptureIO.capture_io(fn -> Code.eval_file("priv/repo/seeds.exs") end)
-      refute second =~ ~r/: [1-9]\d*\/\d+ created/
+      assert second =~ "words: 0 inserted, 0 updated, 0 deleted"
+    end
+  end
 
-      assert Games.get_word_count() == count
+  describe "the Word resource" do
+    test "creating a word that already exists fails with a validation error" do
+      text = hd(WordList.entries()).text
+
+      for duplicate <- [text, String.upcase(text), "  #{text}  "] do
+        assert {:error, %Ash.Error.Invalid{} = error} =
+                 Games.create_word(%{text: duplicate, difficulty: :easy})
+
+        assert Exception.message(error) =~ "has already been taken"
+      end
+
+      assert Games.get_word_count() == length(WordList.entries())
+    end
+
+    test "stores the text lowercase and derives word_count from it" do
+      word = Games.create_word!(%{text: "TEST Big Wave", difficulty: :medium})
+      assert {word.text, word.word_count} == {"test big wave", 3}
+
+      word = Games.create_word!(%{text: "test-run", difficulty: :medium})
+      assert word.word_count == 1
+    end
+
+    test "does not accept word_count as input" do
+      assert {:error, %Ash.Error.Invalid{}} =
+               Games.create_word(%{text: "test words", difficulty: :easy, word_count: 1})
+    end
+
+    test "theme is optional and one of the word file's themes" do
+      assert Games.create_word!(%{text: "testa", difficulty: :easy}).theme == nil
+      assert Games.create_word!(%{text: "testb", difficulty: :easy, theme: :food}).theme == :food
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Games.create_word(%{text: "testc", difficulty: :easy, theme: :pets})
+    end
+  end
+
+  describe "builtin_words/2" do
+    test "are the word file's entries with that word count (and difficulty)" do
+      for word_count <- 1..3, difficulty <- WordList.difficulties() do
+        words = Word.builtin_words(word_count, difficulty)
+        assert length(words) == file_count(difficulty, word_count)
+        assert Enum.all?(words, &(length(String.split(&1)) == word_count))
+      end
+
+      assert length(Word.builtin_words(2)) ==
+               Enum.sum(for d <- WordList.difficulties(), do: file_count(d, 2))
     end
   end
 end
