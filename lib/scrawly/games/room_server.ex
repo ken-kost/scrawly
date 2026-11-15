@@ -323,11 +323,13 @@ defmodule Scrawly.Games.RoomServer do
   Replies:
 
     * `{:ok, {:correct, points}}` - a non-drawer player who hasn't guessed yet
-      typed the word itself (`Guess.matches?/2`) while `:drawing`. The text is
-      not stored; a `:correct_guess` line is posted instead.
+      typed the word itself (`Guess.matches?/2`: case, accents, spacing and
+      punctuation ignored, so "Ice-Cream!" and "icecream" score for "ice
+      cream") while `:drawing`. The text is not stored; a `:correct_guess`
+      line is posted instead.
     * `{:ok, :suppressed}` - any other line that contains the word
-      (`Guess.contains_word?/2`: case, accents, punctuation and spacing
-      ignored) while `:drawing`: a near miss like "Zzyzx!" or "it is zzyzx",
+      (`Guess.contains_word?/2`: the same variants, as a run of whole words)
+      while `:drawing`: a line like "is it icecream?" or "lol it is ZZYZX",
       or the word from a player who already guessed or from a watcher.
       Nothing is stored or broadcast; only the sender is told.
     * `{:ok, :chat}` - anything else, stored and broadcast as `:chat`.
@@ -1062,17 +1064,18 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   # While the word is being drawn, a line that contains it is never stored or
-  # broadcast: only the exact word from a player who can still score counts
-  # as a guess; anything else that contains it is suppressed.
+  # broadcast: only the word itself (any `Guess.key/1` variant) from a player
+  # who can still score counts as a guess; anything else that contains it is
+  # suppressed. Whatever `Guess.matches?/2` accepts, `Guess.contains_word?/2`
+  # contains, so a line without the word is chat with one check.
   defp deliver_message(state, sender, text) do
     word = state.current_word
-    exact? = Guess.matches?(text, word)
 
     cond do
-      not (state.phase == :drawing and (exact? or Guess.contains_word?(text, word))) ->
+      state.phase != :drawing or not Guess.contains_word?(text, word) ->
         {:reply, {:ok, :chat}, append_chat(state, sender, text)}
 
-      exact? and can_score?(state, sender.id) ->
+      can_score?(state, sender.id) and Guess.matches?(text, word) ->
         {new_state, points} = award_guess(state, sender.id)
         {:reply, {:ok, {:correct, points}}, new_state}
 
