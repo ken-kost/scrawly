@@ -228,10 +228,13 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
     end
 
     test "the toolbar's colours and sizes and the eraser all work", %{socket: socket} do
-      # The eraser: ERASER in draw_tools.mjs.
+      # The slider's ends and some sizes between; the eraser (ERASER in
+      # draw_tools.mjs) is white at the slider's size.
+      sizes = [DrawingToolbar.min_size(), 4, 17, DrawingToolbar.max_size()]
+
       styles =
-        for(color <- DrawingToolbar.colors(), size <- DrawingToolbar.sizes(), do: {color, size}) ++
-          [{"#ffffff", 20}]
+        for(color <- DrawingToolbar.colors(), size <- sizes, do: {color, size}) ++
+          for size <- sizes, do: {"#ffffff", size}
 
       for {{color, width}, i} <- Enum.with_index(styles) do
         # Stay under the per-second stroke limit.

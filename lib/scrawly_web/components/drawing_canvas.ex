@@ -18,6 +18,11 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
   (stroke_engine.mjs), so there are no pointer bindings here. The dot grid is
   drawn by CSS above the strokes (`.canvas-frame::after`), so the white eraser
   never paints over it.
+
+  Beside the svg, above the grid, `#game-canvas-ring` is the size ring
+  (size_ring.mjs): its own small svg on its own composited layer, so moving
+  it never repaints the strokes. Hidden until JS shows it (the drawer, in
+  `:drawing`, with a mouse or a pen over the canvas).
   """
   use Hologram.Component
 
@@ -47,6 +52,10 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
           {/if}
         </g>
         <g id="game-canvas-overlay"></g>
+      </svg>
+      <svg id="game-canvas-ring" class="size-ring" aria-hidden="true" focusable="false">
+        <circle class="size-ring-outer" />
+        <circle class="size-ring-inner" />
       </svg>
     </div>
     """

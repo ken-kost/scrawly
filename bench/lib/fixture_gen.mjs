@@ -20,7 +20,10 @@ export const SEED = 36;
 // eraser (DrawingToolbar and draw_tools.mjs). Since draw-toolbar (#37) the
 // home board (GameDemo) has the game canvas's size and tools, so its strokes
 // are made the same way, from their own seed. The baseline runs in results/
-// were taken on its earlier 400x225 board (widths 2/4/8, eraser 18).
+// were taken on its earlier 400x225 board (widths 2/4/8, eraser 18). Since
+// brush-size (#38) the size is a slider (any width 1..40, the eraser's too);
+// the fixtures keep #37's four presets and eraser width, so runs stay
+// comparable.
 const CANVAS = {
   w: 800,
   h: 450,

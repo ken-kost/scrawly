@@ -8,13 +8,16 @@ defmodule ScrawlyWeb.Components.GameDemo do
 
   The board has the game canvas's coordinates (`viewBox="0 0 800 450"`), so
   a size draws as thick, relative to the canvas, on both. Its tools are the
-  game's DrawingToolbar without undo; `tool` is HomePage's `draw_tool`.
+  game's DrawingToolbar without undo, with its shortcuts (`[` / `]`, E;
+  draw_controls.mjs ignores them while the user types in the lobby chat,
+  the code field or any other field); `tool` is HomePage's `draw_tool`.
 
   The svg's layers, bottom to top: the JS-owned `#demo-board-strokes` and
   `#demo-board-overlay` groups (JS only inserts into these), then
   `#demo-board-active-path` (styled by JS when a stroke starts). The dot grid
   is drawn by CSS above the strokes (`.demo-canvas::after`), so the white
-  eraser never paints over it.
+  eraser never paints over it. `#demo-board-ring`, beside the svg, is the
+  size ring (size_ring.mjs, on its own layer, hidden until JS shows it).
   """
   use Hologram.Component
 
@@ -42,9 +45,13 @@ defmodule ScrawlyWeb.Components.GameDemo do
           <g id="demo-board-overlay"></g>
           <path id="demo-board-active-path" d="" fill="none" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
+        <svg id="demo-board-ring" class="size-ring" aria-hidden="true" focusable="false">
+          <circle class="size-ring-outer" />
+          <circle class="size-ring-inner" />
+        </svg>
       </div>
 
-      <DrawingToolbar tool={@tool} controls={[:colors, :sizes, :eraser, :clear]} />
+      <DrawingToolbar tool={@tool} controls={[:colors, :sizes, :eraser, :clear]} shortcuts={true} />
     </div>
     """
   end

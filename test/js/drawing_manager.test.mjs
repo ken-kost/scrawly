@@ -52,8 +52,9 @@ test("the eraser of an earlier page instance doesn't leak into the next one", ()
   const first = mountDrawer(1);
   tools.setDrawTool({ tool: "eraser", color: "#d63838", size: 5 });
   tap(first);
+  // The eraser: white, at the slider's size.
   assert.equal(lastOp().color, tools.ERASER.color);
-  assert.equal(lastOp().width, tools.ERASER.size);
+  assert.equal(lastOp().width, 5);
   dm.ackStrokeOp(lastOp().op_seq);
 
   // Instance 2: mountCanvas puts the default tool back before :mounted

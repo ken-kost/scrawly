@@ -293,7 +293,7 @@ defmodule ScrawlyWeb.Pages.HomePageLobbyTest do
       assert %{name: :resync_lobby, params: %{stale_rooms: []}} = again.next_command
       # The demo board gets the tool the restored toolbar shows.
       assert calls == [
-               setDrawTool: [%{tool: "brush", color: "#0a0a0a", size: 2}],
+               setDrawTool: [%{tool: "brush", color: "#0a0a0a", size: 4}],
                connectDemoBoard: [],
                takeStaleRoomChannels: [nil]
              ]

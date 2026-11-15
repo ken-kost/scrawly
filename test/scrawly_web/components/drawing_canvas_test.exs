@@ -328,7 +328,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       assert [
                {:mountCanvas, [42]},
                {:noteRoomChannel, ["test-room"]},
-               {:setDrawTool, [%{tool: "brush", color: "#0a0a0a", size: 2}]},
+               {:setDrawTool, [%{tool: "brush", color: "#0a0a0a", size: 4}]},
                {:restoreStrokes, [[@s1]]},
                {:setDrawingEnabled, [true]},
                {:connectGameChannel, ["tok", "ABCD"]}
@@ -542,13 +542,31 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       assert calls == [{:setDrawTool, [%{tool: "brush", color: "#d63838", size: 2}]}]
     end
 
-    test "select_size picks the brush at that size, and pushes the tool" do
+    test "select_size sets the size and keeps the tool (the eraser too), and pushes it" do
       comp = drawing_component(%{draw_tool: @eraser})
 
       {result, calls} = js_calls(fn -> GamePage.action(:select_size, %{size: 10}, comp) end)
 
-      assert result.state.draw_tool == %{tool: :brush, color: "#0a0a0a", size: 10}
-      assert calls == [{:setDrawTool, [%{tool: "brush", color: "#0a0a0a", size: 10}]}]
+      assert result.state.draw_tool == %{tool: :eraser, color: "#0a0a0a", size: 10}
+      assert calls == [{:setDrawTool, [%{tool: "eraser", color: "#0a0a0a", size: 10}]}]
+
+      brush = drawing_component(%{draw_tool: %{@eraser | tool: :brush}})
+      assert GamePage.action(:select_size, %{size: 30}, brush).state.draw_tool.tool == :brush
+    end
+
+    test "select_size takes the slider's value (its throttled $change), clamped to 1..40" do
+      comp = drawing_component(%{draw_tool: @eraser})
+
+      {result, calls} =
+        js_calls(fn -> GamePage.action(:select_size, %{event: %{value: "37"}}, comp) end)
+
+      assert result.state.draw_tool == %{tool: :eraser, color: "#0a0a0a", size: 37}
+      assert calls == [{:setDrawTool, [%{tool: "eraser", color: "#0a0a0a", size: 37}]}]
+
+      for {value, size} <- [{"0", 1}, {"99", 40}, {"x", 2}, {"4.5", 2}, {"", 2}] do
+        result = GamePage.action(:select_size, %{event: %{value: value}}, comp)
+        assert result.state.draw_tool.size == size, inspect(value)
+      end
     end
 
     test "toggle_eraser turns the eraser on, and off again with the brush as it was" do

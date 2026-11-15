@@ -1,6 +1,8 @@
 // The drawing tool model (lib/scrawly_web/pages/draw_tools.mjs), shared by
-// the in-game canvas and the home page's board: validation, the stroke a
-// tool draws, and one model for every bundle's copy of the module.
+// the in-game canvas and the home page's board: validation, the size model
+// (clamped to 1..40, one size for the brush and the eraser), the stroke a
+// tool draws, change listeners, and one model for every bundle's copy of
+// the module.
 // Run with `node --test test/js/*.test.mjs` (test/scrawly_web/js_unit_test.exs).
 
 import { test, beforeEach } from "node:test";
@@ -42,10 +44,10 @@ test("normalizeTool keeps valid fields and takes the others from the base", () =
     { color: "red" },
     { color: "#fff" },
     { color: "#0000000" },
-    { size: 0 },
-    { size: 41 },
     { size: 2.5 },
     { size: "2" },
+    { size: NaN },
+    { size: null },
   ];
   for (const value of invalid) {
     assert.deepEqual(tools.normalizeTool(value, base), base, JSON.stringify(value));
@@ -55,18 +57,43 @@ test("normalizeTool keeps valid fields and takes the others from the base", () =
   assert.equal(tools.normalizeTool({ size: MAX_SIZE }).size, MAX_SIZE);
 });
 
-test("the brush draws in its colour and size; the eraser white at its own size", () => {
+test("the size model clamps a whole size to 1..40", () => {
+  assert.deepEqual([MIN_SIZE, MAX_SIZE], [1, 40]);
+  assert.deepEqual(
+    [-5, 0, 1, 4, 40, 41, 1000].map(tools.clampSize),
+    [1, 1, 1, 4, 40, 40, 40]
+  );
+  for (const bad of [2.5, "4", NaN, Infinity, null, undefined]) {
+    assert.equal(tools.clampSize(bad), null, String(bad));
+  }
+
+  assert.equal(tools.normalizeTool({ size: 0 }).size, MIN_SIZE);
+  assert.equal(tools.normalizeTool({ size: 41 }).size, MAX_SIZE);
+
+  // The bracket keys' steps.
+  assert.equal(tools.stepSize(4, 1), 5);
+  assert.equal(tools.stepSize(4, -5), 1);
+  assert.equal(tools.stepSize(38, 5), 40);
+  assert.equal(tools.stepSize(1, -1), 1);
+  assert.equal(tools.stepSize(NaN, 1), DEFAULT_TOOL.size + 1);
+
+  tools.setDrawTool({ size: 99 });
+  assert.equal(tools.currentTool().size, MAX_SIZE);
+});
+
+test("the brush draws in its colour and size; the eraser white at the same size", () => {
   assert.deepEqual(tools.strokeStyle({ tool: "brush", color: "#d63838", size: 10 }), {
     color: "#d63838",
     width: 10,
   });
 
-  for (const size of [2, 5, 10, 20]) {
+  for (const size of [MIN_SIZE, 4, 10, MAX_SIZE]) {
     assert.deepEqual(tools.strokeStyle({ tool: "eraser", color: "#d63838", size }), {
-      color: "#ffffff",
-      width: ERASER.size,
+      color: ERASER.color,
+      width: size,
     });
   }
+  assert.equal(ERASER.color, "#ffffff");
 
   assert.deepEqual(tools.strokeStyle(undefined), {
     color: DEFAULT_TOOL.color,
@@ -76,7 +103,7 @@ test("the brush draws in its colour and size; the eraser white at its own size",
 
 test("every tool draws a stroke the server accepts", () => {
   for (const tool of TOOLS) {
-    for (const size of [MIN_SIZE, 2, 20, MAX_SIZE]) {
+    for (const size of [MIN_SIZE, 4, 20, MAX_SIZE]) {
       const style = tools.strokeStyle({ tool, color: "#a855f7", size });
       assert.match(style.color, VALID_COLOR);
       assert.ok(validWidth(style.width), `${tool} at ${size}: width ${style.width}`);
@@ -94,7 +121,7 @@ test("setDrawTool merges a partial change and ignores invalid fields", () => {
     color: "#d63838",
     size: 5,
   });
-  assert.deepEqual(tools.setDrawTool({ tool: "fill", color: "nope", size: 99 }), {
+  assert.deepEqual(tools.setDrawTool({ tool: "fill", color: "nope", size: 2.5 }), {
     tool: "eraser",
     color: "#d63838",
     size: 5,
@@ -114,4 +141,28 @@ test("every bundle's copy of the module shares one model", () => {
 
   copy.resetDrawTool();
   assert.deepEqual(tools.currentTool(), { ...DEFAULT_TOOL });
+});
+
+test("listeners hear every change, from any copy, and nothing else", () => {
+  const heard = [];
+  const stop = tools.onToolChange((tool) => heard.push(tool));
+
+  tools.setDrawTool({ size: 12 });
+  tools.setDrawTool({ size: 12 });
+  copy.setDrawTool({ tool: "eraser" });
+  tools.setDrawTool({ size: "nope" });
+  copy.resetDrawTool();
+  assert.deepEqual(heard, [
+    { ...DEFAULT_TOOL, size: 12 },
+    { ...DEFAULT_TOOL, tool: "eraser", size: 12 },
+    { ...DEFAULT_TOOL },
+  ]);
+
+  // A copy, not the model.
+  heard[0].size = 30;
+  assert.equal(tools.currentTool().size, DEFAULT_TOOL.size);
+
+  stop();
+  tools.setDrawTool({ size: 30 });
+  assert.equal(heard.length, 3);
 });

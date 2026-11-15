@@ -641,6 +641,8 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # ── Demo board tools (DrawingToolbar) ─────────────────────────────
   # Pointer input is native (stroke_engine.mjs via demo_board.mjs); only the
   # tool lives here, and every change reaches JS (draw_tools.mjs) at once.
+  # The toolbar's shortcuts ([ / ], E) dispatch the same actions
+  # (draw_controls.mjs, which ignores them while the user types anywhere).
 
   def action(:clear_canvas, _params, component) do
     JS.call(:clearBoard, [])
@@ -654,11 +656,12 @@ defmodule ScrawlyWeb.Pages.HomePage do
         DrawingToolbar.select_color(draw_tool(component.state), Map.get(params, :color))
       )
 
+  # The slider's throttled `$change` (`event.value`), or `size`.
   def action(:select_size, params, component),
     do:
       put_tool(
         component,
-        DrawingToolbar.select_size(draw_tool(component.state), Map.get(params, :size))
+        DrawingToolbar.select_size(draw_tool(component.state), DrawingToolbar.size_param(params))
       )
 
   def action(:toggle_eraser, _params, component),

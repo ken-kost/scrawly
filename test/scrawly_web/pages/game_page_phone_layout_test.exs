@@ -256,6 +256,14 @@ defmodule ScrawlyWeb.Pages.GamePagePhoneLayoutTest do
       assert declarations(block, ".tool-btn") =~ "height: 32px"
     end
 
+    test "the size slider takes the rest of its row, with a finger-high (32 px) target" do
+      block = phone_block()
+      assert declarations(block, ".size-control") =~ "flex: 1 1 0"
+      slider = declarations(block, ".size-slider")
+      assert slider =~ "flex: 1 1 0"
+      assert slider =~ "height: 32px"
+    end
+
     test "overlays fit a 360 px screen" do
       block = phone_block()
       assert declarations(block, ".choice-modal") =~ "width: calc(100% - 24px)"

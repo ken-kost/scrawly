@@ -1,7 +1,8 @@
 defmodule ScrawlyWeb.KeyboardShortcutsTest do
   @moduledoc """
   The keyboard shortcuts and dismissal actions behind the templates'
-  `<window $key_down...>` / `$click_outside` bindings (keyboard-and-dismissal).
+  `<window $key_down...>` / `$click_outside` bindings (keyboard-and-dismissal),
+  and the actions the drawing shortcuts dispatch (draw_controls.mjs).
 
   Key filters match a superset of modifiers and fire on auto-repeat, so the
   actions receive every Ctrl/Cmd/Alt variant and every repeat and must ignore
@@ -142,7 +143,13 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
     end
   end
 
-  describe "GamePage drawer shortcuts" do
+  describe "drawing shortcuts" do
+    # E, Ctrl+Z / Cmd+Z and [ / ] are handled by draw_controls.mjs: one
+    # native keydown listener behind one typing guard, which dispatches the
+    # toolbar's own actions (the size keys step the slider). The keys, their
+    # modifiers and the guard are tested in test/js/draw_controls.test.mjs;
+    # these are the pages' side.
+
     defp drawer(overrides \\ %{}) do
       state =
         Map.merge(
@@ -157,99 +164,46 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
       %Component{props: %{room_id: "test-room"}, state: state}
     end
 
-    test "E toggles the eraser like the toolbar button" do
-      {on, calls} =
-        js_calls(fn -> GamePage.action(:shortcut_eraser, %{event: key("e")}, drawer()) end)
+    test "E's action (:toggle_eraser) toggles the eraser and pushes it" do
+      {on, calls} = js_calls(fn -> GamePage.action(:toggle_eraser, %{}, drawer()) end)
 
       assert on.state.draw_tool == %{tool: :eraser, color: "#d63838", size: 5}
       assert calls == [{:setDrawTool, [%{tool: "eraser", color: "#d63838", size: 5}]}]
 
-      {off, calls} = js_calls(fn -> GamePage.action(:shortcut_eraser, %{event: key("e")}, on) end)
+      {off, calls} = js_calls(fn -> GamePage.action(:toggle_eraser, %{}, on) end)
 
       assert off.state.draw_tool == %{tool: :brush, color: "#d63838", size: 5}
       assert calls == [{:setDrawTool, [%{tool: "brush", color: "#d63838", size: 5}]}]
-
-      {toolbar, toolbar_calls} =
-        js_calls(fn -> GamePage.action(:toggle_eraser, %{}, drawer()) end)
-
-      assert toolbar.state == on.state
-      assert toolbar_calls == [{:setDrawTool, [%{tool: "eraser", color: "#d63838", size: 5}]}]
     end
 
-    test "Shift+E toggles too" do
-      result = GamePage.action(:shortcut_eraser, %{event: key("E", %{shift_key: true})}, drawer())
-      assert result.state.draw_tool.tool == :eraser
-    end
-
-    test "a held E (auto-repeat) toggles nothing after the first press" do
+    test "Ctrl+Z's action (:undo_drawing) undoes the last stroke" do
       component = drawer()
-
-      {result, calls} =
-        js_calls(fn ->
-          GamePage.action(:shortcut_eraser, %{event: key("e", %{repeat: true})}, component)
-        end)
+      {result, calls} = js_calls(fn -> GamePage.action(:undo_drawing, %{}, component) end)
 
       assert result == component
-      assert calls == []
-    end
-
-    test "Ctrl+E, Cmd+E and Alt+E do nothing" do
-      component = drawer()
-
-      for mod <- [:ctrl_key, :meta_key, :alt_key] do
-        {result, calls} =
-          js_calls(fn ->
-            GamePage.action(:shortcut_eraser, %{event: key("e", %{mod => true})}, component)
-          end)
-
-        assert result == component
-        assert calls == []
-      end
-    end
-
-    test "Ctrl+Z and Cmd+Z undo once, like the toolbar button" do
-      component = drawer()
-
-      for {via, mod} <- [ctrl: :ctrl_key, meta: :meta_key] do
-        params = %{via: via, event: key("z", %{mod => true})}
-        {result, calls} = js_calls(fn -> GamePage.action(:shortcut_undo, params, component) end)
-
-        assert result == component
-        assert calls == [{:undoStroke, []}]
-      end
-
-      {_result, calls} = js_calls(fn -> GamePage.action(:undo_drawing, %{}, component) end)
       assert calls == [{:undoStroke, []}]
     end
 
-    test "Ctrl+Cmd+Z fires both bindings with one event, and undoes once" do
-      component = drawer()
-      event = key("z", %{ctrl_key: true, meta_key: true})
+    test "a size key's step reaches the page as the slider's :select_size, eraser kept" do
+      component = drawer(%{draw_tool: %{tool: :eraser, color: "#d63838", size: 5}})
 
-      {_result, calls} =
-        js_calls(fn ->
-          component
-          |> then(&GamePage.action(:shortcut_undo, %{via: :ctrl, event: event}, &1))
-          |> then(&GamePage.action(:shortcut_undo, %{via: :meta, event: event}, &1))
-        end)
+      {result, calls} =
+        js_calls(fn -> GamePage.action(:select_size, %{event: %{value: "10"}}, component) end)
 
-      assert calls == [{:undoStroke, []}]
+      assert result.state.draw_tool == %{tool: :eraser, color: "#d63838", size: 10}
+      assert calls == [{:setDrawTool, [%{tool: "eraser", color: "#d63838", size: 10}]}]
     end
 
-    test "Ctrl/Cmd+Shift+Z (redo) and a held Ctrl/Cmd+Z do nothing" do
-      component = drawer()
+    test "no drawing shortcut is a <window> key binding: they all take the guarded path" do
+      root = Path.expand("../..", __DIR__)
+      toolbar = File.read!(Path.join(root, "lib/scrawly_web/components/drawing_toolbar.ex"))
+      refute toolbar =~ "$key_down"
+      assert toolbar =~ ~s|data-draw-shortcuts={if @shortcuts do shortcut_names(@controls) end}|
 
-      for {via, mod} <- [ctrl: :ctrl_key, meta: :meta_key],
-          extra <- [%{shift_key: true}, %{repeat: true}] do
-        event = key("z", Map.put(extra, mod, true))
-
-        {result, calls} =
-          js_calls(fn ->
-            GamePage.action(:shortcut_undo, %{via: via, event: event}, component)
-          end)
-
-        assert result == component
-        assert calls == [], "#{via} #{inspect(extra)} called #{inspect(calls)}"
+      for file <- ["game_page.ex", "home_page.ex"] do
+        source = File.read!(Path.join(root, "lib/scrawly_web/pages/" <> file))
+        refute source =~ "shortcut_eraser", file
+        refute source =~ "shortcut_undo", file
       end
     end
 

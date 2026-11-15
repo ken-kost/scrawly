@@ -1,6 +1,7 @@
 // The home page's board (lib/scrawly_web/pages/demo_board.mjs) draws with
 // the shared tool model (draw_tools.mjs), like the in-game canvas: the tool
-// HomePage pushes is the one a stroke starts with, eraser included.
+// HomePage pushes is the one a stroke starts with, eraser included, and the
+// eraser erases at the slider's size.
 // Run with `node --test test/js/*.test.mjs` (test/scrawly_web/js_unit_test.exs).
 
 import { test, mock, after } from "node:test";
@@ -67,14 +68,24 @@ test("a stroke on the board starts with the tool the page pushed", () => {
     ["#d63838", 10, "#d63838", 10]
   );
 
-  // The toolbar's eraser: white at the eraser's size, whatever the brush is.
+  // The toolbar's eraser: white, at the brush's size.
   tools.setDrawTool({ tool: "eraser" });
   tap(svg, 60, 30);
   assert.equal(completed().at(-1).color, tools.ERASER.color);
-  assert.equal(completed().at(-1).width, tools.ERASER.size);
+  assert.equal(completed().at(-1).width, 10);
 
-  // Back to the brush: its colour and size were kept.
-  tools.setDrawTool({ tool: "brush" });
+  // The slider while erasing: the eraser stays, at the new size.
+  for (const size of [1, 40]) {
+    tools.setDrawTool({ size });
+    tap(svg, 70, 30);
+    assert.deepEqual(
+      [completed().at(-1).color, completed().at(-1).width, chunks().at(-1).width],
+      [tools.ERASER.color, size, size]
+    );
+  }
+
+  // Back to the brush: its colour was kept, the size is the shared one.
+  tools.setDrawTool({ tool: "brush", size: 10 });
   tap(svg, 80, 30);
   assert.equal(completed().at(-1).color, "#d63838");
   assert.equal(completed().at(-1).width, 10);
@@ -84,7 +95,9 @@ test("a stroke on the board starts with the tool the page pushed", () => {
     drawn.map((el) => [el.getAttribute("stroke"), el.getAttribute("stroke-width")]),
     [
       ["#d63838", "10"],
-      ["#ffffff", String(tools.ERASER.size)],
+      ["#ffffff", "10"],
+      ["#ffffff", "1"],
+      ["#ffffff", "40"],
       ["#d63838", "10"],
     ]
   );

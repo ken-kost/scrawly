@@ -1094,13 +1094,16 @@ defmodule ScrawlyWeb.Pages.GamePage do
         DrawingToolbar.select_color(draw_tool(component.state), Map.get(params, :color))
       )
 
+  # The slider's throttled `$change` (`event.value`), or `size`.
   def action(:select_size, params, component),
     do:
       put_tool(
         component,
-        DrawingToolbar.select_size(draw_tool(component.state), Map.get(params, :size))
+        DrawingToolbar.select_size(draw_tool(component.state), DrawingToolbar.size_param(params))
       )
 
+  # Also E and Ctrl+Z / Cmd+Z: draw_controls.mjs dispatches the toolbar's
+  # actions for its shortcuts, behind its typing guard.
   def action(:toggle_eraser, _params, component), do: toggle_eraser(component)
 
   def action(:undo_drawing, _params, component), do: undo_last_stroke(component)
@@ -1120,31 +1123,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
       )
 
   def action(:hide_scores, _params, component), do: put_state(component, :show_all_scores, false)
-
-  # ── Drawer keyboard shortcuts ──────────────────────────────────────
-  # The `<window>` bindings render only inside the drawer's toolbar
-  # (DrawingToolbar with `shortcuts`), and the drawer's chat input is
-  # disabled meanwhile (ChatBox `disabled`), so typing never reaches them. Key
-  # filters match a superset of modifiers and fire on auto-repeat, so these
-  # clauses keep only the plain press: E alone toggles once even when held,
-  # Ctrl+Z / Cmd+Z undo once (no Shift: that is redo elsewhere). Ctrl+Cmd+Z
-  # fires both undo bindings with the same event; the :meta one yields.
-
-  def action(
-        :shortcut_eraser,
-        %{event: %{ctrl_key: false, meta_key: false, alt_key: false, repeat: false}},
-        component
-      ),
-      do: toggle_eraser(component)
-
-  def action(:shortcut_eraser, _params, component), do: component
-
-  def action(:shortcut_undo, %{via: :meta, event: %{ctrl_key: true}}, component), do: component
-
-  def action(:shortcut_undo, %{event: %{shift_key: false, repeat: false}}, component),
-    do: undo_last_stroke(component)
-
-  def action(:shortcut_undo, _params, component), do: component
 
   # ── Other pages' broadcasts ──────────────────────────────────────────
   # HomePage's `:lobby` actions. They reach this page when it was restored
@@ -1827,7 +1805,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     component
   end
 
-  # Shared by the toolbar button and the E shortcut.
+  # The toolbar's button, and E (draw_controls.mjs dispatches :toggle_eraser).
   defp toggle_eraser(component),
     do: put_tool(component, DrawingToolbar.toggle_eraser(draw_tool(component.state)))
 

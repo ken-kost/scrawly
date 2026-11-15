@@ -368,7 +368,7 @@ async function waitQueue(p) {
   await p.page.waitForFunction(queueIdle, null, { timeout: 20000 * p.rate });
 }
 
-// The drawer's Ctrl+Z (keyboard shortcut -> :shortcut_undo -> undoStroke):
+// The drawer's Ctrl+Z (draw_controls.mjs -> :undo_drawing -> undoStroke):
 // keydown to the stroke's node gone, and to the next frame.
 async function drawerUndo(p, expected) {
   const wait = p.page.evaluate((n) => window.__bench.waitCount("game-canvas-drawer-strokes", n, 10000), expected);

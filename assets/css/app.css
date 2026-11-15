@@ -972,6 +972,9 @@ html, body {
   position: relative;
   aspect-ratio: 16 / 9;
   width: 100%;
+  /* Clips the size ring at the edges and keeps its z-index inside. */
+  overflow: hidden;
+  isolation: isolate;
 }
 .canvas-frame svg { width: 100%; height: 100%; display: block; user-select: none; -webkit-user-select: none; }
 /* The dot grid sits above the strokes (the eraser paints white, so a grid
@@ -985,11 +988,36 @@ html, body {
   background-image: radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.07) 0.8px, transparent 1.2px);
   background-size: 18px 18px;
 }
+/* The size ring (size_ring.mjs): the tool's footprint under the pointer,
+   above the grid. Its own composited layer, moved by transform only, so it
+   never repaints the strokes. JS sizes, places and shows it. */
+.canvas-frame .size-ring,
+.demo-canvas .size-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* Until JS sizes it (the frame's other svg is 100% wide). */
+  width: 0;
+  height: 0;
+  z-index: 1;
+  pointer-events: none;
+  visibility: hidden;
+  will-change: transform;
+}
+.size-ring circle { fill: none; stroke-width: 1px; }
+.size-ring .size-ring-outer { stroke: rgba(10, 10, 10, 0.8); }
+.size-ring .size-ring-inner { stroke: rgba(255, 255, 255, 0.9); }
+/* A footprint too small for a ring is shown as the dot it paints. */
+.size-ring[data-dot] .size-ring-outer { fill: rgba(10, 10, 10, 0.8); stroke: none; }
+svg[data-size-ring] { cursor: crosshair; }
 
 .toolbar {
   display: flex;
+  /* Never clipped: what doesn't fit (the shortcut hint first, it is last)
+     goes on to a next row. */
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   padding: 10px 14px;
   border-top: 1px solid var(--hairline);
   background: var(--bg);
@@ -1025,11 +1053,30 @@ html, body {
 .tool-btn:hover { background: var(--surface-2); }
 .tool-btn.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 
-.size-dot {
-  display: inline-block;
-  border-radius: 999px;
-  background: currentColor;
+/* The size: a slider, a dot at the size in the tool's colour (dashed white
+   for the eraser) and the number. */
+.size-control { align-items: center; gap: 6px; }
+.size-slider {
+  width: 104px;
+  height: 26px;
+  margin: 0;
+  accent-color: var(--ink);
+  cursor: pointer;
 }
+.size-preview {
+  width: 24px; height: 24px;
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.size-dot {
+  display: block;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--ink);
+}
+.size-dot.eraser { background: var(--canvas); border: 1px dashed var(--ink); }
+.size-value { min-width: 2ch; font-size: 11px; color: var(--muted); }
+.toolbar-hint { margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap; }
 
 /* ─── Chat ───────────────────────────────────────────────────────── */
 .chat-panel { padding: 0; }
@@ -1156,6 +1203,7 @@ html, body {
   border-radius: 6px;
   overflow: hidden;
   position: relative;
+  isolation: isolate;
 }
 .demo-canvas svg { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-select: none; }
 .demo-overlay {
@@ -1743,6 +1791,10 @@ html, body {
   .tool-group { padding-left: 0; border-left: 0; }
   .tool-group:last-of-type { margin-left: auto; }
   .tool-btn { height: 32px; min-width: 32px; justify-content: center; }
+  /* The slider takes what the row leaves (from a zero basis, so the row
+     breaks only below its minimum), with a finger-high target. */
+  .size-control { flex: 1 1 0; min-width: 108px; }
+  .size-slider { flex: 1 1 0; min-width: 56px; width: auto; height: 32px; }
 
   /* Chat: the input first, then the private notes, then the lines newest
      first (column-reverse; chat_scroll.js keeps the newest in view). */
