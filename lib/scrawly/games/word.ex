@@ -105,14 +105,16 @@ defmodule Scrawly.Games.Word do
 
   @doc """
   The entries of `Scrawly.Games.WordList` of `kind` (`:word` or `:phrase`,
-  see `Scrawly.Games.AnswerKind.of/1`), and `difficulty` when given: what
-  `Scrawly.Games.get_random_word/1` falls back to when the `words` table has
-  none, so word choices never run out.
+  see `Scrawly.Games.AnswerKind.of/1`), of `difficulty` when given and of
+  one of `themes` when that isn't `[]` (every theme): what
+  `Scrawly.Games.get_random_word/1` and the drawer's choices fall back to
+  when the `words` table has none, so word choices never run out.
   """
-  @spec builtin_words(AnswerKind.answer(), atom | nil) :: [String.t()]
-  def builtin_words(kind, difficulty \\ nil) when kind in [:word, :phrase] do
+  @spec builtin_words(AnswerKind.answer(), atom | nil, [WordList.theme()]) :: [String.t()]
+  def builtin_words(kind, difficulty \\ nil, themes \\ []) when kind in [:word, :phrase] do
     for entry <- WordList.entries(),
         difficulty in [nil, entry.difficulty],
+        themes == [] or entry.theme in themes,
         AnswerKind.of(entry.text) == kind,
         do: entry.text
   end

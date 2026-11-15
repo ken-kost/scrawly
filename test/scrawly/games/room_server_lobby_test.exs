@@ -24,6 +24,7 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
     :round_duration,
     :round_multiplier,
     :status,
+    :themes,
     :word_source
   ]
 
@@ -99,6 +100,9 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
                status: :lobby,
                max_players: 6,
                answer_kind: :phrases,
+               # A room that plays its own theme plays none of the built-in
+               # list's themes.
+               themes: [],
                word_source: :ai,
                # The room list shows a themed room's theme.
                prompt: "TEST ocean animals",
@@ -112,9 +116,11 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
 
       assert struct_free?(summary)
 
-      # A room on the built-in list keeps no theme, even a leftover one.
-      local = RoomServer.lobby_summary(%{state | word_source: :local})
-      assert local.prompt == nil
+      # A room on the built-in list keeps no theme, even a leftover one,
+      # and shows its themes; an AI room shows none, even leftover ones.
+      local = RoomServer.lobby_summary(%{state | word_source: :local, themes: [:animals]})
+      assert {local.prompt, local.themes} == {nil, [:animals]}
+      assert RoomServer.lobby_summary(%{state | themes: [:animals]}).themes == []
     end
   end
 

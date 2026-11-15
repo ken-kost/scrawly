@@ -105,6 +105,52 @@ defmodule ScrawlyWeb.Pages.GamePageSettingsTest do
       assert room_state!(room.id).name == creator.username <> "'s room"
     end
 
+    test "themes: the chips' themes are stored and shown; another topic clears them", ctx do
+      %{room: room, creator: creator, player: player} = ctx
+      viewer = page(room, player)
+      subscribe({:room, room.id})
+
+      themed = %{@phrases_2min | word_source: "themes", themes: ["sports", "animals", "bogus"]}
+      assert reply(send_update(room, server_for(creator), themed)) == {:room_settings_saved, %{}}
+      assert %{word_source: :local, themes: [:animals, :sports]} = reload_room!(room)
+
+      shown =
+        Enum.reduce(drain(), viewer, fn {action, params}, page ->
+          GamePage.action(action, params, page)
+        end)
+
+      assert shown.state.themes == [:animals, :sports]
+
+      html = render(shown)
+      assert html =~ ~s(<div class="k">topic</div><div class="v">themes</div>)
+      assert html =~ ~r/<div class="k">themes<\/div>\s*<div class="v"[^>]*>animals, sports<\/div>/
+
+      # The host's next form opens on them.
+      opened = room |> page(creator) |> open()
+
+      assert %{word_source: "themes", themes: ["animals", "sports"]} =
+               RoomSettings.form_values(opened.state.room_settings_initial)
+
+      # Everything (the chips still on in the form) and your own theme clear them.
+      send_update(room, server_for(creator), %{themed | word_source: "local"})
+      assert %{themes: []} = reload_room!(room)
+      assert room_state!(room.id).themes == []
+
+      send_update(room, server_for(creator), themed)
+      assert room_state!(room.id).themes == [:animals, :sports]
+
+      send_update(room, server_for(creator), %{themed | word_source: "ai", prompt: "TEST ocean"})
+      assert %{word_source: :ai, themes: []} = reload_room!(room)
+
+      shown =
+        Enum.reduce(drain(), shown, fn {action, params}, page ->
+          GamePage.action(action, params, page)
+        end)
+
+      assert shown.state.themes == []
+      refute render(shown) =~ ~s(<div class="k">themes</div>)
+    end
+
     test "only the settings: anything else in the values is ignored", ctx do
       %{room: room, creator: creator} = ctx
       forged = Map.merge(@phrases_2min, %{status: "ended", creator_id: ctx.player.id, code: "X"})
@@ -232,6 +278,7 @@ defmodule ScrawlyWeb.Pages.GamePageSettingsTest do
                name: "TEST lobby",
                answer_kind: "words",
                word_source: "ai",
+               themes: [],
                prompt: "TEST ocean",
                ai_tone: "weird",
                round_duration: "300",

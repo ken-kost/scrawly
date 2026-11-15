@@ -5,7 +5,7 @@ defmodule Scrawly.Games.Room do
     data_layer: AshPostgres.DataLayer,
     notifiers: [Ash.Notifier.PubSub]
 
-  alias Scrawly.Games.AnswerKind
+  alias Scrawly.Games.{AnswerKind, WordList}
   alias Scrawly.Validations.MaxBytes
 
   postgres do
@@ -27,6 +27,7 @@ defmodule Scrawly.Games.Room do
         :max_players,
         :creator_id,
         :answer_kind,
+        :themes,
         :word_source,
         :prompt,
         :round_duration,
@@ -48,6 +49,9 @@ defmodule Scrawly.Games.Room do
         message "is required when the room plays its own theme"
       end
 
+      # A room that plays its own theme plays none of the built-in themes.
+      change Scrawly.Games.Room.Changes.DropThemesWhenAi
+
       change fn changeset, _context ->
         Ash.Changeset.force_change_attribute(changeset, :code, generate_code())
       end
@@ -62,6 +66,7 @@ defmodule Scrawly.Games.Room do
         :name,
         :max_players,
         :answer_kind,
+        :themes,
         :word_source,
         :prompt,
         :round_duration,
@@ -81,8 +86,10 @@ defmodule Scrawly.Games.Room do
         message "is required when the room plays its own theme"
       end
 
-      # A room that plays everything keeps no theme, like a new one.
+      # A room that plays the built-in list keeps no theme of its own, and
+      # one that plays its own theme keeps none of the built-in themes.
       change Scrawly.Games.Room.Changes.DropThemeWhenLocal
+      change Scrawly.Games.Room.Changes.DropThemesWhenAi
     end
 
     update :join_room do
@@ -315,6 +322,16 @@ defmodule Scrawly.Games.Room do
       default AnswerKind.default()
       public? true
       constraints one_of: AnswerKind.all()
+    end
+
+    # The built-in list's themes the room's choices come from
+    # (WordList.themes/0, in that order); [] is every theme. Only for rooms
+    # that play the built-in list (DropThemesWhenAi).
+    attribute :themes, {:array, :atom} do
+      allow_nil? false
+      default []
+      public? true
+      constraints items: [one_of: WordList.themes()], nil_items?: false
     end
 
     attribute :word_source, :atom do

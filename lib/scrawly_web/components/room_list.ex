@@ -23,6 +23,9 @@ defmodule ScrawlyWeb.Components.RoomList do
               <span class="meta">
                 <span>[{Map.get(room, :code, "") || ""}]</span>
                 <span>{RoomSettings.summary(room)}</span>
+                {%if RoomSettings.themes_label(Map.get(room, :themes))}
+                  <span class="room-themes" title={RoomSettings.themes_list(Map.get(room, :themes))}>themes: {RoomSettings.themes_label(Map.get(room, :themes))}</span>
+                {/if}
                 {%if RoomSettings.theme(room)}
                   <span class="room-theme">theme: {RoomSettings.theme(room)}</span>
                 {/if}

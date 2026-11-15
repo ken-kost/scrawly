@@ -110,6 +110,9 @@ defmodule Scrawly.Games.RoomServer do
     # Words, phrases or both (AnswerKind): every pick of word choices
     # follows it, the AI's included.
     answer_kind: AnswerKind.default(),
+    # The built-in list's themes the choices come from ([] is every theme;
+    # always [] for a room that plays its own theme).
+    themes: [],
     word_source: :local,
     prompt: nil,
     creator_name: nil,
@@ -320,8 +323,8 @@ defmodule Scrawly.Games.RoomServer do
   the Game row before touching room state.
 
   `opts` may carry `:word_choices` (first round's choices, `t:GameFlow.choice/0`
-  maps picked for the room's `answer_kind` with
-  `GameFlow.pick_word_choices/4`) and `:ai_words` (the remaining AI pool);
+  maps picked for the room's `answer_kind` and themes with
+  `GameFlow.pick_word_choices/5`) and `:ai_words` (the remaining AI pool);
   without choices the room picks them itself.
   Returns `{:ok, public_state}` or `{:error, reason}`.
   """
@@ -1573,7 +1576,8 @@ defmodule Scrawly.Games.RoomServer do
               Map.get(opts, :ai_words, state.ai_words),
               [],
               state.answer_kind,
-              3
+              3,
+              themes: GameFlow.choice_themes(state)
             )
 
           {choices, remaining}
@@ -1862,6 +1866,7 @@ defmodule Scrawly.Games.RoomServer do
       | name: room.name,
         max_players: room.max_players,
         answer_kind: AnswerKind.parse(room.answer_kind),
+        themes: if(room.word_source == :ai, do: [], else: room.themes || []),
         word_source: room.word_source || :local,
         prompt: room.prompt,
         round_duration: room.round_duration || 60,

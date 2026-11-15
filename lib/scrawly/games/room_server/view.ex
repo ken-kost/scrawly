@@ -69,6 +69,7 @@ defmodule Scrawly.Games.RoomServer.View do
     :drawing_strokes,
     :last_game_id,
     :answer_kind,
+    :themes,
     :word_source,
     :prompt,
     :creator_name,
@@ -85,6 +86,7 @@ defmodule Scrawly.Games.RoomServer.View do
     :name,
     :max_players,
     :answer_kind,
+    :themes,
     :word_source,
     :prompt,
     :round_duration,
@@ -141,8 +143,8 @@ defmodule Scrawly.Games.RoomServer.View do
   @doc """
   The room's settings, the ones the host can change in the lobby
   (`RoomServer.update_settings/3`): `name`, `max_players`, `answer_kind`,
-  `word_source`, `prompt`, `round_duration`, `round_multiplier` and
-  `ai_tone`. Every `public/1` and `delta/1` map carries them.
+  `themes`, `word_source`, `prompt`, `round_duration`, `round_multiplier`
+  and `ai_tone`. Every `public/1` and `delta/1` map carries them.
   """
   @spec settings(map) :: map
   def settings(state), do: Map.take(state, @settings_keys)
@@ -258,8 +260,11 @@ defmodule Scrawly.Games.RoomServer.View do
       status: state.status,
       max_players: state.max_players,
       answer_kind: state.answer_kind,
+      # The built-in themes the room plays ([] is every theme), and the theme
+      # of a room that plays its own (nil for the others). The room list
+      # shows either.
+      themes: if(state.word_source == :ai, do: [], else: state.themes || []),
       word_source: state.word_source,
-      # The room list shows a themed room's theme; other rooms keep none.
       prompt: if(state.word_source == :ai, do: state.prompt),
       round_duration: state.round_duration,
       round_multiplier: state.round_multiplier,

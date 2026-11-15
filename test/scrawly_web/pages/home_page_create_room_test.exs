@@ -119,6 +119,32 @@ defmodule ScrawlyWeb.Pages.HomePageCreateRoomTest do
              } = room
     end
 
+    test "themes: the chips' themes, forged ones dropped; Home's list shows them" do
+      user = create_user()
+
+      values = %{
+        RoomSettings.defaults()
+        | answer_kind: "phrases",
+          word_source: "themes",
+          themes: ["food", "animals", "Elixir.Kernel", 7]
+      }
+
+      room_id = HomePage.command(:create_room, values, server_for(user)) |> created!()
+
+      assert %{word_source: :local, themes: [:animals, :food], prompt: nil} =
+               Scrawly.Games.get_room_by_id!(room_id)
+
+      assert %{themes: [:animals, :food]} =
+               Enum.find(RoomServer.list_lobby_rooms(), &(&1.room_id == room_id))
+
+      # Only forged themes: everything.
+      room_id =
+        HomePage.command(:create_room, %{values | themes: ["bogus"]}, server_for(create_user()))
+        |> created!()
+
+      assert Scrawly.Games.get_room_by_id!(room_id).themes == []
+    end
+
     test "a refused room replies :create_room_failed for the form and creates nothing" do
       user = create_user()
       server = server_for(user)

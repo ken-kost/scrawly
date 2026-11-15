@@ -187,7 +187,9 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
       {answer_kind, ai_words, ai_status} = fetch_room_game_settings(state)
 
       {choices, remaining_ai, _used_from_ai} =
-        GameFlow.pick_word_choices(ai_words, [], answer_kind, 3)
+        GameFlow.pick_word_choices(ai_words, [], answer_kind, 3,
+          themes: GameFlow.choice_themes(state)
+        )
 
       case RoomServer.start_game(room_id, uid, %{word_choices: choices, ai_words: remaining_ai}) do
         {:ok, _state} ->

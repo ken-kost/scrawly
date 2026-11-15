@@ -504,6 +504,34 @@ html, body {
   background: var(--ink);
   color: var(--bg);
 }
+/* a group whose labels differ in length: each button as wide as its label
+   plus an equal share of the rest, so none wraps on a phone */
+.seg-fit button { flex: 1 1 auto; white-space: nowrap; padding: 7px 8px; }
+
+/* toggle chips (the room form's themes): wrap to as many rows as needed */
+.theme-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.theme-chip {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.theme-chip:hover { color: var(--ink); }
+.theme-chip.active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+}
 
 /* ─── Layout primitives ─────────────────────────────────────────── */
 .page {
@@ -622,6 +650,8 @@ html, body {
 .room-title .meta > span { white-space: nowrap; }
 /* A theme that doesn't fit goes to its own line, cut there if longer. */
 .room-title .meta > .room-theme { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+/* The chosen themes are short: they wrap between names instead. */
+.room-title .meta > .room-themes { min-width: 0; white-space: normal; }
 .avatar-stack {
   display: inline-flex;
   padding-left: 6px;

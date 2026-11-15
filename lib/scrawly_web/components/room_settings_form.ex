@@ -1,8 +1,9 @@
 defmodule ScrawlyWeb.Components.RoomSettingsForm do
   @moduledoc """
-  A room's settings as a form, in a modal: name, answers, topic (with your
-  own theme and its style), draw time, turns each and players. Home uses it
-  to create a room; the lobby uses it to change one (its host only).
+  A room's settings as a form, in a modal: name, answers, topic (everything,
+  themes with their chips, or your own theme with its style), draw time,
+  turns each and players. Home uses it to create a room; the lobby uses it
+  to change one (its host only).
 
   The form owns the values while it is open; the parent owns what happens
   with them:
@@ -21,9 +22,10 @@ defmodule ScrawlyWeb.Components.RoomSettingsForm do
     * `initial` - the values to start from, keyed like
       `ScrawlyWeb.RoomSettings.defaults/0`, as strings, atoms or integers (a
       room's own fields work as they are). Missing keys take the defaults.
-    * `on_submit` - the parent's action, run with `%{values: values}` (every
-      value a string, keyed like `defaults/0`) when the form is submitted and
-      valid. The parent sends its command and sets `busy` until the reply.
+    * `on_submit` - the parent's action, run with `%{values: values}` (keyed
+      like `defaults/0`: every value a string, `themes` a list of theme
+      names) when the form is submitted and valid. The parent sends its
+      command and sets `busy` until the reply.
     * `on_cancel` - the parent's action for cancel, the close button and
       Escape.
     * `parent_cid` - where both actions go (default `"page"`).
@@ -108,13 +110,27 @@ defmodule ScrawlyWeb.Components.RoomSettingsForm do
 
         <div>
           <div class="field-label">topic</div>
-          <div class="seg">
+          <div class="seg seg-fit">
             {%for {value, label} <- RoomSettings.topic_options()}
               <button type="button" class={if(@values.word_source == value, do: "active", else: "")}
                       aria-pressed={if(@values.word_source == value, do: "true", else: "false")}
                       $click={:put_value, field: :word_source, value: value}>{label}</button>
             {/for}
           </div>
+          {%if @values.word_source == "themes"}
+            <div class="theme-chips" role="group" aria-label="themes">
+              {%for name <- RoomSettings.theme_options()}
+                <button type="button" class={if(name in @values.themes, do: "theme-chip active", else: "theme-chip")}
+                        aria-pressed={if(name in @values.themes, do: "true", else: "false")}
+                        $click={:toggle_theme, theme: name}>{name}</button>
+              {/for}
+            </div>
+            {%if RoomSettings.missing_themes?(@values)}
+              <div class="field-hint">pick at least one theme, or pick everything.</div>
+            {%else}
+              <div class="field-hint">the choices come from these themes.</div>
+            {/if}
+          {/if}
           {%if @values.word_source == "ai"}
             <input class="app-input" id={@cid <> "-theme"} name="prompt" autocomplete="off"
                    style="margin-top: 8px;" aria-label="your theme"
@@ -187,7 +203,7 @@ defmodule ScrawlyWeb.Components.RoomSettingsForm do
       <div class="app-modal-foot">
         <button type="button" class="app-btn app-btn-ghost" $click={action: @on_cancel, target: @parent_cid}>cancel</button>
         <button type="submit" class="app-btn app-btn-primary"
-                disabled={@busy or RoomSettings.missing_theme?(@values)}>
+                disabled={@busy or RoomSettings.missing_theme?(@values) or RoomSettings.missing_themes?(@values)}>
           {%if @busy}{@busy_label}{%else}{@submit_label}{/if}
         </button>
       </div>
@@ -203,12 +219,19 @@ defmodule ScrawlyWeb.Components.RoomSettingsForm do
   def action(:put_value, %{field: field, value: value}, component),
     do: put_value(component, field, value)
 
+  # A theme chip: on if it was off, off if it was on (RoomSettings.toggle_theme/2).
+  def action(:toggle_theme, %{theme: theme}, component) do
+    themes = RoomSettings.toggle_theme(component.state.values.themes, theme)
+    put_state(component, [:values, :themes], themes)
+  end
+
   # Only valid values reach the parent; while its command runs (`busy`) a
   # second submit does nothing.
   def action(:submit, _params, component) do
     values = component.state.values
 
-    if component.props.busy or RoomSettings.missing_theme?(values) do
+    if component.props.busy or RoomSettings.missing_theme?(values) or
+         RoomSettings.missing_themes?(values) do
       component
     else
       put_action(component,

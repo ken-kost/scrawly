@@ -102,7 +102,7 @@ defmodule Scrawly.Games.AiWords do
   apostrophes, and every later duplicate by `Scrawly.Games.Guess.key/1`.
 
   In a `:mixed` room words and phrases both stay, and
-  `Scrawly.Games.RoomServer.GameFlow.pick_word_choices/4` takes the phrase of
+  `Scrawly.Games.RoomServer.GameFlow.pick_word_choices/5` takes the phrase of
   every set apart from the words.
 
       iex> Scrawly.Games.AiWords.filter(["Sea Turtle", "octopus", "Sea-turtle", "fish & chips"], :phrases)

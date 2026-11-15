@@ -685,6 +685,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       creator_id: @drawer,
       join_notice: nil,
       word_source: :local,
+      themes: [],
       answer_kind: :mixed,
       round_multiplier: 1,
       prompt: "",

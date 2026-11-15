@@ -7,7 +7,13 @@ defmodule ScrawlyWeb.RoomSettings do
 
   The form keeps every value as a string (what the DOM hands back) and sends
   them that way, keyed like `defaults/0`; `to_attrs/2` turns them into Room
-  attributes on the server.
+  attributes on the server. The one exception is `themes`, the list of the
+  theme chips that are on (their names, in `theme_options/0` order).
+
+  "topic" is the `word_source` value: "local" (everything), "themes" (the
+  built-in list, only the chosen `themes`) or "ai" (your own theme). A room
+  stores the first two as `word_source: :local`, with `themes: []` meaning
+  everything.
 
   The lobby's settings form changes a room with the same values, parsed and
   refused the same way (`to_attrs/2`, `failure/3`).
@@ -16,7 +22,7 @@ defmodule ScrawlyWeb.RoomSettings do
   (templates and component actions).
   """
 
-  alias Scrawly.Games.AnswerKind
+  alias Scrawly.Games.{AnswerKind, WordList}
 
   # The Room's own limits (Room attribute constraints; a test keeps them equal).
   @name_max 40
@@ -26,6 +32,7 @@ defmodule ScrawlyWeb.RoomSettings do
     name: "",
     answer_kind: Atom.to_string(AnswerKind.default()),
     word_source: "local",
+    themes: [],
     prompt: "",
     ai_tone: "fun",
     round_duration: "60",
@@ -33,7 +40,8 @@ defmodule ScrawlyWeb.RoomSettings do
     max_players: "8"
   }
 
-  @keys Map.keys(@defaults)
+  # The fields that hold a string (`themes` holds a list).
+  @text_keys Map.keys(@defaults) -- [:themes]
 
   @answer_options [{"words", "words"}, {"phrases", "phrases"}, {"mixed", "mixed"}]
 
@@ -44,7 +52,13 @@ defmodule ScrawlyWeb.RoomSettings do
     "mixed" => "frog · polar bear · castle"
   }
 
-  @topic_options [{"local", "everything"}, {"ai", "your own theme"}]
+  @topic_options [{"local", "everything"}, {"themes", "themes"}, {"ai", "your own theme"}]
+
+  # The theme chips, in WordList order (names, as the form holds them).
+  @themes WordList.themes()
+  @theme_names Enum.map(@themes, &Atom.to_string/1)
+  # The room list and the lobby name at most this many themes, then "+N".
+  @themes_shown 3
   @style_options [{"fun", "fun"}, {"creative", "creative"}, {"weird", "weird"}]
   @draw_time_options [{"60", "60 s"}, {"120", "2 min"}, {"300", "5 min"}]
   @turn_options [{"1", "1"}, {"2", "2"}, {"3", "3"}, {"5", "5"}]
@@ -65,16 +79,26 @@ defmodule ScrawlyWeb.RoomSettings do
   @doc """
   The form's values: `initial` over `defaults/0`. `initial` may hold strings,
   atoms or integers (a room's own fields work as they are); other keys and
-  `nil` values are ignored.
+  `nil` values are ignored. `themes` may be theme atoms or names (unknown
+  ones are dropped), and a room of the built-in list with themes opens on
+  the "themes" topic.
   """
-  @spec form_values(term) :: %{atom => String.t()}
+  @spec form_values(term) :: map
   def form_values(initial) when is_map(initial) do
-    Enum.reduce(@keys, @defaults, fn key, values ->
-      case form_string(Map.get(initial, key)) do
-        nil -> values
-        value -> Map.put(values, key, value)
-      end
-    end)
+    values =
+      Enum.reduce(@text_keys, @defaults, fn key, values ->
+        case form_string(Map.get(initial, key)) do
+          nil -> values
+          value -> Map.put(values, key, value)
+        end
+      end)
+
+    themes = form_themes(Map.get(initial, :themes))
+    values = %{values | themes: themes}
+
+    if values.word_source == "local" and themes != [],
+      do: %{values | word_source: "themes"},
+      else: values
   end
 
   def form_values(_initial), do: @defaults
@@ -86,9 +110,39 @@ defmodule ScrawlyWeb.RoomSettings do
   defp form_string(value) when is_atom(value), do: Atom.to_string(value)
   defp form_string(_value), do: nil
 
-  @doc "Whether `key` is one of the form's fields."
+  # Theme names from atoms or names, known ones only, in chip order.
+  defp form_themes(themes) when is_list(themes) do
+    names = Enum.map(themes, &theme_name/1)
+    for name <- @theme_names, name in names, do: name
+  end
+
+  defp form_themes(_themes), do: []
+
+  defp theme_name(theme) when is_atom(theme), do: Atom.to_string(theme)
+  defp theme_name(theme), do: theme
+
+  @doc """
+  Whether `key` is one of the form's text fields (every field but
+  `themes`, which `toggle_theme/2` changes).
+  """
   @spec field?(term) :: boolean
-  def field?(key), do: key in @keys
+  def field?(key), do: key in @text_keys
+
+  @doc """
+  The theme chips that are on after the chip `name` was pressed: `name` on
+  if it was off, off if it was on, in chip order. An unknown name changes
+  nothing.
+  """
+  @spec toggle_theme(term, term) :: [String.t()]
+  def toggle_theme(themes, name) do
+    on = form_themes(themes)
+
+    cond do
+      name not in @theme_names -> on
+      name in on -> for theme <- on, theme != name, do: theme
+      true -> for theme <- @theme_names, theme == name or theme in on, do: theme
+    end
+  end
 
   @doc """
   Whether the values ask for your own theme without one: the form can't be
@@ -97,6 +151,15 @@ defmodule ScrawlyWeb.RoomSettings do
   @spec missing_theme?(map) :: boolean
   def missing_theme?(values) do
     Map.get(values, :word_source) == "ai" and String.trim(Map.get(values, :prompt) || "") == ""
+  end
+
+  @doc """
+  Whether the values ask for themes with no chip on: the form can't be
+  submitted then.
+  """
+  @spec missing_themes?(map) :: boolean
+  def missing_themes?(values) do
+    Map.get(values, :word_source) == "themes" and form_themes(Map.get(values, :themes)) == []
   end
 
   @doc "What an empty name becomes."
@@ -120,6 +183,8 @@ defmodule ScrawlyWeb.RoomSettings do
   def answer_options, do: @answer_options
   @doc false
   def topic_options, do: @topic_options
+  @doc false
+  def theme_options, do: @theme_names
   @doc false
   def style_options, do: @style_options
   @doc false
@@ -185,10 +250,44 @@ defmodule ScrawlyWeb.RoomSettings do
   def turns_label(turns) when is_integer(turns), do: Integer.to_string(turns) <> " turns each"
   def turns_label(_turns), do: "1 turn each"
 
-  @doc "\"everything\" or \"your own theme\"."
-  @spec topic_label(term) :: String.t()
-  def topic_label(:ai), do: "your own theme"
-  def topic_label(_word_source), do: "everything"
+  @doc """
+  "everything", "themes" (a room of the built-in list with `themes`) or
+  "your own theme".
+  """
+  @spec topic_label(term, term) :: String.t()
+  def topic_label(word_source, themes \\ [])
+  def topic_label(:ai, _themes), do: "your own theme"
+  def topic_label(_word_source, [_ | _]), do: "themes"
+  def topic_label(_word_source, _themes), do: "everything"
+
+  @doc """
+  A room's themes in a few words: "animals, food"; past three, the first
+  three and how many more ("animals, food, objects +2"). `nil` for none
+  (everything).
+  """
+  @spec themes_label(term) :: String.t() | nil
+  def themes_label(themes) do
+    case form_themes(themes) do
+      [] ->
+        nil
+
+      names when length(names) > @themes_shown ->
+        Enum.join(Enum.take(names, @themes_shown), ", ") <>
+          " +" <> Integer.to_string(length(names) - @themes_shown)
+
+      names ->
+        Enum.join(names, ", ")
+    end
+  end
+
+  @doc "Every one of a room's themes: \"animals, food, objects, nature\". `nil` for none."
+  @spec themes_list(term) :: String.t() | nil
+  def themes_list(themes) do
+    case form_themes(themes) do
+      [] -> nil
+      names -> Enum.join(names, ", ")
+    end
+  end
 
   @doc """
   What a room plays, in one line: "mixed · 60 s · 2 turns each". Missing
@@ -222,15 +321,25 @@ defmodule ScrawlyWeb.RoomSettings do
   (nil) values are left out, so the Room's defaults apply. A missing, forged
   or unknown answer kind is the default one, and a word source other than
   "ai" is the built-in list (whose rooms keep no theme or style).
+
+  `themes` is always set: the known themes among the values' `themes` for
+  the "themes" topic (anything else in the list is dropped), `[]`
+  (everything) for any other topic.
   """
   @spec to_attrs(map, term) :: map
   def to_attrs(params, username) when is_map(params) do
     word_source = if Map.get(params, :word_source) in ["ai", :ai], do: :ai, else: :local
 
+    themes =
+      if Map.get(params, :word_source) in ["themes", :themes],
+        do: parse_themes(Map.get(params, :themes)),
+        else: []
+
     %{
       name: name(Map.get(params, :name), username),
       max_players: parse_int(Map.get(params, :max_players)),
       answer_kind: AnswerKind.parse(Map.get(params, :answer_kind)),
+      themes: themes,
       word_source: word_source,
       prompt: if(word_source == :ai, do: Map.get(params, :prompt)),
       round_duration: parse_int(Map.get(params, :round_duration)),
@@ -258,6 +367,18 @@ defmodule ScrawlyWeb.RoomSettings do
   defp parse_int(value), do: value
 
   defp ai_tone(tone), do: Map.get(@ai_tones, tone, tone)
+
+  # The themes named in a list (atoms or names), in WordList order; anything
+  # else in it, and anything that isn't a list, is dropped.
+  defp parse_themes(themes) when is_list(themes) do
+    given = MapSet.new(themes)
+
+    for {theme, name} <- Enum.zip(@themes, @theme_names),
+        MapSet.member?(given, theme) or MapSet.member?(given, name),
+        do: theme
+  end
+
+  defp parse_themes(_themes), do: []
 
   @doc """
   Where and why a room, or a change to its settings (`:update`), was refused

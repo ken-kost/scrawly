@@ -64,6 +64,7 @@ defmodule ScrawlyWeb.Components.RoomSettingsFormTest do
                name: "",
                answer_kind: "mixed",
                word_source: "local",
+               themes: [],
                prompt: "",
                ai_tone: "fun",
                round_duration: "60",
@@ -95,6 +96,7 @@ defmodule ScrawlyWeb.Components.RoomSettingsFormTest do
                name: "TEST lobby",
                answer_kind: "phrases",
                word_source: "ai",
+               themes: [],
                prompt: "ocean animals",
                ai_tone: "weird",
                round_duration: "120",
@@ -152,6 +154,31 @@ defmodule ScrawlyWeb.Components.RoomSettingsFormTest do
       end
     end
 
+    test "a theme chip turns on and off; put_value can't set the themes" do
+      component =
+        form()
+        |> then(&RoomSettingsForm.action(:put_value, %{field: :word_source, value: "themes"}, &1))
+        |> then(&RoomSettingsForm.action(:toggle_theme, %{theme: "sports"}, &1))
+        |> then(&RoomSettingsForm.action(:toggle_theme, %{theme: "animals"}, &1))
+        |> then(&RoomSettingsForm.action(:toggle_theme, %{theme: "Elixir.Kernel"}, &1))
+
+      assert {component.state.values.word_source, component.state.values.themes} ==
+               {"themes", ["animals", "sports"]}
+
+      off = RoomSettingsForm.action(:toggle_theme, %{theme: "animals"}, component)
+      assert off.state.values.themes == ["sports"]
+
+      assert RoomSettingsForm.action(:put_value, %{field: :themes, value: "food"}, component) ==
+               component
+    end
+
+    test "a room with themes opens on them" do
+      component = form(%{initial: %{word_source: :local, themes: [:food, :animals]}})
+
+      assert {component.state.values.word_source, component.state.values.themes} ==
+               {"themes", ["animals", "food"]}
+    end
+
     test "picking your own theme moves the focus to the theme field" do
       {component, calls} =
         js_calls(fn ->
@@ -195,6 +222,16 @@ defmodule ScrawlyWeb.Components.RoomSettingsFormTest do
 
       component = form() |> with_values(%{word_source: "ai", prompt: "ocean animals"})
       assert %Action{name: :create_room} = submit(component).next_action
+    end
+
+    test "themes with no chip on aren't sent; with one, the chips go with the values" do
+      component = form() |> with_values(%{word_source: "themes"})
+      assert submit(component) == component
+
+      component = with_values(component, %{themes: ["food"]})
+
+      assert %Action{params: %{values: %{word_source: "themes", themes: ["food"]}}} =
+               submit(component).next_action
     end
 
     test "nothing is sent again while the parent's command runs" do
@@ -269,6 +306,45 @@ defmodule ScrawlyWeb.Components.RoomSettingsFormTest do
       refute typed =~ "type a theme"
       assert typed =~ "AI picks the words for your theme when the game starts."
       refute typed =~ ~r/<button[^>]*type="submit"[^>]*disabled/
+    end
+
+    test "themes: the ten chips, those on pressed; none on, the button is off and the form says why" do
+      plain = render(form())
+      refute plain =~ "theme-chip"
+
+      none = render(form() |> with_values(%{word_source: "themes"}))
+
+      chips =
+        ~r/<button type="button" class="(theme-chip[^"]*)" aria-pressed="(true|false)">(\w+)<\/button>/
+        |> Regex.scan(none, capture: :all_but_first)
+
+      assert Enum.map(chips, &List.last/1) == RoomSettings.theme_options()
+
+      assert Enum.all?(chips, fn [class, pressed, _name] ->
+               {class, pressed} == {"theme-chip", "false"}
+             end)
+
+      assert none =~ "pick at least one theme, or pick everything."
+      assert none =~ ~r/<button[^>]*type="submit"[^>]*disabled/
+
+      some = render(form() |> with_values(%{word_source: "themes", themes: ["animals", "food"]}))
+
+      assert some =~
+               ~s(<button type="button" class="theme-chip active" aria-pressed="true">animals</button>)
+
+      assert some =~
+               ~s(<button type="button" class="theme-chip active" aria-pressed="true">food</button>)
+
+      assert some =~
+               ~s(<button type="button" class="theme-chip" aria-pressed="false">objects</button>)
+
+      assert some =~ "the choices come from these themes."
+      refute some =~ "pick at least one theme"
+      refute some =~ ~r/<button[^>]*type="submit"[^>]*disabled/
+
+      # Your own theme shows no chips, even with some left in the values.
+      ai = render(form() |> with_values(%{word_source: "ai", prompt: "x", themes: ["food"]}))
+      refute ai =~ "theme-chip"
     end
 
     test "the turns hint counts the turns" do

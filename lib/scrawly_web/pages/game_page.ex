@@ -178,6 +178,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:leaving?, false)
               |> put_state(:watchers, rs.watchers || [])
               |> put_state(:answer_kind, rs.answer_kind)
+              |> put_state(:themes, Map.get(rs, :themes) || [])
               |> put_state(:word_source, rs.word_source || :local)
               |> put_state(:prompt, rs.prompt || "")
               |> put_state(:creator_name, rs.creator_name || "")
@@ -1487,6 +1488,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
       name: state.room_name,
       max_players: state.max_players,
       answer_kind: state.answer_kind,
+      themes: state.themes,
       word_source: state.word_source,
       prompt: state.prompt,
       round_duration: state.round_duration,
@@ -1623,6 +1625,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     component
     |> put_state(:room_name, Map.get(view, :name) || Map.get(state, :room_name))
     |> put_state(:answer_kind, Map.get(view, :answer_kind) || Map.get(state, :answer_kind))
+    |> put_state(:themes, Map.get(view, :themes) || Map.get(state, :themes) || [])
     |> put_state(:word_source, Map.get(view, :word_source) || Map.get(state, :word_source))
     |> put_state(:prompt, Map.get(view, :prompt, Map.get(state, :prompt)) || "")
     |> put_state(
@@ -1968,7 +1971,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
               <div class="spec"><div class="k">answers</div><div class="v">{RoomSettings.answers_label(@answer_kind)}</div></div>
               <div class="spec"><div class="k">draw time</div><div class="v">{RoomSettings.draw_time_label(@round_duration)}</div></div>
               <div class="spec"><div class="k">turns each</div><div class="v">{@round_multiplier}</div></div>
-              <div class="spec"><div class="k">topic</div><div class="v">{RoomSettings.topic_label(@word_source)}</div></div>
+              <div class="spec"><div class="k">topic</div><div class="v">{RoomSettings.topic_label(@word_source, @themes)}</div></div>
+              {%if @word_source != :ai and RoomSettings.themes_label(@themes)}
+                <div class="spec" style="grid-column: 1 / -1; border-right: 0;">
+                  <div class="k">themes</div>
+                  <div class="v" style="font-size: 14px; color: var(--ink-2);" title={RoomSettings.themes_list(@themes)}>{RoomSettings.themes_label(@themes)}</div>
+                </div>
+              {/if}
               {%if RoomSettings.theme(%{word_source: @word_source, prompt: @prompt})}
                 <div class="spec" style="grid-column: 1 / -1; border-right: 0;">
                   <div class="k">theme</div>

@@ -66,7 +66,7 @@ defmodule ScrawlyWeb.CommandTotalityTest do
                  username avatar_id avatar_color dark_mode accent resync resubscribe word text
                  stroke_id path color width op_epoch op_seq gen message name max_players
                  answer_kind word_source prompt round_duration round_multiplier ai_tone
-                 code settings)a
+                 code settings themes)a
 
   @wrong_values [123, [1], %{a: 1}, nil, :atom, -1.5, {1, 2}, String.duplicate("é", 3000)]
 

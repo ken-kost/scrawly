@@ -12,7 +12,7 @@ defmodule ScrawlyWeb.RoomSettingsTest do
 
   alias Hologram.Component
   alias Hologram.Template.Renderer
-  alias Scrawly.Games.Room
+  alias Scrawly.Games.{Room, WordList}
   alias ScrawlyWeb.Components.RoomList
   alias ScrawlyWeb.Pages.GamePage
   alias ScrawlyWeb.RoomSettings
@@ -61,6 +61,31 @@ defmodule ScrawlyWeb.RoomSettingsTest do
       assert RoomSettings.topic_label(:local) == "everything"
     end
 
+    test "the chosen themes: at most three by name, then how many more" do
+      assert RoomSettings.themes_label([:animals]) == "animals"
+      assert RoomSettings.themes_label([:food, :animals]) == "animals, food"
+      assert RoomSettings.themes_label([:animals, :food, :sports]) == "animals, food, sports"
+
+      assert RoomSettings.themes_label([:animals, :food, :objects, :sports, :fantasy]) ==
+               "animals, food, objects +2"
+
+      assert RoomSettings.themes_label(WordList.themes()) == "animals, food, objects +7"
+      assert RoomSettings.themes_label(["food", "animals"]) == "animals, food"
+
+      # None is everything: no label.
+      for none <- [[], nil, [:bogus], "animals"],
+          do: assert(RoomSettings.themes_label(none) == nil)
+
+      assert RoomSettings.themes_list([:fantasy, :animals, :food, :objects, :sports]) ==
+               "animals, food, objects, sports, fantasy"
+
+      assert RoomSettings.themes_list([]) == nil
+
+      assert RoomSettings.topic_label(:local, [:animals]) == "themes"
+      assert RoomSettings.topic_label(:local, []) == "everything"
+      assert RoomSettings.topic_label(:ai, [:animals]) == "your own theme"
+    end
+
     test "the default name" do
       assert RoomSettings.default_name("TESTann") == "TESTann's room"
       assert RoomSettings.default_name(nil) == "new room"
@@ -100,6 +125,66 @@ defmodule ScrawlyWeb.RoomSettingsTest do
         attrs = values |> RoomSettings.to_attrs("TESTu") |> Map.put(:creator_id, user.id)
         assert Ash.Changeset.for_create(Room, :create, attrs).valid?
       end
+
+      for theme <- RoomSettings.theme_options() do
+        values = %{RoomSettings.defaults() | word_source: "themes", themes: [theme]}
+        attrs = values |> RoomSettings.to_attrs("TESTu") |> Map.put(:creator_id, user.id)
+        assert Ash.Changeset.for_create(Room, :create, attrs).valid?
+      end
+    end
+  end
+
+  describe "themes (the form's side)" do
+    test "topic is everything, themes or your own theme; the chips are the word list's themes" do
+      assert RoomSettings.topic_options() == [
+               {"local", "everything"},
+               {"themes", "themes"},
+               {"ai", "your own theme"}
+             ]
+
+      assert RoomSettings.theme_options() == Enum.map(WordList.themes(), &Atom.to_string/1)
+      assert RoomSettings.defaults().themes == []
+    end
+
+    test "a chip turns on or off, and the chips stay in their order" do
+      assert RoomSettings.toggle_theme([], "food") == ["food"]
+      assert RoomSettings.toggle_theme(["food"], "animals") == ["animals", "food"]
+      assert RoomSettings.toggle_theme(["animals", "food"], "animals") == ["food"]
+      assert RoomSettings.toggle_theme(["food"], "food") == []
+
+      for forged <- ["Food", "Elixir.Kernel", :food, nil, 7, ["food"]] do
+        assert RoomSettings.toggle_theme(["food"], forged) == ["food"]
+      end
+
+      # Whatever the list held, only known names come back.
+      assert RoomSettings.toggle_theme(["bogus", :sports, 7], "animals") == ["animals", "sports"]
+      assert RoomSettings.toggle_theme(nil, "animals") == ["animals"]
+    end
+
+    test "themes with no chip on can't be submitted; other topics don't need any" do
+      defaults = RoomSettings.defaults()
+
+      assert RoomSettings.missing_themes?(%{defaults | word_source: "themes"})
+      assert RoomSettings.missing_themes?(%{defaults | word_source: "themes", themes: ["bogus"]})
+      refute RoomSettings.missing_themes?(%{defaults | word_source: "themes", themes: ["food"]})
+      refute RoomSettings.missing_themes?(defaults)
+      refute RoomSettings.missing_themes?(%{defaults | word_source: "ai", prompt: "x"})
+    end
+
+    test "a room with themes opens on the themes topic, its chips on" do
+      values =
+        RoomSettings.form_values(%{word_source: :local, themes: [:sports, :animals, :bogus]})
+
+      assert {values.word_source, values.themes} == {"themes", ["animals", "sports"]}
+
+      values = RoomSettings.form_values(%{word_source: "local", themes: ["food"]})
+      assert {values.word_source, values.themes} == {"themes", ["food"]}
+
+      assert RoomSettings.form_values(%{word_source: :local, themes: []}).word_source == "local"
+      assert RoomSettings.form_values(%{themes: "animals"}).themes == []
+
+      values = RoomSettings.form_values(%{word_source: :ai, prompt: "TEST", themes: []})
+      assert {values.word_source, values.themes} == {"ai", []}
     end
   end
 
@@ -144,6 +229,51 @@ defmodule ScrawlyWeb.RoomSettingsTest do
       for jargon <- ["local", "[ai]", "[phrases]", "60s ×", "1r"] do
         refute html =~ jargon
       end
+    end
+
+    test "the room list row and the lobby's panel: the chosen themes" do
+      row = fn themes ->
+        render(RoomList, %{
+          rooms: [
+            %{
+              room_id: "c",
+              name: "TEST c",
+              code: "CCCC",
+              status: :lobby,
+              max_players: 4,
+              answer_kind: :words,
+              themes: themes,
+              word_source: :local,
+              prompt: nil,
+              round_duration: 60,
+              round_multiplier: 1,
+              players: []
+            }
+          ]
+        })
+      end
+
+      assert row.([:food, :animals]) =~
+               ~s(<span class="room-themes" title="animals, food">themes: animals, food</span>)
+
+      assert row.([:animals, :food, :objects, :sports, :fantasy]) =~
+               ~s(title="animals, food, objects, sports, fantasy">themes: animals, food, objects +2</span>)
+
+      refute row.([]) =~ "themes:"
+
+      creator = create_user()
+      room = start_room(creator, %{answer_kind: :phrases, themes: [:animals, :food, :sports]})
+
+      {component, _server} =
+        GamePage.init(%{room_id: room.id}, %Component{}, server_for(creator))
+
+      html = render(GamePage, Map.put(component.state, :room_id, room.id))
+      assert html =~ ~s(<div class="k">topic</div><div class="v">themes</div>)
+
+      assert html =~
+               ~r/<div class="k">themes<\/div>\s*<div class="v"[^>]*>animals, food, sports<\/div>/
+
+      refute html =~ ~s(<div class="k">theme</div>)
     end
 
     test "the lobby's settings panel, from a real room" do
@@ -259,6 +389,7 @@ defmodule ScrawlyWeb.RoomSettingsTest do
                name: "TESTu's room",
                max_players: 8,
                answer_kind: :mixed,
+               themes: [],
                word_source: :local,
                round_duration: 60,
                round_multiplier: 1
@@ -272,6 +403,33 @@ defmodule ScrawlyWeb.RoomSettingsTest do
 
       assert %{name: "TEST kept"} = RoomSettings.to_attrs(%{name: "TEST kept"}, nil)
       assert %{name: "new room"} = RoomSettings.to_attrs(%{name: " "}, nil)
+    end
+
+    test "themes: the known ones, in the word list's order, only for the themes topic" do
+      themed = %{RoomSettings.defaults() | word_source: "themes"}
+
+      assert %{word_source: :local, themes: [:animals, :food]} =
+               RoomSettings.to_attrs(%{themed | themes: ["food", "animals", "food"]}, "TESTu")
+
+      # Forged values are dropped; nothing left is everything.
+      forged = ["Elixir.Kernel", "ANIMALS", " food", 7, nil, %{}, ["animals"], :sports, "fantasy"]
+
+      assert RoomSettings.to_attrs(%{themed | themes: forged}, "TESTu").themes == [
+               :sports,
+               :fantasy
+             ]
+
+      for nothing <- [[], ["bogus"], "animals", nil, %{animals: true}] do
+        assert RoomSettings.to_attrs(%{themed | themes: nothing}, "TESTu").themes == []
+      end
+
+      assert RoomSettings.to_attrs(%{word_source: "themes"}, "TESTu").themes == []
+
+      # Any other topic plays no themes, whatever the values hold.
+      for word_source <- ["local", "ai", nil, "bogus"] do
+        values = %{themed | word_source: word_source, prompt: "x", themes: ["animals"]}
+        assert RoomSettings.to_attrs(values, "TESTu").themes == []
+      end
     end
   end
 end
