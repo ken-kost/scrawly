@@ -53,6 +53,38 @@ defmodule Scrawly.Games.Room do
       end
     end
 
+    # The host's settings form in the lobby (RoomServer.update_settings/3):
+    # the fields a new room is created with, never its status, code or
+    # creator. Same rules as :create, and only a room in its lobby takes
+    # them (that check is part of the UPDATE).
+    update :update_settings do
+      accept [
+        :name,
+        :max_players,
+        :answer_kind,
+        :word_source,
+        :prompt,
+        :round_duration,
+        :round_multiplier,
+        :ai_tone
+      ]
+
+      validate attribute_equals(:status, :lobby) do
+        message "can only change in the lobby"
+      end
+
+      validate {MaxBytes, attribute: :name, max: 160}
+      validate {MaxBytes, attribute: :prompt, max: 800}
+
+      validate present(:prompt) do
+        where attribute_equals(:word_source, :ai)
+        message "is required when the room plays its own theme"
+      end
+
+      # A room that plays everything keeps no theme, like a new one.
+      change Scrawly.Games.Room.Changes.DropThemeWhenLocal
+    end
+
     update :join_room do
       accept []
       require_atomic? false

@@ -166,7 +166,7 @@ defmodule ScrawlyWeb.RoomSettingsTest do
 
       [panel] =
         Regex.run(
-          ~r/<div class="panel-head">settings<\/div>.*?<\/div>\s*<\/div>\s*<\/div>/s,
+          ~r/<div class="panel-head">\s*<span>settings<\/span>.*?<\/div>\s*<\/div>\s*<\/div>/s,
           html
         )
 
@@ -219,6 +219,37 @@ defmodule ScrawlyWeb.RoomSettingsTest do
           ] do
         refute template =~ jargon, "#{path} shows #{inspect(jargon)}"
       end
+    end
+  end
+
+  describe "the players floor (the lobby's form)" do
+    test "too_few_players?/2 and the line that says why" do
+      assert RoomSettings.too_few_players?("2", 3)
+      refute RoomSettings.too_few_players?("3", 3)
+      refute RoomSettings.too_few_players?("12", 3)
+      refute RoomSettings.too_few_players?("2", 2)
+      assert RoomSettings.too_few_players?("junk", 2)
+      refute RoomSettings.too_few_players?("2", nil)
+
+      for {value, _label} <- RoomSettings.player_options() do
+        refute RoomSettings.too_few_players?(value, 2)
+      end
+
+      assert RoomSettings.players_floor(3) == "3 players are in the room, so pick 3 or more"
+      assert RoomSettings.players_floor(nil) == "pick 2 to 12 players"
+    end
+  end
+
+  describe "failure/3 (server)" do
+    test "a refused change of settings says so, not \"create\"" do
+      error = Ash.Error.Invalid.exception(errors: [])
+      assert RoomSettings.failure(error, %{}) == {nil, "couldn't create the room, try again"}
+
+      assert RoomSettings.failure(error, %{}, :update) ==
+               {nil, "couldn't save the settings, try again"}
+
+      assert RoomSettings.failure(:boom, %{}, :update) ==
+               {nil, "couldn't save the settings, try again"}
     end
   end
 

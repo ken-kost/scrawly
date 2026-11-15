@@ -9,7 +9,10 @@ defmodule ScrawlyWeb.RoomSettings do
   them that way, keyed like `defaults/0`; `to_attrs/2` turns them into Room
   attributes on the server.
 
-  Everything except `to_attrs/2` and `failure/2` also runs in the browser
+  The lobby's settings form changes a room with the same values, parsed and
+  refused the same way (`to_attrs/2`, `failure/3`).
+
+  Everything except `to_attrs/2` and `failure/3` also runs in the browser
   (templates and component actions).
   """
 
@@ -46,8 +49,12 @@ defmodule ScrawlyWeb.RoomSettings do
   @draw_time_options [{"60", "60 s"}, {"120", "2 min"}, {"300", "5 min"}]
   @turn_options [{"1", "1"}, {"2", "2"}, {"3", "3"}, {"5", "5"}]
   @player_options Enum.map(2..12, &{Integer.to_string(&1), "up to #{&1}"})
+  @player_counts Map.new(2..12, &{Integer.to_string(&1), &1})
 
-  @generic_failure "couldn't create the room, try again"
+  @generic_failures %{
+    create: "couldn't create the room, try again",
+    update: "couldn't save the settings, try again"
+  }
 
   # ── Form values ──────────────────────────────────────────────────────
 
@@ -121,6 +128,29 @@ defmodule ScrawlyWeb.RoomSettings do
   def turn_options, do: @turn_options
   @doc false
   def player_options, do: @player_options
+
+  @doc """
+  Whether the players option `value` ("2".."12") is below `min`, the
+  players already in the room: the lobby's form can't offer it.
+  """
+  @spec too_few_players?(term, term) :: boolean
+  def too_few_players?(value, min) when is_integer(min),
+    do: Map.get(@player_counts, value, 0) < min
+
+  def too_few_players?(_value, _min), do: false
+
+  @doc """
+  Why "players" can't go lower: "3 players are in the room, so pick 3 or
+  more". The lobby's form says it under the field, and the server when it
+  refuses a lower limit.
+  """
+  @spec players_floor(term) :: String.t()
+  def players_floor(count) when is_integer(count),
+    do:
+      Integer.to_string(count) <>
+        " players are in the room, so pick " <> Integer.to_string(count) <> " or more"
+
+  def players_floor(_count), do: "pick 2 to 12 players"
 
   @doc "The example line under \"answers\" for a form value."
   @spec example(term) :: String.t()
@@ -230,12 +260,15 @@ defmodule ScrawlyWeb.RoomSettings do
   defp ai_tone(tone), do: Map.get(@ai_tones, tone, tone)
 
   @doc """
-  Where and why a room was refused (server-only): `{field, message}` for the
-  form, `field` one of `:name`, `:prompt`, `:max_players`, or `nil` for the
-  line above its buttons. `attrs` are the attributes that were tried.
+  Where and why a room, or a change to its settings (`:update`), was refused
+  (server-only): `{field, message}` for the form, `field` one of `:name`,
+  `:prompt`, `:max_players`, or `nil` for the line above its buttons.
+  `attrs` are the attributes that were tried.
   """
-  @spec failure(term, map) :: {atom | nil, String.t()}
-  def failure(%Ash.Error.Invalid{errors: errors}, attrs) do
+  @spec failure(term, map, :create | :update) :: {atom | nil, String.t()}
+  def failure(error, attrs, action \\ :create)
+
+  def failure(%Ash.Error.Invalid{errors: errors}, attrs, action) do
     fields = Enum.map(errors, &Map.get(&1, :field))
 
     cond do
@@ -253,9 +286,11 @@ defmodule ScrawlyWeb.RoomSettings do
         {:max_players, "pick 2 to 12 players"}
 
       true ->
-        {nil, @generic_failure}
+        {nil, generic_failure(action)}
     end
   end
 
-  def failure(_error, _attrs), do: {nil, @generic_failure}
+  def failure(_error, _attrs, action), do: {nil, generic_failure(action)}
+
+  defp generic_failure(action), do: Map.get(@generic_failures, action, @generic_failures.create)
 end

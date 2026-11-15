@@ -23,27 +23,32 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   alias Scrawly.{Accounts, Games}
   alias Scrawly.Games.{AnswerKind, RoomServer, StrokeRules}
   alias Scrawly.Games.RoomServer.{Broadcasts, GameFlow}
-  alias ScrawlyWeb.{Auth, CommandParams, RoomSubscriptions, SocketToken}
+  alias ScrawlyWeb.{Auth, CommandParams, RoomSettings, RoomSubscriptions, SocketToken}
 
   @doc """
   The shape check in front of every room command (GamePage.command/3; the
   score page's `leave_room` / `dissolve_room` too): params must be a map with
-  a UUID `room_id`, plus a string `word` for `:choose_word` and a string
-  `text` for `:submit_guess`. The other fields stay optional and are
-  validated where they are used (`StrokeRules`, the room process).
+  a UUID `room_id`, plus a string `word` for `:choose_word`, a string `text`
+  for `:submit_guess` and a map `settings` for `:update_room_settings`. The
+  other fields stay optional and are validated where they are used
+  (`StrokeRules`, `RoomSettings.to_attrs/2`, the room process).
   `:error` means deny (`CommandParams.deny_invalid/2`).
   """
   @spec valid_params(atom, term) :: {:ok, map} | :error
   def valid_params(command, params) do
     with {:ok, room_id} <- CommandParams.uuid(params, :room_id),
-         :ok <- required_string(command, params) do
+         :ok <- required_field(command, params) do
       {:ok, Map.put(params, :room_id, room_id)}
     end
   end
 
-  defp required_string(:choose_word, params), do: present(CommandParams.string(params, :word))
-  defp required_string(:submit_guess, params), do: present(CommandParams.string(params, :text))
-  defp required_string(_command, _params), do: :ok
+  defp required_field(:choose_word, params), do: present(CommandParams.string(params, :word))
+  defp required_field(:submit_guess, params), do: present(CommandParams.string(params, :text))
+
+  defp required_field(:update_room_settings, params),
+    do: if(is_map(Map.get(params, :settings)), do: :ok, else: :error)
+
+  defp required_field(_command, _params), do: :ok
 
   defp present(nil), do: :error
   defp present(_string), do: :ok
@@ -194,6 +199,48 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
       end
     else
       {:error, reason} -> Auth.deny(server, :start_game, reason)
+    end
+  end
+
+  @doc """
+  Changes the room's settings as the session user, from the lobby's settings
+  form: `settings` holds the form's values, parsed exactly as room creation
+  parses them (`RoomSettings.to_attrs/2`, a blank name becoming the host's
+  default name). The room process checks that the user is its creator and
+  that it is in its lobby, and the Room validates the values
+  (`RoomServer.update_settings/3`). Nothing else is read from params.
+
+  Replies `:room_settings_saved` (the change itself reaches every page as a
+  `:room_delta`), `:room_settings_failed` with a `field` (`:name`,
+  `:prompt`, `:max_players`, or nil for the line above the form's buttons)
+  and a `message` for values the room refuses, or `:command_denied` for
+  anyone but the host, outside the lobby and for rooms that no longer exist.
+  """
+  def update_room_settings(%{room_id: room_id, settings: settings}, server) do
+    case Auth.current_user(server) do
+      {:ok, user} ->
+        attrs = RoomSettings.to_attrs(settings, user.username)
+
+        case RoomServer.update_settings(room_id, user.id, attrs) do
+          {:ok, _state} ->
+            put_action(server, :room_settings_saved)
+
+          {:error, {:max_players_below, count}} ->
+            put_action(server, :room_settings_failed,
+              field: :max_players,
+              message: RoomSettings.players_floor(count)
+            )
+
+          {:error, reason} when is_atom(reason) ->
+            Auth.deny(server, :update_room_settings, reason)
+
+          {:error, error} ->
+            {field, message} = RoomSettings.failure(error, attrs, :update)
+            put_action(server, :room_settings_failed, field: field, message: message)
+        end
+
+      {:error, reason} ->
+        Auth.deny(server, :update_room_settings, reason)
     end
   end
 

@@ -8,7 +8,8 @@ defmodule Scrawly.Games.RoomServer do
   `{:room, room_id}`, and the drawer's word choices and word on their own
   `{:room_player, room_id, user_id}` channel, after the public delta. The
   home pages' room list gets the room's lobby summary (or its removal) on
-  `:lobby` whenever its lobby status or players change.
+  `:lobby` whenever its lobby status, players or settings change. The host
+  may change the settings in the lobby (`update_settings/3`).
 
   Rounds run against monotonic deadlines (`round_deadline`, `choice_deadline`):
   the room broadcasts the remaining ms in its deltas and clients count down
@@ -411,18 +412,51 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   @doc """
+  Changes the room's settings on behalf of `actor_id`, who must be allowed
+  to (`authorize/3` `:update_settings`: the creator, while the room is in
+  its lobby). `attrs` are Room attributes, as
+  `ScrawlyWeb.RoomSettings.to_attrs/2` builds them from the settings form.
+
+  The Room's `:update_settings` action validates and stores them first (it
+  takes only the settings fields); the room then takes the stored values,
+  so the next game plays with them and a restarted room comes back with
+  them. When anything changed it posts "the host changed the settings",
+  sends everyone the new settings in a `:room_delta` and the home pages the
+  room's new summary. Saving the same settings again changes nothing and
+  sends nothing.
+
+  Returns `{:ok, public_state}`, or, with nothing changed:
+
+    * `{:error, :not_creator | :wrong_state | :not_found}` - a refusal;
+    * `{:error, {:max_players_below, count}}` - `max_players` is lower than
+      the `count` players already in the room;
+    * `{:error, %Ash.Error.Invalid{}}` - values the Room refuses.
+  """
+  @spec update_settings(term, term, map) ::
+          {:ok, map}
+          | {:error, atom | {:max_players_below, pos_integer} | Exception.t()}
+  def update_settings(room_id, actor_id, attrs) when is_map(attrs) do
+    GenServer.call(via(room_id), {:update_settings, actor_id, attrs})
+  catch
+    :exit, _ -> {:error, :not_found}
+  end
+
+  @doc """
   Pure authorization check for room commands against a room state (the struct
   or the map returned by `get_state/1`).
 
     * `:start_game` - the actor is the creator, the room is in `:lobby` with no
       game, and there are at least 2 players.
     * `:dissolve` - the actor is the creator.
+    * `:update_settings` - the actor is the creator and the room is in
+      `:lobby` with no game (never during a game or the post-game pause).
     * `:leave` - the actor is a player or the creator.
     * `:draw` - the actor is the current drawer and still one of the
       players (`:not_drawer`, see `View.drawer?/2`) and the room is in
       `:drawing` (`:wrong_phase`). Covers strokes, clear and undo.
   """
-  @spec authorize(map, term, :start_game | :dissolve | :leave | :draw) :: :ok | {:error, atom}
+  @spec authorize(map, term, :start_game | :dissolve | :update_settings | :leave | :draw) ::
+          :ok | {:error, atom}
   def authorize(state, actor_id, :start_game) do
     cond do
       not creator?(state, actor_id) -> {:error, :not_creator}
@@ -434,6 +468,14 @@ defmodule Scrawly.Games.RoomServer do
 
   def authorize(state, actor_id, :dissolve) do
     if creator?(state, actor_id), do: :ok, else: {:error, :not_creator}
+  end
+
+  def authorize(state, actor_id, :update_settings) do
+    cond do
+      not creator?(state, actor_id) -> {:error, :not_creator}
+      state.status != :lobby or state.game_id != nil -> {:error, :wrong_state}
+      true -> :ok
+    end
   end
 
   def authorize(state, actor_id, :leave) do
@@ -620,23 +662,19 @@ defmodule Scrawly.Games.RoomServer do
             _ -> "Unknown"
           end
 
-        state = %__MODULE__{
-          room_id: room.id,
-          name: room.name,
-          code: room.code,
-          status: room.status,
-          creator_id: room.creator_id,
-          max_players: room.max_players,
-          players: Enum.map(room.players, &to_player_map/1),
-          answer_kind: AnswerKind.parse(room.answer_kind),
-          word_source: room.word_source || :local,
-          prompt: room.prompt,
-          creator_name: creator_name,
-          round_duration: room.round_duration || 60,
-          round_multiplier: room.round_multiplier || 1,
-          ai_tone: room.ai_tone || :fun,
-          seq: System.system_time(:microsecond)
-        }
+        state =
+          put_settings(
+            %__MODULE__{
+              room_id: room.id,
+              code: room.code,
+              status: room.status,
+              creator_id: room.creator_id,
+              players: Enum.map(room.players, &to_player_map/1),
+              creator_name: creator_name,
+              seq: System.system_time(:microsecond)
+            },
+            room
+          )
 
         state = put_presence_config(state)
         schedule_presence_sweep(state)
@@ -835,6 +873,31 @@ defmodule Scrawly.Games.RoomServer do
   def handle_call({:dissolve_room, actor_id}, _from, state) do
     case authorize(state, actor_id, :dissolve) do
       :ok -> {:stop, :normal, :ok, end_room(state)}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  # Stored first: the room only takes values the Room accepted. The AI pool
+  # of the last game is dropped (its theme may be gone); each start fetches
+  # its own anyway.
+  def handle_call({:update_settings, actor_id, attrs}, _from, state) do
+    with :ok <- authorize(state, actor_id, :update_settings),
+         :ok <- check_player_floor(state, Map.get(attrs, :max_players)),
+         {:ok, room} <- Games.update_room_settings(state.room_id, attrs) do
+      new_state = put_settings(state, room)
+
+      if View.settings(new_state) == View.settings(state) do
+        {:reply, {:ok, to_public(state)}, state}
+      else
+        new_state =
+          %{new_state | ai_words: []}
+          |> add_sys_msg("the host changed the settings")
+          |> notify_waiters()
+          |> notify_lobby()
+
+        {:reply, {:ok, to_public(new_state)}, new_state}
+      end
+    else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
@@ -1790,6 +1853,31 @@ defmodule Scrawly.Games.RoomServer do
       avatar_color: Map.get(user, :avatar_color) || "3"
     }
   end
+
+  # The room's settings (View.settings/1) from its Room row: at init, and
+  # after the host changed them.
+  defp put_settings(state, room) do
+    %{
+      state
+      | name: room.name,
+        max_players: room.max_players,
+        answer_kind: AnswerKind.parse(room.answer_kind),
+        word_source: room.word_source || :local,
+        prompt: room.prompt,
+        round_duration: room.round_duration || 60,
+        round_multiplier: room.round_multiplier || 1,
+        ai_tone: room.ai_tone || :fun
+    }
+  end
+
+  # "Up to N players" can't leave out a player already in the room. A value
+  # that isn't a number is left to the Room's own check.
+  defp check_player_floor(state, max_players) when is_integer(max_players) do
+    count = length(state.players)
+    if max_players < count, do: {:error, {:max_players_below, count}}, else: :ok
+  end
+
+  defp check_player_floor(_state, _max_players), do: :ok
 
   # Names reach every page in deltas and lobby summaries: an older row
   # might predate the username's byte cap, so they are cut to it here.

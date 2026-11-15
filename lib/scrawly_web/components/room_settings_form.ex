@@ -2,7 +2,7 @@ defmodule ScrawlyWeb.Components.RoomSettingsForm do
   @moduledoc """
   A room's settings as a form, in a modal: name, answers, topic (with your
   own theme and its style), draw time, turns each and players. Home uses it
-  to create a room; the lobby can use it to change one.
+  to create a room; the lobby uses it to change one (its host only).
 
   The form owns the values while it is open; the parent owns what happens
   with them:
@@ -29,6 +29,9 @@ defmodule ScrawlyWeb.Components.RoomSettingsForm do
     * `parent_cid` - where both actions go (default `"page"`).
     * `busy` - the parent's command is running: the submit button shows
       `busy_label` and is disabled, and submitting does nothing.
+    * `min_players` - the players already in the room (the lobby's form):
+      "players" offers no limit below it and says why. Default 2, every
+      option.
     * `errors` - the server's answer, `%{field => message}`: a field key
       (`:name`, `:prompt`, `:max_players`) puts the message under that field,
       `:form` on the line above the buttons. The values stay as they were.
@@ -51,6 +54,7 @@ defmodule ScrawlyWeb.Components.RoomSettingsForm do
   prop :on_cancel, :atom, required: true
   prop :parent_cid, :string, default: "page"
   prop :busy, :boolean, default: false
+  prop :min_players, :integer, default: 2
   prop :errors, :map, default: %{}
   prop :title, :string, default: "new room"
   prop :subtitle, :string, default: "ready to play as it is. change what you like."
@@ -165,11 +169,15 @@ defmodule ScrawlyWeb.Components.RoomSettingsForm do
           <select class="app-input" id={@cid <> "-players"} name="max_players"
                   value={@values.max_players} $change={:put_value, field: :max_players}>
             {%for {value, label} <- RoomSettings.player_options()}
-              <option value={value}>{label}</option>
+              <option value={value} disabled={RoomSettings.too_few_players?(value, @min_players)}>{label}</option>
             {/for}
           </select>
           {%if Map.get(@errors, :max_players)}
             <div class="field-error">{Map.get(@errors, :max_players)}</div>
+          {%else}
+            {%if @min_players > 2}
+              <div class="field-hint">{RoomSettings.players_floor(@min_players)}</div>
+            {/if}
           {/if}
         </div>
       </div>

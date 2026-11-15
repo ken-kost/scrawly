@@ -24,6 +24,7 @@ defmodule ScrawlyWeb.Components.RoomSettingsFormTest do
     on_cancel: :hide_create_room,
     parent_cid: "page",
     busy: false,
+    min_players: 2,
     errors: %{},
     title: "new room",
     subtitle: "ready to play as it is. change what you like.",
@@ -314,6 +315,37 @@ defmodule ScrawlyWeb.Components.RoomSettingsFormTest do
         )
 
       assert html =~ ~s(<div class="field-error">type a theme, or pick everything</div>)
+    end
+
+    test "min_players: no limit below the players in the room, and it says why" do
+      html = render(form(%{min_players: 4}))
+
+      for n <- 2..3,
+          do: assert(html =~ ~s(<option value="#{n}" disabled="true">up to #{n}</option>))
+
+      for n <- 4..12, do: assert(html =~ ~s(<option value="#{n}">up to #{n}</option>))
+
+      assert html =~
+               ~s(<div class="field-hint">4 players are in the room, so pick 4 or more</div>)
+
+      # The server's own refusal takes the hint's place.
+      html =
+        render(
+          form(%{
+            min_players: 4,
+            errors: %{max_players: "5 players are in the room, so pick 5 or more"}
+          })
+        )
+
+      assert html =~
+               ~s(<div class="field-error">5 players are in the room, so pick 5 or more</div>)
+
+      refute html =~ "4 players are in the room"
+
+      # The default (creating a room): every option, no hint.
+      html = render(form())
+      refute html =~ "players are in the room"
+      refute html =~ "disabled"
     end
 
     test "Escape, the close button and cancel go to the parent's on_cancel" do

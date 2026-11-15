@@ -66,7 +66,7 @@ defmodule ScrawlyWeb.CommandTotalityTest do
                  username avatar_id avatar_color dark_mode accent resync resubscribe word text
                  stroke_id path color width op_epoch op_seq gen message name max_players
                  answer_kind word_source prompt round_duration round_multiplier ai_tone
-                 code)a
+                 code settings)a
 
   @wrong_values [123, [1], %{a: 1}, nil, :atom, -1.5, {1, 2}, String.duplicate("é", 3000)]
 
@@ -142,6 +142,7 @@ defmodule ScrawlyWeb.CommandTotalityTest do
     assert :join_by_code in command_names(HomePage)
     assert command_names(RoomLinkPage) == []
     assert :complete_stroke in command_names(GamePage)
+    assert :update_room_settings in command_names(GamePage)
     assert :refresh_socket_token in command_names(GamePage)
     assert :leave_room in command_names(GameScorePage)
     assert :save_password in command_names(ProfilePage)
@@ -188,6 +189,8 @@ defmodule ScrawlyWeb.CommandTotalityTest do
           {GamePage, :definitely_not_a_command, %{}},
           {GamePage, :join_room, %{}},
           {GamePage, :choose_word, %{room_id: ctx.room.id}},
+          {GamePage, :update_room_settings, %{room_id: ctx.room.id}},
+          {GamePage, :update_room_settings, %{room_id: ctx.room.id, settings: "phrases"}},
           {GameScorePage, :leave_room, %{room_id: "not-a-uuid"}},
           {AppLayout, :save_accent, %{accent: "chartreuse"}},
           {AppLayout, :save_theme, %{dark_mode: "yes"}},

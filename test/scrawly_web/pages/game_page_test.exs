@@ -694,7 +694,13 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       chat_notice_gen: 0,
       invite_copy: :idle,
       invite_copy_gen: 0,
-      invite_link: nil
+      invite_link: nil,
+      show_room_settings: false,
+      room_settings_form: 0,
+      room_settings_initial: %{},
+      saving_room_settings?: false,
+      room_settings_attempt: 0,
+      room_settings_errors: %{}
     ]
 
     defp lobby_delta(seq, players),

@@ -38,7 +38,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   route "/game/:room_id"
   param :room_id, :string
 
-  alias ScrawlyWeb.Components.{Avatar, ChatBox, ScoreBoard, DrawingCanvas}
+  alias ScrawlyWeb.Components.{Avatar, ChatBox, ScoreBoard, DrawingCanvas, RoomSettingsForm}
   alias ScrawlyWeb.{PlayFeedback, RoomSettings}
   alias ScrawlyWeb.Pages.GamePage.Commands
   alias Scrawly.Games.RoomServer
@@ -64,9 +64,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
   @start_game_timeout_ms 90_000
   # How long the invite button reads "copied".
   @invite_copied_ms 2_000
+  # A settings save with no answer after this long gives the form back.
+  @save_settings_timeout_ms 20_000
 
   @room_commands ~w(resync_room join_room join_as_watcher leave_watcher start_game leave_room
-                    submit_guess choose_word complete_stroke clear_drawing_cmd undo_drawing_cmd)a
+                    submit_guess choose_word complete_stroke clear_drawing_cmd undo_drawing_cmd
+                    update_room_settings)a
 
   # Page state is serialized into the HTML, so it is built from the session
   # user's own view of the room: only the drawer's view carries the word and
@@ -185,6 +188,16 @@ defmodule ScrawlyWeb.Pages.GamePage do
               # AI call for a themed room) hasn't been answered yet.
               |> put_state(:starting_game?, false)
               |> put_state(:start_game_attempt, 0)
+              # The host's settings form (RoomSettingsForm). Each opening
+              # gets a new cid (`room_settings_form` counts them), so it
+              # starts from the room's current settings
+              # (`room_settings_initial`, taken when it opens).
+              |> put_state(:show_room_settings, false)
+              |> put_state(:room_settings_form, 0)
+              |> put_state(:room_settings_initial, %{})
+              |> put_state(:saving_room_settings?, false)
+              |> put_state(:room_settings_attempt, 0)
+              |> put_state(:room_settings_errors, %{})
               # "Copy invite link": :idle, :copied (for @invite_copied_ms,
               # `invite_copy_gen` names the latest copy) or :manual (the
               # browser refused, `invite_link` is shown to copy by hand). The
@@ -355,6 +368,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
         stale_rooms = JS.call(:takeStaleRoomChannels, [component.props.room_id])
 
         component
+        |> close_room_settings()
         |> put_state(:restoring?, true)
         |> put_state(:invite_copy, restored_invite_copy(state))
         |> put_state(:last_tick_at, nil)
@@ -680,6 +694,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
     component =
       if command == :start_game, do: put_state(component, :starting_game?, false), else: component
 
+    component =
+      if command == :update_room_settings and component.state.saving_room_settings?,
+        do:
+          room_settings_failed(component, :form, settings_denied_text(Map.get(params, :reason))),
+        else: component
+
     request_resync(component)
   end
 
@@ -758,6 +778,77 @@ defmodule ScrawlyWeb.Pages.GamePage do
     else
       component
     end
+  end
+
+  # ── Room settings (the host, in the lobby) ──────────────────────────
+  # The form (RoomSettingsForm) holds the values; this page sends them and
+  # shows the outcome. The form stays open, "saving…", until the server
+  # answers: :room_settings_saved closes it (the change itself comes to
+  # every page as a :room_delta), :room_settings_failed or a denial shows
+  # why and keeps the values. No answer after @save_settings_timeout_ms
+  # gives the form back. The form closes by itself when the room leaves its
+  # lobby, and after a Back/Forward restore.
+
+  def action(:edit_room_settings, _params, component) do
+    state = component.state
+
+    if can_edit_settings?(state) do
+      component
+      |> put_state(:show_room_settings, true)
+      |> put_state(:room_settings_form, state.room_settings_form + 1)
+      |> put_state(:room_settings_initial, current_settings(state))
+      |> put_state(:saving_room_settings?, false)
+      |> put_state(:room_settings_errors, %{})
+    else
+      component
+    end
+  end
+
+  # Cancel, the close button, Escape. A save already sent still runs.
+  def action(:hide_room_settings, _params, component), do: close_room_settings(component)
+
+  def action(:save_room_settings, %{values: values}, component) when is_map(values) do
+    state = component.state
+
+    if state.show_room_settings and not state.saving_room_settings? and
+         can_edit_settings?(state) do
+      attempt = state.room_settings_attempt + 1
+
+      component
+      |> put_state(:saving_room_settings?, true)
+      |> put_state(:room_settings_attempt, attempt)
+      |> put_state(:room_settings_errors, %{})
+      |> put_command(:update_room_settings, room_id: component.props.room_id, settings: values)
+      |> put_action(
+        name: :save_room_settings_timed_out,
+        params: %{attempt: attempt},
+        delay: @save_settings_timeout_ms
+      )
+    else
+      component
+    end
+  end
+
+  # Only while a save is waiting: a reply to a form the host has closed
+  # since then changes nothing.
+  def action(:room_settings_saved, _params, component) do
+    if component.state.saving_room_settings?,
+      do: close_room_settings(component),
+      else: component
+  end
+
+  def action(:room_settings_failed, params, component) do
+    if component.state.saving_room_settings?,
+      do: room_settings_failed(component, Map.get(params, :field), Map.get(params, :message)),
+      else: component
+  end
+
+  def action(:save_room_settings_timed_out, %{attempt: attempt}, component) do
+    state = component.state
+
+    if state.saving_room_settings? and attempt == state.room_settings_attempt,
+      do: room_settings_failed(component, :form, "no answer from the server, try again"),
+      else: component
   end
 
   def action(:choose_word, %{word: word}, component) do
@@ -1058,6 +1149,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
   defp room_command(:leave_room, params, server), do: Commands.leave_room(params, server)
   defp room_command(:submit_guess, params, server), do: Commands.submit_guess(params, server)
   defp room_command(:choose_word, params, server), do: Commands.choose_word(params, server)
+
+  defp room_command(:update_room_settings, params, server),
+    do: Commands.update_room_settings(params, server)
 
   defp room_command(:complete_stroke, params, server),
     do: Commands.complete_stroke(params, server)
@@ -1379,6 +1473,45 @@ defmodule ScrawlyWeb.Pages.GamePage do
       (Enum.any?(state.players, &(&1.id == uid)) or Enum.any?(state.watchers, &(&1.id == uid)))
   end
 
+  # ── Room settings helpers ───────────────────────────────────────────
+
+  # The host, in the lobby, before a start is on its way.
+  defp can_edit_settings?(state) do
+    state.is_creator and not state.watching? and state.room_status == :lobby and
+      not state.game_started and not state.starting_game?
+  end
+
+  # The room's settings as the page holds them, for the form to start from.
+  defp current_settings(state) do
+    %{
+      name: state.room_name,
+      max_players: state.max_players,
+      answer_kind: state.answer_kind,
+      word_source: state.word_source,
+      prompt: state.prompt,
+      round_duration: state.round_duration,
+      round_multiplier: state.round_multiplier,
+      ai_tone: state.ai_tone
+    }
+  end
+
+  defp close_room_settings(component) do
+    component
+    |> put_state(:show_room_settings, false)
+    |> put_state(:saving_room_settings?, false)
+    |> put_state(:room_settings_errors, %{})
+  end
+
+  defp room_settings_failed(component, field, message) do
+    component
+    |> put_state(:saving_room_settings?, false)
+    |> put_state(:room_settings_errors, %{(field || :form) => message})
+  end
+
+  defp settings_denied_text(:wrong_state), do: "settings can only change in the lobby"
+  defp settings_denied_text(:not_creator), do: "only the host can change the settings"
+  defp settings_denied_text(_reason), do: "couldn't save the settings, try again"
+
   # ── The one reducer ─────────────────────────────────────────────────
   #
   # Applies the room's public state from a :room_delta (View.delta/1) or a
@@ -1456,6 +1589,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
       |> put_state(:revealed_word, Map.get(view, :revealed_word))
       |> put_state(:word_difficulty, Map.get(view, :word_difficulty))
       |> put_state(:round_summary, Map.get(view, :round_summary))
+      |> put_settings(view)
+
+    # The settings form is the lobby's: it goes when the room leaves it.
+    component =
+      if active or view.status != :lobby,
+        do: close_room_settings(component),
+        else: component
 
     component =
       if new_turn or game_over,
@@ -1472,6 +1612,24 @@ defmodule ScrawlyWeb.Pages.GamePage do
     component
     |> apply_pending_private()
     |> anchor_countdowns(view)
+  end
+
+  # The room's settings from a delta or a snapshot (RoomServer.View.settings/1;
+  # the host may change them in the lobby). A key the view lacks keeps its
+  # value; round_duration follows the countdowns (put_countdown_anchors/2).
+  defp put_settings(component, view) do
+    state = component.state
+
+    component
+    |> put_state(:room_name, Map.get(view, :name) || Map.get(state, :room_name))
+    |> put_state(:answer_kind, Map.get(view, :answer_kind) || Map.get(state, :answer_kind))
+    |> put_state(:word_source, Map.get(view, :word_source) || Map.get(state, :word_source))
+    |> put_state(:prompt, Map.get(view, :prompt, Map.get(state, :prompt)) || "")
+    |> put_state(
+      :round_multiplier,
+      Map.get(view, :round_multiplier) || Map.get(state, :round_multiplier)
+    )
+    |> put_state(:ai_tone, Map.get(view, :ai_tone) || Map.get(state, :ai_tone))
   end
 
   # The drawer as the canvas header shows them: name and avatar.
@@ -1799,7 +1957,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
         <div>
           <div class="surface" style="overflow: hidden;">
-            <div class="panel-head">settings</div>
+            <div class="panel-head">
+              <span>settings</span>
+              {%if @is_creator and !@watching?}
+                <button type="button" class="app-btn app-btn-sm panel-head-btn"
+                        disabled={@starting_game?} $click="edit_room_settings">edit</button>
+              {/if}
+            </div>
             <div class="spec-grid">
               <div class="spec"><div class="k">answers</div><div class="v">{RoomSettings.answers_label(@answer_kind)}</div></div>
               <div class="spec"><div class="k">draw time</div><div class="v">{RoomSettings.draw_time_label(@round_duration)}</div></div>
@@ -1848,6 +2012,20 @@ defmodule ScrawlyWeb.Pages.GamePage do
           {/if}
         </div>
       </div>
+
+      {%if @show_room_settings}
+        <div class="scrim">
+          <RoomSettingsForm cid={"room-settings-" <> Integer.to_string(@room_settings_form)}
+                            initial={@room_settings_initial}
+                            on_submit={:save_room_settings} on_cancel={:hide_room_settings}
+                            busy={@saving_room_settings?} errors={@room_settings_errors}
+                            min_players={max(length(@players), 2)}
+                            title="room settings"
+                            subtitle="the next game plays with these. everyone here sees the change."
+                            submit_label="save" busy_label="saving…"
+                            name_placeholder={RoomSettings.default_name(@current_user_username)} />
+        </div>
+      {/if}
     </div>
     {/if}
 

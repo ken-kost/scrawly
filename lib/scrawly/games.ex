@@ -26,6 +26,9 @@ defmodule Scrawly.Games do
       define :set_room_post_game, action: :post_game
       define :return_room_to_lobby, action: :return_to_lobby
 
+      # The host's lobby settings (RoomServer.update_settings/3).
+      define :update_room_settings, action: :update_settings
+
       # AI word generation (Scrawly.Games.AiWords): the reply is already
       # filtered for the answer kind.
       define :generate_ai_words, action: :generate_ai_words, args: [:prompt, :answer_kind]

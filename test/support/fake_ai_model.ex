@@ -9,7 +9,8 @@ defmodule Scrawly.FakeAiModel do
   that are too long or too many words, punctuation, digits and things that
   aren't strings. A theme starting with "TEST fail" gets
   `{:error, :fake_model_down}`; one starting with "TEST raise" raises, like
-  the real model without an API key.
+  the real model without an API key. The calling process gets
+  `{:fake_ai_asked, arguments}` for every call.
   """
 
   @words ~w(octopus jellyfish starfish seahorse dolphin shark whale crab lobster
@@ -53,9 +54,20 @@ defmodule Scrawly.FakeAiModel do
     nil
   ]
 
-  def ask(%{arguments: %{prompt: "TEST fail" <> _}}, _context), do: {:error, :fake_model_down}
-  def ask(%{arguments: %{prompt: "TEST raise" <> _}}, _context), do: raise("fake model crashed")
-  def ask(_input, _context), do: {:ok, reply()}
+  # Every call also tells the calling process what it was asked
+  # (`{:fake_ai_asked, arguments}`: prompt, answer_kind, num_words, tone), so
+  # a test that runs a start command can check the theme and style it sent.
+  def ask(input, context) do
+    send(self(), {:fake_ai_asked, Map.get(input, :arguments)})
+    answer(input, context)
+  end
+
+  defp answer(%{arguments: %{prompt: "TEST fail" <> _}}, _context), do: {:error, :fake_model_down}
+
+  defp answer(%{arguments: %{prompt: "TEST raise" <> _}}, _context),
+    do: raise("fake model crashed")
+
+  defp answer(_input, _context), do: {:ok, reply()}
 
   @doc "The reply, in the order the model sends it."
   def reply, do: @words ++ @messy ++ @phrases

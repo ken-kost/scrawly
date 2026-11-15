@@ -884,6 +884,9 @@ html, body {
   letter-spacing: 0.06em;
   color: var(--muted);
 }
+/* A small button in a panel head (the lobby's "edit"): it keeps the head's
+   height and reads like the head's label. */
+.panel-head-btn { height: 24px; margin: -4px 0; padding: 0 10px; font-size: 11px; letter-spacing: 0.06em; }
 .panel-body { padding: 8px 0; flex: 1; overflow: auto; }
 
 .scoreboard .item {

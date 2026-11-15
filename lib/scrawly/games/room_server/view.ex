@@ -79,10 +79,25 @@ defmodule Scrawly.Games.RoomServer.View do
     :phase
   ]
 
+  # The settings the host can change in the lobby (settings/1).
+  # round_duration also goes out as a derived field.
+  @settings_keys [
+    :name,
+    :max_players,
+    :answer_kind,
+    :word_source,
+    :prompt,
+    :round_duration,
+    :round_multiplier,
+    :ai_tone
+  ]
+
   # The `:room_delta` broadcast to everyone in the room (its `seq` is put by
   # Broadcasts.publish/3, one higher than the room's). `past_games` only
   # changes when a game ends, and every page leaves for the score page then,
-  # so it goes in snapshots only.
+  # so it goes in snapshots only. The settings ride along in every delta
+  # (they are small and public), so a lobby page shows the host's change
+  # with the delta that carries it.
   @delta_keys [
     :room_id,
     :status,
@@ -95,8 +110,8 @@ defmodule Scrawly.Games.RoomServer.View do
     :round_active,
     :correct_guessers,
     :phase,
-    :last_game_id,
-    :max_players
+    :last_game_id
+    | @settings_keys
   ]
 
   @doc """
@@ -122,6 +137,15 @@ defmodule Scrawly.Games.RoomServer.View do
     |> Map.take(@delta_keys)
     |> Map.merge(derived_fields(state))
   end
+
+  @doc """
+  The room's settings, the ones the host can change in the lobby
+  (`RoomServer.update_settings/3`): `name`, `max_players`, `answer_kind`,
+  `word_source`, `prompt`, `round_duration`, `round_multiplier` and
+  `ai_tone`. Every `public/1` and `delta/1` map carries them.
+  """
+  @spec settings(map) :: map
+  def settings(state), do: Map.take(state, @settings_keys)
 
   @doc """
   `public/1` plus the per-viewer keys the game page reads, always present:
