@@ -80,7 +80,7 @@ defmodule Scrawly.Games.WordTest do
       {:ok, medium} = Games.get_words_by_difficulty(:medium)
       {:ok, hard} = Games.get_words_by_difficulty(:hard)
 
-      # Each difficulty has entries across word_counts 1, 2, and 3
+      # Each difficulty has single words and phrases
       assert length(easy) >= 60
       assert length(medium) >= 60
       assert length(hard) >= 60
@@ -113,6 +113,23 @@ defmodule Scrawly.Games.WordTest do
 
       {:ok, word3} = Games.get_random_word(word_count: 3)
       assert length(String.split(word3)) == 3
+
+      # Asked without a difficulty, the weighted pick may land on one with no
+      # four-word phrase (none is easy today).
+      for difficulty <- [:medium, :hard] do
+        {:ok, word4} = Games.get_random_word(word_count: 4, difficulty: difficulty)
+        assert length(String.split(word4)) == 4
+      end
+    end
+
+    test "four-word phrases are in the table; five words is no word count" do
+      {:ok, four} = Games.get_words_by_difficulty_and_word_count(:hard, 4)
+      assert length(four) == file_count(:hard, 4)
+      assert four != []
+      assert Enum.all?(four, &(&1.word_count == 4 and length(String.split(&1.text)) == 4))
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Games.get_words_by_difficulty_and_word_count(:hard, 5)
     end
   end
 
@@ -236,6 +253,14 @@ defmodule Scrawly.Games.WordTest do
       assert word.word_count == 1
     end
 
+    test "takes phrases of up to four words" do
+      word = Games.create_word!(%{text: "test in the box", difficulty: :hard, theme: :objects})
+      assert word.word_count == 4
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Games.create_word(%{text: "test in the big box", difficulty: :hard})
+    end
+
     test "does not accept word_count as input" do
       assert {:error, %Ash.Error.Invalid{}} =
                Games.create_word(%{text: "test words", difficulty: :easy, word_count: 1})
@@ -252,7 +277,7 @@ defmodule Scrawly.Games.WordTest do
 
   describe "builtin_words/2" do
     test "are the word file's entries with that word count (and difficulty)" do
-      for word_count <- 1..3, difficulty <- WordList.difficulties() do
+      for word_count <- 1..4, difficulty <- WordList.difficulties() do
         words = Word.builtin_words(word_count, difficulty)
         assert length(words) == file_count(difficulty, word_count)
         assert Enum.all?(words, &(length(String.split(&1)) == word_count))

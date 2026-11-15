@@ -369,6 +369,7 @@ antlers,medium,animals
 anvil,medium,objects
 aquarium,medium,places
 archery,medium,sports
+armchair,medium,objects
 artist,medium,people
 astronaut,medium,people
 avocado,medium,food
@@ -495,6 +496,7 @@ feather,medium,animals
 fencing,medium,sports
 fin,medium,animals
 fingerprint,medium,people
+fishbowl,medium,animals
 fishing,medium,sports
 fist,medium,people
 flashlight,medium,objects
@@ -621,6 +623,7 @@ onion,medium,food
 ostrich,medium,animals
 otter,medium,animals
 oven,medium,objects
+padlock,medium,objects
 paint,medium,actions
 paintbrush,medium,objects
 pan,medium,objects
@@ -662,8 +665,10 @@ pull,medium,actions
 punch,medium,actions
 purse,medium,objects
 push,medium,actions
+racetrack,medium,places
 racket,medium,sports
 raft,medium,transport
+raindrop,medium,nature
 rake,medium,objects
 read,medium,actions
 remote,medium,objects
@@ -1008,579 +1013,411 @@ whisper,hard,actions
 woodpecker,hard,animals
 wrestling,hard,sports
 zookeeper,hard,people
-hot dog,easy,
-ice cream,easy,
-rain drop,easy,
-sun hat,easy,
-tea cup,easy,
-bird nest,easy,
-bed bug,easy,
-arm chair,easy,
-sea star,easy,
-bat man,easy,
-egg cup,easy,
-fox hole,easy,
-pen pal,easy,
-car key,easy,
-dog bone,easy,
-ice cube,easy,
-jam jar,easy,
-mud pie,easy,
-nut shell,easy,
-pin head,easy,
-air bag,easy,
-cat nap,easy,
-fan belt,easy,
-gum drop,easy,
-hen house,easy,
-ink blot,easy,
-jig saw,easy,
-kit bag,easy,
-mop head,easy,
-net ball,easy,
-oil can,easy,
-peg board,easy,
-rag doll,easy,
-sap wood,easy,
-tea bag,easy,
-toy box,easy,
-van pool,easy,
-wax seal,easy,
-yak milk,easy,
-zip tie,easy,
-ark door,easy,
-bay leaf,easy,
-cod fish,easy,
-den lamp,easy,
-elm bark,easy,
-fur coat,easy,
-gap fill,easy,
-hay bale,easy,
-inn room,easy,
-jet ski,easy,
-kid zone,easy,
-log fire,easy,
-map case,easy,
-nap time,easy,
-oat cake,easy,
-pad lock,easy,
-ram horn,easy,
-saw dust,easy,
-tin foil,easy,
-urn lid,easy,
-wok pan,easy,
-yam pie,easy,
-bug bite,easy,
-cap gun,easy,
-dew drop,easy,
-fig leaf,easy,
-gas lamp,easy,
-hop skip,easy,
-ivy vine,easy,
-jab step,easy,
-koi fish,easy,
-lab coat,easy,
-mug shot,easy,
-new moon,easy,
-old boot,easy,
-paw print,easy,
-red fox,easy,
-sky blue,easy,
-top hat,easy,
-web cam,easy,
-zap gun,easy,
-big toe,easy,
-dry run,easy,
-fly rod,easy,
-gym bag,easy,
-hoe cake,easy,
-jig step,easy,
-fire truck,medium,
-teddy bear,medium,
-palm tree,medium,
-high five,medium,
-blue whale,medium,
-roller skate,medium,
-candy cane,medium,
-alarm clock,medium,
-magic wand,medium,
-dream catcher,medium,
-cotton candy,medium,
-french fries,medium,
-disco ball,medium,
-rubber duck,medium,
-treasure chest,medium,
-water slide,medium,
-picnic basket,medium,
-lava lamp,medium,
-solar system,medium,
-polar bear,medium,
-diving board,medium,
-flower pot,medium,
-paper plane,medium,
-music box,medium,
-night light,medium,
-beach ball,medium,
-bunk bed,medium,
-fish tank,medium,
-cloud nine,medium,
-gummy bear,medium,
-root beer,medium,
-dream boat,medium,
-chain link,medium,
-coral reef,medium,
-ghost town,medium,
-hedge maze,medium,
-ivory tower,medium,
-laser beam,medium,
-meteor shower,medium,
-ninja star,medium,
-orbit path,medium,
-pixel art,medium,
-quilt patch,medium,
-radar dish,medium,
-steam train,medium,
-trophy case,medium,
-ultra sound,medium,
-velvet rope,medium,
-wagon wheel,medium,
-crystal cave,medium,
-falcon wing,medium,
-harbor seal,medium,
-jackal howl,medium,
-kayak trip,medium,
-lemon drop,medium,
-marble arch,medium,
-nectar sip,medium,
-opal ring,medium,
-pumpkin seed,medium,
-quarry stone,medium,
-ribbon curl,medium,
-saddle horn,medium,
-tidal wave,medium,
-upper deck,medium,
-venom fang,medium,
-waffle iron,medium,
-zipper pull,medium,
-barrel roll,medium,
-cinder block,medium,
-dragon scale,medium,
-ember glow,medium,
-flint spark,medium,
-gravel path,medium,
-hollow log,medium,
-igloo dome,medium,
-jungle vine,medium,
-kettle drum,medium,
-lantern glow,medium,
-mossy rock,medium,
-nimbus cloud,medium,
-oyster bed,medium,
-plume smoke,medium,
-ripple pond,medium,
-shadow cast,medium,
-timber wolf,medium,
-valley fog,medium,
-winter storm,medium,
-bronze medal,medium,
-candle wick,medium,
-feather quill,medium,
-harbor light,medium,
-ivory tusk,medium,
-roller coaster,hard,
-haunted house,hard,
-northern lights,hard,
-bungee jumping,hard,
-crystal ball,hard,
-double rainbow,hard,
-electric guitar,hard,
-figure skating,hard,
-horse riding,hard,
-ironing board,hard,
-karate chop,hard,
-lightning bolt,hard,
-mountain bike,hard,
-opera singer,hard,
-parallel bars,hard,
-quarter back,hard,
-rocking chair,hard,
-scuba diving,hard,
-unicorn horn,hard,
-vacuum cleaner,hard,
-washing machine,hard,
-yoga mat,hard,
-zebra crossing,hard,
-bowling alley,hard,
-cactus plant,hard,
-easter egg,hard,
-fishing rod,hard,
-garage door,hard,
-hamster wheel,hard,
-jigsaw puzzle,hard,
-kite surfing,hard,
-lunar eclipse,hard,
-anvil strike,hard,
-bamboo forest,hard,
-chimney sweep,hard,
-diamond mine,hard,
-engine block,hard,
-ferris wheel,hard,
-gravity pull,hard,
-harvest moon,hard,
-jackhammer noise,hard,
-kelp forest,hard,
-magnet field,hard,
-neutron star,hard,
-oxygen mask,hard,
-platinum ring,hard,
-quantum leap,hard,
-rhino charge,hard,
-serpent coil,hard,
-turbo engine,hard,
-uranium rod,hard,
-vortex spin,hard,
-wrecking ball,hard,
-python squeeze,hard,
-anchor chain,hard,
-basilisk gaze,hard,
-compass needle,hard,
-domino effect,hard,
-eclipse shadow,hard,
-furnace blast,hard,
-glacier melt,hard,
-horizon line,hard,
-inkwell spill,hard,
-javelin throw,hard,
-kinetic energy,hard,
-labyrinth path,hard,
-minotaur maze,hard,
-nebula glow,hard,
-obsidian blade,hard,
-pendulum swing,hard,
-quasar light,hard,
-resonance hum,hard,
-stalactite drip,hard,
-tessellation tile,hard,
-undertow pull,hard,
-ventricle pump,hard,
-wavelength shift,hard,
-xenon flash,hard,
-yearbook photo,hard,
-zeppelin flight,hard,
-aurora shimmer,hard,
-blizzard whirl,hard,
-catapult launch,hard,
-dirigible float,hard,
-equinox dawn,hard,
-fjord passage,hard,
-gargoyle perch,hard,
-helium balloon,hard,
-isthmus bridge,hard,
-juggernaut roll,hard,
-kaleidoscope turn,hard,
-longitude mark,hard,
-monolith shadow,hard,
-nocturne melody,hard,
-obelisk point,hard,
-pinnacle reach,hard,
-quicksilver flow,hard,
-ice cream cone,easy,
-cup of tea,easy,
-bag of chips,easy,
-ball of yarn,easy,
-box of crayons,easy,
-can of beans,easy,
-ear of corn,easy,
-jar of honey,easy,
-jug of milk,easy,
-pot of gold,easy,
-ray of sun,easy,
-sea of clouds,easy,
-bed of roses,easy,
-bar of soap,easy,
-bow and arrow,easy,
-cat and dog,easy,
-day and night,easy,
-egg and spoon,easy,
-fun and games,easy,
-ham and cheese,easy,
-ink and pen,easy,
-jam and bread,easy,
-lock and key,easy,
-map and compass,easy,
-nut and bolt,easy,
-oil and water,easy,
-pen and paper,easy,
-red and blue,easy,
-sun and moon,easy,
-cup and plate,easy,
-bat and ball,easy,
-hat and scarf,easy,
-dot and line,easy,
-fork and knife,easy,
-salt and pepper,easy,
-pins and needles,easy,
-hide and seek,easy,
-hit and run,easy,
-mix and match,easy,
-now and then,easy,
-rise and shine,easy,
-safe and sound,easy,
-stop and go,easy,
-touch and feel,easy,
-ups and downs,easy,
-bits and bobs,easy,
-fish and chips,easy,
-push and pull,easy,
-rock and roll,easy,
-left and right,easy,
-black and white,easy,
-bread and butter,easy,
-cream and sugar,easy,
-drum and fife,easy,
-east and west,easy,
-fruit and veg,easy,
-give and take,easy,
-heart and soul,easy,
-ice and fire,easy,
-jump and skip,easy,
-kick and punt,easy,
-love and hate,easy,
-milk and honey,easy,
-near and far,easy,
-old and new,easy,
-peach and cream,easy,
-quick and slow,easy,
-rain and shine,easy,
-silk and satin,easy,
-thick and thin,easy,
-up and down,easy,
-vine and twig,easy,
-warm and cold,easy,
-yes and no,easy,
-zig and zag,easy,
-arm and leg,easy,
-bell and whistle,easy,
-cap and gown,easy,
-do and die,easy,
-eye and ear,easy,
-frog and toad,easy,
-goose and duck,easy,
-hop and jump,easy,
-in and out,easy,
-joy and peace,easy,
-kite and string,easy,
-lime and lemon,easy,
-meat and bone,easy,
-nod and wink,easy,
-owl and crow,easy,
-plum and pear,easy,
-quiz and test,easy,
-rod and reel,easy,
-ship and sail,easy,
-top and bottom,easy,
-use and care,easy,
-vest and tie,easy,
-web and thread,easy,
-yell and shout,easy,
-zoom and dash,easy,
-jack in box,medium,
-peanut butter jar,medium,
-bird of paradise,medium,
-ring of fire,medium,
-ace of spades,medium,
-tower of blocks,medium,
-coat of arms,medium,
-field of flowers,medium,
-game of chess,medium,
-house of cards,medium,
-island of treasure,medium,
-knight in armor,medium,
-land of dreams,medium,
-man on moon,medium,
-nest of eggs,medium,
-order of phoenix,medium,
-piece of cake,medium,
-queen of hearts,medium,
-rules of game,medium,
-school of fish,medium,
-trail of breadcrumbs,medium,
-umbrella in rain,medium,
-valley of kings,medium,
-wind and rain,medium,
-king of jungle,medium,
-lady and tramp,medium,
-master of disguise,medium,
-night of stars,medium,
-ocean of dreams,medium,
-pirates and treasure,medium,
-quest for gold,medium,
-song of birds,medium,
-tale of adventure,medium,
-voice of reason,medium,
-world of wonder,medium,
-book of spells,medium,
-clash of titans,medium,
-den of thieves,medium,
-edge of cliff,medium,
-feast of kings,medium,
-gate of heaven,medium,
-hall of fame,medium,
-isle of man,medium,
-jaws of life,medium,
-kiss of death,medium,
-lake of fire,medium,
-maze of mirrors,medium,
-net of stars,medium,
-oath of honor,medium,
-path of glory,medium,
-rain of petals,medium,
-scroll of wisdom,medium,
-throne of bones,medium,
-vault of gold,medium,
-wall of sound,medium,
-arch of stone,medium,
-blade of grass,medium,
-crown of thorns,medium,
-deck of cards,medium,
-eye of storm,medium,
-fork in road,medium,
-grain of sand,medium,
-herd of cattle,medium,
-jewel of nile,medium,
-knot of rope,medium,
-leap of faith,medium,
-mouth of cave,medium,
-nerve of steel,medium,
-orb of light,medium,
-pair of dice,medium,
-raft of logs,medium,
-sack of flour,medium,
-tomb of pharaoh,medium,
-unit of measure,medium,
-veil of mist,medium,
-wave of sound,medium,
-yard of fabric,medium,
-zone of silence,medium,
-band of brothers,medium,
-crest of wave,medium,
-dance of shadows,medium,
-flame of passion,medium,
-grove of oaks,medium,
-helm of ship,medium,
-ink of squid,medium,
-jade of east,medium,
-key of life,medium,
-loom of fate,medium,
-mask of zorro,medium,
-nook of garden,medium,
-orchard of apples,medium,
-plank of wood,medium,
-realm of dreams,medium,
-shores of time,medium,
-tower of babel,medium,
-bell of church,medium,
-cape of hero,medium,
-dust of stars,medium,
-flag of truce,medium,
-gift of gab,medium,
-bottom of ocean,hard,
-castle in sky,hard,
-dawn of time,hard,
-end of rainbow,hard,
-flight of stairs,hard,
-ghost of christmas,hard,
-heart of gold,hard,
-island of misfit,hard,
-journey through space,hard,
-kingdom of animals,hard,
-legend of dragon,hard,
-mystery of deep,hard,
-north star light,hard,
-once upon time,hard,
-portrait of artist,hard,
-quest for fire,hard,
-river of stars,hard,
-secrets of forest,hard,
-tip of iceberg,hard,
-under the sea,hard,
-voyage of discovery,hard,
-wheel of fortune,hard,
-bridge over river,hard,
-dance in rain,hard,
-eyes of tiger,hard,
-garden of eden,hard,
-hand of fate,hard,
-jack of trades,hard,
-keeper of keys,hard,
-lord of rings,hard,
-march of penguins,hard,
-needle in haystack,hard,
-out of bounds,hard,
-point of return,hard,
-riddle of sphinx,hard,
-sword in stone,hard,
-tree of life,hard,
-urn of ashes,hard,
-vow of silence,hard,
-wings of freedom,hard,
-apex of mountain,hard,
-blood of dragon,hard,
-crypt of kings,hard,
-depth of despair,hard,
-echo of thunder,hard,
-forge of giants,hard,
-glow of embers,hard,
-howl of wolf,hard,
-ire of gods,hard,
-jest of fool,hard,
-knell of doom,hard,
-lair of beast,hard,
-might of storm,hard,
-nexus of worlds,hard,
-oath of blood,hard,
-pyre of fallen,hard,
-quake of earth,hard,
-rage of titans,hard,
-siege of castle,hard,
-trial by fire,hard,
-vale of shadows,hard,
-wrath of nature,hard,
-yoke of burden,hard,
-zenith of power,hard,
-abyss of time,hard,
-bane of existence,hard,
-cradle of life,hard,
-dirge of souls,hard,
-elixir of youth,hard,
-fury of ocean,hard,
-gate of eternity,hard,
-helm of darkness,hard,
-idol of stone,hard,
-jewel of cosmos,hard,
-karma of past,hard,
-lore of ancients,hard,
-myth of creation,hard,
-nimbus of glory,hard,
-oracle of truth,hard,
-prism of light,hard,
-quest of champions,hard,
-rune of binding,hard,
-shroud of mystery,hard,
-temple of doom,hard,
-umbra of eclipse,hard,
-void of nothing,hard,
-ward of protection,hard,
-xyst of columns,hard,
-yield of harvest,hard,
-zeal of warrior,hard,
-arc of destiny,hard,
-brink of chaos,hard,
-cipher of ages,hard,
-dusk of empires,hard,
-enigma of stars,hard,
-fable of heroes,hard,
-gauntlet of trials,hard,
-hymn of peace,hard,
-isle of solitude,hard,
-judge of souls,hard,
+alarm clock,easy,objects
+apple pie,easy,food
+apple tree,easy,nature
+bake a cake,easy,actions
+banana peel,easy,food
+baseball cap,easy,sports
+beach ball,easy,sports
+belly button,easy,people
+bird's nest,easy,animals
+birthday cake,easy,food
+black cat,easy,fantasy
+blow bubbles,easy,actions
+bow and arrow,easy,objects
+bowling ball,easy,sports
+boxing gloves,easy,sports
+bride and groom,easy,people
+broken heart,easy,people
+brush your teeth,easy,actions
+bubble gum,easy,food
+build a snowman,easy,actions
+bunk bed,easy,objects
+bus driver,easy,people
+bus stop,easy,transport
+candy cane,easy,food
+car wash,easy,places
+carrot cake,easy,food
+chocolate bar,easy,food
+christmas tree,easy,nature
+climb a tree,easy,actions
+coffee shop,easy,places
+cotton candy,easy,food
+cup of tea,easy,food
+disco ball,easy,objects
+drive a car,easy,actions
+easter egg,easy,food
+eye patch,easy,fantasy
+ferris wheel,easy,places
+fire truck,easy,transport
+fly a kite,easy,actions
+flying saucer,easy,fantasy
+forest fire,easy,nature
+french fries,easy,food
+gingerbread man,easy,food
+gold medal,easy,sports
+golden egg,easy,fantasy
+gummy bear,easy,food
+hair dryer,easy,objects
+high five,easy,actions
+hold hands,easy,actions
+hot dog,easy,food
+hot sauce,easy,food
+ice cream,easy,food
+ice cream cone,easy,food
+jet ski,easy,transport
+jump rope,easy,sports
+king and queen,easy,fantasy
+knife and fork,easy,objects
+lava lamp,easy,objects
+light bulb,easy,objects
+lightning bolt,easy,nature
+magic wand,easy,fantasy
+milk and cookies,easy,food
+moon and stars,easy,nature
+north pole,easy,places
+nose ring,easy,people
+open a present,easy,actions
+orange juice,easy,food
+palm tree,easy,nature
+paper plane,easy,objects
+party hat,easy,objects
+paw print,easy,animals
+pet shop,easy,places
+piggy bank,easy,objects
+pillow fight,easy,actions
+pine tree,easy,nature
+pirate ship,easy,fantasy
+polar bear,easy,animals
+police car,easy,transport
+race car,easy,transport
+read a book,easy,actions
+ride a bike,easy,actions
+ride a horse,easy,actions
+rock paper scissors,easy,sports
+rubber duck,easy,objects
+santa claus,easy,fantasy
+school bus,easy,transport
+sea lion,easy,animals
+sea turtle,easy,animals
+shake hands,easy,actions
+shark fin,easy,animals
+shooting star,easy,nature
+shopping cart,easy,objects
+six pack,easy,people
+smiley face,easy,people
+snow globe,easy,objects
+soccer ball,easy,sports
+solar system,easy,nature
+spider web,easy,animals
+stop sign,easy,transport
+swimming pool,easy,places
+take a bath,easy,actions
+taxi driver,easy,people
+tea bag,easy,food
+teddy bear,easy,objects
+thumbs up,easy,actions
+toilet paper,easy,objects
+tooth fairy,easy,fantasy
+tow truck,easy,transport
+traffic cone,easy,transport
+traffic light,easy,transport
+trash can,easy,objects
+treasure chest,easy,fantasy
+treasure map,easy,fantasy
+trick or treat,easy,fantasy
+walk the dog,easy,actions
+washing machine,easy,objects
+watch tv,easy,actions
+water gun,easy,objects
+water slide,easy,places
+wave goodbye,easy,actions
+witch's hat,easy,fantasy
+alien invasion,medium,fantasy
+ant farm,medium,animals
+arm wrestling,medium,sports
+art gallery,medium,places
+bad hair day,medium,people
+bald eagle,medium,animals
+ball of yarn,medium,objects
+banana split,medium,food
+bank robber,medium,people
+baseball bat,medium,sports
+bear hug,medium,actions
+belly flop,medium,actions
+big bad wolf,medium,fantasy
+black belt,medium,sports
+black eye,medium,people
+black hole,medium,nature
+black sheep,medium,animals
+blow a kiss,medium,actions
+blow out the candles,medium,actions
+blue whale,medium,animals
+board game,medium,sports
+brain freeze,medium,people
+breakfast in bed,medium,food
+broken leg,medium,people
+bullet train,medium,transport
+bumper cars,medium,places
+cap and gown,medium,people
+car crash,medium,transport
+carve a pumpkin,medium,actions
+cat and mouse,medium,animals
+catch a fish,medium,actions
+ceiling fan,medium,objects
+cherry on top,medium,food
+chicken coop,medium,animals
+chicken crossing the road,medium,animals
+cookie jar,medium,food
+coral reef,medium,nature
+corn dog,medium,food
+corn on the cob,medium,food
+couch potato,medium,people
+count sheep,medium,actions
+crescent moon,medium,nature
+cruise ship,medium,transport
+dance floor,medium,places
+dance in the rain,medium,actions
+deck of cards,medium,sports
+desert island,medium,nature
+diving board,medium,sports
+dog sled,medium,transport
+double chin,medium,people
+double rainbow,medium,nature
+double-decker bus,medium,transport
+dump truck,medium,transport
+easter bunny,medium,fantasy
+electric guitar,medium,objects
+elephant in the room,medium,animals
+face paint,medium,people
+feed the ducks,medium,actions
+finish line,medium,sports
+fire extinguisher,medium,objects
+fire station,medium,places
+fishing rod,medium,sports
+flip a pancake,medium,actions
+flying pig,medium,fantasy
+food fight,medium,actions
+fortune cookie,medium,food
+four-leaf clover,medium,nature
+fried chicken,medium,food
+fried egg,medium,food
+frog prince,medium,fantasy
+full moon,medium,nature
+garbage truck,medium,transport
+garden hose,medium,objects
+gas station,medium,transport
+ghost town,medium,places
+gingerbread house,medium,fantasy
+glass slipper,medium,fantasy
+golf club,medium,sports
+group hug,medium,actions
+hamster wheel,medium,animals
+haunted house,medium,fantasy
+hermit crab,medium,animals
+hide and seek,medium,sports
+high heels,medium,objects
+hockey stick,medium,sports
+horse and carriage,medium,transport
+hot air balloon,medium,transport
+hot chocolate,medium,food
+hot tub,medium,objects
+house of cards,medium,objects
+hula hoop,medium,sports
+ice cream truck,medium,transport
+jack in the box,medium,objects
+jump on the bed,medium,actions
+jumping jacks,medium,actions
+jungle gym,medium,places
+killer whale,medium,animals
+king of the jungle,medium,animals
+knight in shining armor,medium,fantasy
+knock on the door,medium,actions
+lemonade stand,medium,places
+lily pad,medium,nature
+litter box,medium,animals
+living room,medium,places
+log cabin,medium,places
+mad scientist,medium,people
+magic carpet,medium,fantasy
+magic lamp,medium,fantasy
+make the bed,medium,actions
+maple leaf,medium,nature
+message in a bottle,medium,objects
+milk a cow,medium,actions
+missing tooth,medium,people
+monster truck,medium,transport
+monster under the bed,medium,fantasy
+mountain range,medium,nature
+movie star,medium,people
+mow the lawn,medium,actions
+music box,medium,objects
+needle and thread,medium,objects
+night owl,medium,animals
+paper boat,medium,transport
+paper clip,medium,objects
+parking lot,medium,places
+peanut butter,medium,food
+peanut butter and jelly,medium,food
+peg leg,medium,fantasy
+phone booth,medium,places
+picture frame,medium,objects
+pie in the face,medium,actions
+piece of cake,medium,food
+piggyback ride,medium,actions
+pine cone,medium,nature
+pitch a tent,medium,actions
+play fetch,medium,actions
+poison apple,medium,fantasy
+police station,medium,places
+price tag,medium,objects
+punching bag,medium,sports
+rabbit hole,medium,animals
+raining cats and dogs,medium,nature
+rainy day,medium,nature
+rake leaves,medium,actions
+red card,medium,sports
+red carpet,medium,places
+red panda,medium,animals
+roast marshmallows,medium,actions
+rock star,medium,people
+rocking chair,medium,objects
+roller coaster,medium,places
+roller skates,medium,sports
+rubber band,medium,objects
+runny nose,medium,people
+sack race,medium,sports
+salt and pepper,medium,food
+school of fish,medium,animals
+scuba diving,medium,sports
+sea monster,medium,fantasy
+sing in the shower,medium,actions
+ski jump,medium,sports
+skull and crossbones,medium,fantasy
+sleeping bag,medium,objects
+snakes and ladders,medium,sports
+snow angel,medium,actions
+space shuttle,medium,transport
+sports car,medium,transport
+steam train,medium,transport
+swarm of bees,medium,animals
+swing set,medium,places
+swiss cheese,medium,food
+table tennis,medium,sports
+take a selfie,medium,actions
+take out the trash,medium,actions
+tea party,medium,food
+tennis racket,medium,sports
+theme park,medium,places
+thumb war,medium,actions
+thumbs down,medium,actions
+thunder and lightning,medium,nature
+tie your shoes,medium,actions
+time machine,medium,fantasy
+top hat,medium,objects
+traffic jam,medium,transport
+train tracks,medium,transport
+vacuum cleaner,medium,objects
+vampire bat,medium,animals
+vending machine,medium,objects
+video game,medium,sports
+wake up,medium,actions
+wash the dishes,medium,actions
+wash your hands,medium,actions
+water skiing,medium,sports
+water the plants,medium,actions
+wrecking ball,medium,objects
+ants in your pants,hard,people
+apple core,hard,food
+bed head,hard,people
+bowling alley,hard,places
+break the ice,hard,actions
+bubble wrap,hard,objects
+bungee jumping,hard,sports
+butterflies in the stomach,hard,people
+cement mixer,hard,transport
+cherry blossom,hard,nature
+chimney sweep,hard,people
+class clown,hard,people
+cold feet,hard,people
+cops and robbers,hard,sports
+crocodile tears,hard,animals
+cry over spilled milk,hard,actions
+crystal ball,hard,fantasy
+cupid's arrow,hard,fantasy
+damsel in distress,hard,fantasy
+dead end,hard,transport
+deer in the headlights,hard,animals
+domino effect,hard,objects
+early bird,hard,animals
+egg and spoon race,hard,sports
+eye of the storm,hard,nature
+fairy godmother,hard,fantasy
+family tree,hard,people
+figure skating,hard,sports
+fire escape,hard,places
+fish and chips,hard,food
+fish out of water,hard,animals
+fly in the soup,hard,food
+fly on the wall,hard,animals
+fly swatter,hard,objects
+fork in the road,hard,transport
+green thumb,hard,people
+grim reaper,hard,fantasy
+guide dog,hard,animals
+guinea pig,hard,animals
+head in the clouds,hard,people
+heat wave,hard,nature
+hold your breath,hard,actions
+hole in one,hard,sports
+home run,hard,sports
+hot water bottle,hard,objects
+lost and found,hard,places
+magic mirror,hard,fantasy
+man overboard,hard,transport
+meteor shower,hard,nature
+miss the bus,hard,actions
+monkey bars,hard,places
+musical chairs,hard,sports
+needle in a haystack,hard,objects
+northern lights,hard,nature
+one-man band,hard,people
+opera singer,hard,people
+outer space,hard,nature
+party animal,hard,people
+pencil sharpener,hard,objects
+pickup truck,hard,transport
+pigs in a blanket,hard,food
+pogo stick,hard,sports
+pole vault,hard,sports
+post office,hard,places
+pot of gold,hard,fantasy
+prince charming,hard,fantasy
+puppy dog eyes,hard,people
+rotten egg,hard,food
+rush hour,hard,transport
+sand dune,hard,nature
+ship in a bottle,hard,objects
+shopping mall,hard,places
+skeleton in the closet,hard,fantasy
+skip stones,hard,actions
+snowball fight,hard,actions
+sore throat,hard,people
+space station,hard,transport
+speed bump,hard,transport
+spill the beans,hard,actions
+spiral staircase,hard,places
+staring contest,hard,actions
+stuck in traffic,hard,transport
+sweet tooth,hard,people
+tape measure,hard,objects
+teacher's pet,hard,people
+three-legged race,hard,sports
+tip of the iceberg,hard,nature
+train station,hard,transport
+walk a tightrope,hard,actions
+walk on eggshells,hard,actions
+walk the plank,hard,fantasy
+wishing well,hard,fantasy
+x marks the spot,hard,fantasy

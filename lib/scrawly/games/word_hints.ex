@@ -14,14 +14,17 @@ defmodule Scrawly.Games.WordHints do
   - Stage 1 (37.5%–68.75% elapsed): batch 1 revealed
   - Stage 2 (68.75%–100% elapsed): both batches revealed
 
-  Spaces and hyphens are always rendered literally (never masked).
+  Spaces, hyphens and apostrophes are always rendered literally (never masked)
+  and are not letters: "bird's nest" shows `_ _ _ _ ' _   _ _ _ _` and counts 9
+  letters. Guesses ignore them too (`Scrawly.Games.Guess.key/1`).
   """
 
   @default_schedule [0.375, 0.6875]
   @default_reveal_fraction 0.35
 
-  # Characters that are always rendered literally (never masked).
-  @always_visible [" ", "-"]
+  # Characters that are always rendered literally (never masked) and never
+  # counted as letters.
+  @always_visible [" ", "-", "'"]
 
   @doc """
   Generate a hint display for a word. Returns a string with revealed letters and underscores.
@@ -60,7 +63,8 @@ defmodule Scrawly.Games.WordHints do
   - `:stage` — 0, 1, ... up to number of batches (was named "stage" historically;
     now corresponds to the batch index that has been fully revealed)
   - `:revealed_count` — letters currently revealed
-  - `:total_letters` — total maskable letters (spaces / hyphens excluded)
+  - `:total_letters` — total maskable letters (spaces, hyphens and apostrophes
+    excluded)
   - `:remaining_count` — letters still hidden
   - `:progress_pct` — percent of letters revealed (0..100)
   """
@@ -136,7 +140,8 @@ defmodule Scrawly.Games.WordHints do
   end
 
   @doc """
-  Returns the number of letters in the word (excluding spaces and hyphens — always-visible chars).
+  Returns the number of letters in the word (excluding spaces, hyphens and
+  apostrophes, the always-visible characters).
   """
   def word_length_hint(word) when is_binary(word) do
     word

@@ -51,7 +51,7 @@ defmodule Scrawly.Games.Word do
 
       argument :word_count, :integer do
         allow_nil? false
-        constraints min: 1, max: 3
+        constraints min: 1, max: 4
       end
 
       filter expr(difficulty == ^arg(:difficulty) and word_count == ^arg(:word_count))
@@ -74,12 +74,13 @@ defmodule Scrawly.Games.Word do
       constraints one_of: WordList.difficulties()
     end
 
-    # Set from the text (Changes.NormalizeText), never supplied.
+    # Set from the text (Changes.NormalizeText), never supplied. Phrases have
+    # 2 to 4 words (priv/words/README.md).
     attribute :word_count, :integer do
       allow_nil? false
       default 1
       public? true
-      constraints min: 1, max: 3
+      constraints min: 1, max: 4
     end
 
     attribute :theme, :atom do

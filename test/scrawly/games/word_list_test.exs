@@ -14,6 +14,8 @@ defmodule Scrawly.Games.WordListTest do
 
   defp single_words, do: Enum.filter(WordList.entries(), &(WordList.word_count(&1.text) == 1))
 
+  defp phrases, do: Enum.filter(WordList.entries(), &(WordList.word_count(&1.text) > 1))
+
   describe "priv/words/words.csv" do
     test "is the header and one line per entry, every field kept as written" do
       [header | lines] = @path |> File.read!() |> String.split("\n", trim: true)
@@ -48,10 +50,10 @@ defmodule Scrawly.Games.WordListTest do
       assert Enum.filter(texts(), &(&1 != String.trim(&1) or String.contains?(&1, "  "))) == []
     end
 
-    # The `words` table's word_count allows 1 to 3 (`Scrawly.Games.Word`), so
+    # The `words` table's word_count allows 1 to 4 (`Scrawly.Games.Word`), so
     # a longer entry would make the deploy's sync fail.
-    test "texts have 1 to 3 words" do
-      assert Enum.reject(texts(), &(WordList.word_count(&1) in 1..3)) == []
+    test "texts have 1 to 4 words" do
+      assert Enum.reject(texts(), &(WordList.word_count(&1) in 1..4)) == []
     end
 
     test "difficulties and themes are valid" do
@@ -61,8 +63,8 @@ defmodule Scrawly.Games.WordListTest do
       end
     end
 
-    test "every single-word entry has a theme" do
-      assert Enum.filter(single_words(), &is_nil(&1.theme)) == []
+    test "every entry has a theme" do
+      assert Enum.filter(WordList.entries(), &is_nil(&1.theme)) == []
     end
 
     # priv/words/README.md: a longer single word earns its place only if it
@@ -99,17 +101,90 @@ defmodule Scrawly.Games.WordListTest do
       assert Enum.filter(single_words(), &(&1.text in removed)) == []
     end
 
-    test "every group (single word or several, by difficulty) has at least 30 entries" do
-      counts =
-        Enum.frequencies_by(WordList.entries(), fn entry ->
-          {WordList.word_count(entry.text) == 1, entry.difficulty}
-        end)
+    test "each difficulty has at least 30 single words" do
+      counts = Enum.frequencies_by(single_words(), & &1.difficulty)
 
-      for single? <- [true, false], difficulty <- WordList.difficulties() do
-        count = Map.get(counts, {single?, difficulty}, 0)
-        group = "#{if single?, do: "single words", else: "several words"}, #{difficulty}"
-        assert count >= 30, "#{group}: only #{count} entries"
+      for difficulty <- WordList.difficulties() do
+        count = Map.get(counts, difficulty, 0)
+        assert count >= 30, "#{difficulty}: only #{count} single words"
       end
+    end
+  end
+
+  # A phrase is an entry of two or more words (priv/words/README.md). A game
+  # can be played with phrases only, so every difficulty and theme needs its
+  # own supply.
+  describe "the phrases" do
+    test "have 2 to 4 words and at most 30 characters" do
+      assert Enum.reject(phrases(), &(WordList.word_count(&1.text) in 2..4)) == []
+      assert Enum.filter(phrases(), &(String.length(&1.text) > 30)) == []
+    end
+
+    test "each difficulty has at least 60 phrases" do
+      counts = Enum.frequencies_by(phrases(), & &1.difficulty)
+
+      for difficulty <- WordList.difficulties() do
+        count = Map.get(counts, difficulty, 0)
+        assert count >= 60, "#{difficulty}: only #{count} phrases"
+      end
+    end
+
+    test "each theme has at least 15 phrases" do
+      counts = Enum.frequencies_by(phrases(), & &1.theme)
+
+      for theme <- WordList.themes() do
+        count = Map.get(counts, theme, 0)
+        assert count >= 15, "#{theme}: only #{count} phrases"
+      end
+    end
+
+    # "pop corn" would be "popcorn" split in two: write the single word.
+    test "none has a single word's guess key" do
+      single_keys = MapSet.new(single_words(), &Guess.key(&1.text))
+
+      assert Enum.filter(phrases(), &MapSet.member?(single_keys, Guess.key(&1.text))) == []
+    end
+
+    # The word-list review of 2026-11-15: invented pairs, abstract idioms and
+    # phrases missing their articles.
+    @rejected_phrases [
+      "den lamp",
+      "ark door",
+      "gap fill",
+      "urn lid",
+      "wok pan",
+      "yam pie",
+      "jackal howl",
+      "nectar sip",
+      "ventricle pump",
+      "tessellation tile",
+      "quicksilver flow",
+      "resonance hum",
+      "give and take",
+      "now and then",
+      "abyss of time",
+      "bane of existence",
+      "zenith of power",
+      "xyst of columns",
+      "jack in box",
+      "man on moon",
+      "needle in haystack",
+      "lord of rings",
+      "once upon time"
+    ]
+
+    test "has none of the invented, abstract or article-less phrases" do
+      assert Enum.filter(phrases(), &(&1.text in @rejected_phrases)) == []
+    end
+
+    test "no two share a guess key" do
+      clashes =
+        phrases()
+        |> Enum.group_by(&Guess.key(&1.text), & &1.text)
+        |> Map.values()
+        |> Enum.filter(&match?([_, _ | _], &1))
+
+      assert clashes == []
     end
   end
 

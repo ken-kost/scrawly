@@ -35,6 +35,15 @@ defmodule Scrawly.Games.WordHintsTest do
       refute result =~ "c"
     end
 
+    test "preserves apostrophes literally" do
+      assert WordHints.hidden_display("bird's nest") == "_ _ _ _ ' _   _ _ _ _"
+    end
+
+    test "masks every letter of a four-word phrase and keeps its three spaces" do
+      assert WordHints.hidden_display("fly on the wall") ==
+               "_ _ _   _ _   _ _ _   _ _ _ _"
+    end
+
     test "returns empty string for nil" do
       assert WordHints.hidden_display(nil) == ""
     end
@@ -167,6 +176,34 @@ defmodule Scrawly.Games.WordHintsTest do
       assert revealed_letters(WordHints.generate_hint("butterfly", 60, 120)) >= 1
     end
 
+    test "apostrophes are never masked or revealed as letters" do
+      for time_left <- [60, 30, 0] do
+        hint = WordHints.generate_hint("teacher's pet", time_left)
+        assert String.at(hint, 14) == "'"
+      end
+
+      # 35% of the 11 letters, rounded down; the apostrophe is not among them.
+      assert WordHints.hint_info("teacher's pet", 0).revealed_count == 3
+      assert revealed_letters(WordHints.generate_hint("teacher's pet", 0)) == 3 + 1
+    end
+
+    test "reveals letters across all the words of a four-word phrase" do
+      word = "tip of the iceberg"
+      hint = WordHints.generate_hint(word, 0)
+
+      # 35% of 15 letters, rounded down.
+      assert WordHints.hint_info(word, 0).revealed_count == 5
+      assert length(String.split(hint, "   ")) == 4
+
+      # The hint is the word's characters joined by spaces: every other one.
+      shown = hint |> String.graphemes() |> Enum.take_every(2)
+      assert length(shown) == String.length(word)
+
+      for {char, shown} <- Enum.zip(String.graphemes(word), shown), shown != "_" do
+        assert shown == char
+      end
+    end
+
     test "spaces in multi-word target render in the output literally" do
       hint = WordHints.generate_hint("fire truck", 60)
       # Exactly one space between "fire" and "truck"
@@ -292,6 +329,15 @@ defmodule Scrawly.Games.WordHintsTest do
 
     test "excludes hyphens" do
       assert WordHints.word_length_hint("co-op") == 4
+    end
+
+    test "excludes apostrophes" do
+      assert WordHints.word_length_hint("bird's nest") == 9
+      assert WordHints.word_length_hint("jack-o'-lantern") == 12
+    end
+
+    test "counts the letters of all four words of a phrase" do
+      assert WordHints.word_length_hint("x marks the spot") == 13
     end
 
     test "returns 0 for nil" do

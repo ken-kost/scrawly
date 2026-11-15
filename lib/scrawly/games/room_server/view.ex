@@ -13,7 +13,8 @@ defmodule Scrawly.Games.RoomServer.View do
     * `word_display` - the masked hint for the room's current `hint_stage`
       (`WordHints.hint_for_stage/3`) while `:drawing` or `:round_end`,
       otherwise `""`;
-    * `word_length` - the number of letters (spaces and hyphens excluded);
+    * `word_length` - the number of letters (spaces, hyphens and apostrophes
+      excluded);
     * `revealed_word` - the word itself, only in `:round_end`.
 
   No reveal schedule, future mask or letter positions are ever sent: the room

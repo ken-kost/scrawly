@@ -15,17 +15,18 @@ defmodule Scrawly.Games.WordList do
 
     * `text` - what the drawer draws and the others guess: lowercase letters,
       spaces, hyphens and apostrophes (never a comma), at most 30 characters,
-      1 to 3 words, unique by `Scrawly.Games.Guess.key/1`. Its word count is
-      derived (`word_count/1`).
+      1 to 4 words (a phrase has 2 to 4), unique by
+      `Scrawly.Games.Guess.key/1`. Its word count is derived (`word_count/1`).
     * `difficulty` - one of `difficulties/0`.
-    * `theme` - one of `themes/0`. Single words must have one; phrases may
-      still leave it empty.
+    * `theme` - one of `themes/0`. The format allows an empty theme (`nil`),
+      but the lint requires one on every entry.
 
   A line without exactly three fields, or with an unknown difficulty or theme,
   fails compilation and names the line. `test/scrawly/games/word_list_test.exs`
   checks the rest: the text rules, duplicates, themes, and enough entries per
-  group. `priv/words/README.md` holds the editorial rules: what makes a good
-  entry, how to rate its difficulty and which theme it takes.
+  group, difficulty and theme. `priv/words/README.md` holds the editorial
+  rules: what makes a good entry or phrase, how to rate its difficulty and
+  which theme it takes.
   """
 
   @type difficulty :: :easy | :medium | :hard

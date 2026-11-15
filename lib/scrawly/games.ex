@@ -113,7 +113,7 @@ defmodule Scrawly.Games do
 
   Options:
     * `:difficulty` - `:easy`, `:medium` or `:hard` (default: weighted random)
-    * `:word_count` - 1, 2 or 3 (default: 1)
+    * `:word_count` - 1 to 4 (default: 1)
     * `:exclude` - words to avoid repeating; ignored when it would leave
       nothing to pick from
 
