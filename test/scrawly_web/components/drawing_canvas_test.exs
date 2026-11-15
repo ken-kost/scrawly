@@ -45,7 +45,8 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       socket_token: "",
       room_code: "ABCD",
       channel_connected: false,
-      channel_connecting: false
+      channel_connecting: false,
+      mount_id: 42
     }
 
     %Hologram.Component{props: %{room_id: "test-room"}, state: Map.merge(defaults, overrides)}
@@ -260,18 +261,23 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
 
       assert result.state.drawing_strokes == []
       assert result.state.strokes_seq == 2
-      assert :setDrawingPath in names
+      # The live overlays go, their ids stay open (a stroke started after the
+      # clear comes back with its next chunk).
+      assert names == [:clearRemoteStrokes]
     end
 
-    test "never wipes the drawer's canvas (its own echo, or another tab's)" do
+    test "on the drawer's tab, only a clear from another tab touches the canvas" do
       comp = drawing_component(%{is_drawer: true, drawing_strokes: [@s1]})
 
-      {result, names} =
-        js_call_names(fn -> GamePage.action(:drawing_cleared, %{seq: 2}, comp) end)
+      {result, calls} =
+        js_calls(fn ->
+          GamePage.action(:drawing_cleared, %{seq: 2, op_epoch: "epoch-a"}, comp)
+        end)
 
       assert result.state.drawing_strokes == [@s1]
       assert result.state.last_seq == 2
-      assert names == []
+      # drawing_manager.mjs compares the epoch with its own (applyRoomClear).
+      assert calls == [applyRoomClear: ["epoch-a"]]
     end
   end
 
@@ -290,7 +296,8 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
 
       assert result.state.drawing_strokes == [@s1, @s2]
       assert result.state.last_seq == 2
-      assert names == []
+      # Its own undo already removed it; another tab's is removed here.
+      assert names == [:forgetStroke]
     end
   end
 
@@ -321,7 +328,10 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       {result, calls} = js_calls(fn -> GamePage.action(:mounted, %{join: nil}, comp) end)
 
       assert [
-               {:mountCanvas, []},
+               {:mountCanvas, [42]},
+               {:noteRoomChannel, ["test-room"]},
+               {:setToolColor, ["#000000"]},
+               {:setToolWidth, [2]},
                {:restoreStrokes, [[@s1]]},
                {:setDrawingEnabled, [true]},
                {:connectGameChannel, ["tok", "ABCD"]}
@@ -392,7 +402,9 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
           end)
 
         assert result.state.drawing_strokes == strokes
-        assert {:setStrokes, [strokes]} in calls
+        # Overlays of strokes the snapshot holds go; a stroke still being
+        # drawn keeps its live preview.
+        assert {:settleRemoteStrokes, [Enum.map(strokes, & &1.id)]} in calls
       end
     end
 
@@ -515,7 +527,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
           )
         end)
 
-      assert {:restoreStrokes, [[@s1]]} in calls
+      assert {:rebaseCanvas, [[@s1]]} in calls
       assert enabled_calls(calls) == [true]
     end
   end

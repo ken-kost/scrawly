@@ -7,7 +7,8 @@ defmodule ScrawlyWeb.Components.RecoveryCodePanel do
   (HomePage, AppLayout, ProfilePage) implements the same actions:
 
     * `:copy_recovery_code` and `:download_recovery_code` (JS.call into
-      `recovery_code.mjs`, which each owner imports itself);
+      `recovery_code.mjs`, which each owner imports itself); the copy also
+      sets the owner's `copied` flag, which the copy button shows;
     * `:set_recovery_code_saved` (`%{event: %{value: boolean}}`);
     * `:close_recovery_code`, which must drop the plaintext from state.
   """
@@ -16,6 +17,8 @@ defmodule ScrawlyWeb.Components.RecoveryCodePanel do
 
   prop :code, :string, required: true
   prop :saved, :boolean, default: false
+  # The code was copied (the button says so until the panel closes).
+  prop :copied, :boolean, default: false
 
   def template do
     ~HOLO"""
@@ -30,7 +33,7 @@ defmodule ScrawlyWeb.Components.RecoveryCodePanel do
         <div class="app-modal-body">
           <div class="recovery-code mono" data-testid="recovery-code">{@code}</div>
           <div class="row" style="gap: 8px;">
-            <button type="button" class="app-btn app-btn-sm" $click={:copy_recovery_code}>copy</button>
+            <button type="button" class="app-btn app-btn-sm" $click={:copy_recovery_code}>{if(@copied, do: "copied ✓", else: "copy")}</button>
             <button type="button" class="app-btn app-btn-sm" $click={:download_recovery_code}>download .txt</button>
           </div>
           <div style="font-size: 12px; color: var(--muted); line-height: 1.5;">

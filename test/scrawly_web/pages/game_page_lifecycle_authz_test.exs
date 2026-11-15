@@ -375,12 +375,31 @@ defmodule ScrawlyWeb.Pages.GamePageLifecycleAuthzTest do
       assert {leave_watch.name, leave_watch.params} == {:leave_watcher, expected}
     end
 
-    test ":command_denied clears leaving? and resyncs", %{component: c} do
+    test "a denied leave clears leaving? and resyncs", %{component: c} do
       leaving = %{c | state: Map.merge(c.state, %{mounted_state() | leaving?: true})}
 
-      result =
-        GamePage.action(:command_denied, %{command: :start_game, reason: :not_creator}, leaving)
+      for command <- [:leave_room, :leave_watcher] do
+        result =
+          GamePage.action(:command_denied, %{command: command, reason: :not_found}, leaving)
 
+        assert result.state.leaving? == false
+        assert result.next_command.name == :resync_room
+      end
+    end
+
+    test "any other denial leaves leaving? alone (the page may be on its way out)",
+         %{component: c} do
+      leaving = %{c | state: Map.merge(c.state, %{mounted_state() | leaving?: true})}
+
+      for command <- [:start_game, :complete_stroke, :join_room, :submit_guess] do
+        result = GamePage.action(:command_denied, %{command: command, reason: :nope}, leaving)
+
+        assert result.state.leaving? == true
+        assert result.next_command == nil
+      end
+
+      staying = %{c | state: Map.merge(c.state, mounted_state())}
+      result = GamePage.action(:command_denied, %{command: :start_game, reason: :x}, staying)
       assert result.state.leaving? == false
       assert result.next_command.name == :resync_room
     end

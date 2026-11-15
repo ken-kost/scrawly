@@ -4,6 +4,7 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
 
   js_import :copyRecoveryCode, from: "../components/recovery_code.mjs"
   js_import :downloadRecoveryCode, from: "../components/recovery_code.mjs"
+  js_import :takeStaleRoomChannels, from: "./room_channels.mjs"
 
   route "/profile"
 
@@ -12,7 +13,7 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
   middleware ScrawlyWeb.Middleware.RequireUser
 
   alias Scrawly.Accounts.User.Validations.NotReservedUsername
-  alias ScrawlyWeb.{Auth, CommandParams}
+  alias ScrawlyWeb.{Auth, CommandParams, RoomSubscriptions}
   alias ScrawlyWeb.Components.{Avatar, AvatarDefs, RecoveryCodePanel}
 
   # RequireUser guarantees the stashed user. Only copied fields reach the
@@ -45,11 +46,15 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
     |> put_state(:recovery_message, nil)
     |> put_state(:recovery_code, nil)
     |> put_state(:recovery_code_saved, false)
+    |> put_state(:recovery_code_copied, false)
+    |> put_state(:mount_id, System.unique_integer([:positive]))
+    |> put_state(:page_shown?, false)
   end
 
   def template do
     ~HOLO"""
     <div class="page page-narrow">
+      <script>Hologram.dispatchAction("page_shown", "page", \{mount_id: "{@mount_id}"\});</script>
       <section class="hero" style="padding-bottom: 24px;">
         <div>
           <h1 style="font-size: 44px;">profile.</h1>
@@ -234,7 +239,7 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
       </div>
 
       {%if @recovery_code}
-        <RecoveryCodePanel code={@recovery_code} saved={@recovery_code_saved} />
+        <RecoveryCodePanel code={@recovery_code} saved={@recovery_code_saved} copied={@recovery_code_copied} />
       {/if}
     </div>
     """
@@ -344,11 +349,12 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
     |> put_state(:recovery_generated_label, Map.get(params, :generated_label, ""))
     |> put_state(:recovery_code, code)
     |> put_state(:recovery_code_saved, false)
+    |> put_state(:recovery_code_copied, false)
   end
 
   def action(:copy_recovery_code, _params, component) do
     JS.call(:copyRecoveryCode, [component.state.recovery_code])
-    component
+    put_state(component, :recovery_code_copied, true)
   end
 
   def action(:download_recovery_code, _params, component) do
@@ -364,8 +370,49 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
     component
     |> put_state(:recovery_code, nil)
     |> put_state(:recovery_code_saved, false)
+    |> put_state(:recovery_code_copied, false)
     |> put_state(:recovery_message, "recovery code saved. any older code no longer works.")
   end
+
+  # ── Back/Forward ────────────────────────────────────────────────────
+  # The inline script dispatches :page_shown whenever this page instance's
+  # markup is inserted. The second time is a Back/Forward restore: the server
+  # still holds the subscriptions of the page shown before (the lobby, a
+  # room), which go now (ScrawlyWeb.RoomSubscriptions).
+
+  def action(:page_shown, _params, component) do
+    # Hologram 0.12.8 keeps the put_page/2 that left this page in the
+    # component it saves (only next_action and next_command are cleared), so
+    # after a restore the first action to return it would navigate there again
+    # (Back from a game page bounced straight back to it). Drop it.
+    component = %{component | next_page: nil}
+
+    if component.state.page_shown? do
+      stale_rooms = JS.call(:takeStaleRoomChannels, [nil])
+
+      put_command(component, :drop_stale_subscriptions,
+        stale_rooms: if(is_list(stale_rooms), do: stale_rooms, else: [])
+      )
+    else
+      put_state(component, :page_shown?, true)
+    end
+  end
+
+  # ── Other pages' broadcasts ─────────────────────────────────────────
+  # HomePage's `:lobby` and GamePage's room actions, which reach this page
+  # after a Back/Forward restore until :drop_stale_subscriptions lands.
+  # Explicit clauses, no catch-all: a new broadcast action needs one here.
+
+  def action(:lobby_room_changed, _params, component), do: component
+  def action(:lobby_room_removed, _params, component), do: component
+  def action(:lobby_chat_received, _params, component), do: component
+  def action(:lobby_chat_cleared, _params, component), do: component
+  def action(:room_delta, _params, component), do: component
+  def action(:chat_appended, _params, component), do: component
+  def action(:stroke_completed, _params, component), do: component
+  def action(:drawing_cleared, _params, component), do: component
+  def action(:drawing_undone, _params, component), do: component
+  def action(:private_state, _params, component), do: component
 
   # A field of a $submit event (string keys: the browser's form data).
   defp form_value(params, name) do
@@ -443,6 +490,10 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
       {:error, :unauthenticated} -> Auth.deny(server, :save_password, :unauthenticated)
     end
   end
+
+  # After a Back/Forward restore (:page_shown).
+  def command(:drop_stale_subscriptions, params, server),
+    do: RoomSubscriptions.drop_stale(server, params)
 
   def command(name, _params, server), do: CommandParams.deny_unknown(server, name)
 

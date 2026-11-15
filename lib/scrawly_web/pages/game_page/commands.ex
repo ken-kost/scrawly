@@ -23,7 +23,7 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   alias Scrawly.{Accounts, Games}
   alias Scrawly.Games.{RoomServer, StrokeRules}
   alias Scrawly.Games.RoomServer.{Broadcasts, GameFlow}
-  alias ScrawlyWeb.{Auth, CommandParams, SocketToken}
+  alias ScrawlyWeb.{Auth, CommandParams, RoomSubscriptions, SocketToken}
 
   @doc """
   The shape check in front of every room command (GamePage.command/3; the
@@ -61,15 +61,21 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   the drawer's private slice is missing, after a denied command and when a
   countdown stays at 0.
 
-  With `resubscribe: true` (a page brought back by Back/Forward, whose
-  subscriptions the connection dropped when it was left) it also subscribes
-  the page to the room's channels again, as `GamePage.init/3` does.
+  With `resubscribe: true` (a page brought back by Back/Forward, which runs
+  no init on the server) it also subscribes the page to the room's channels
+  again, as `GamePage.init/3` does, and deletes the subscriptions the page
+  shown before left behind: `:lobby` and the rooms in `stale_rooms`
+  (`ScrawlyWeb.RoomSubscriptions`).
   """
   def resync_room(%{room_id: room_id} = params, server) do
     server =
-      if Map.get(params, :resubscribe) == true,
-        do: subscribe_to_room(server, room_id),
-        else: server
+      if Map.get(params, :resubscribe) == true do
+        server
+        |> RoomSubscriptions.drop_stale(params, keep_room: room_id)
+        |> subscribe_to_room(room_id)
+      else
+        server
+      end
 
     reply_with_snapshot(server, room_id)
   end
@@ -309,7 +315,9 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   A non-drawer, the wrong phase, a missing room or no account gets
   `:command_denied` (with `op_seq`); an invalid stroke or a full canvas gets
   `:stroke_rejected` with the stored strokes, so the drawer's canvas drops
-  what nobody else will see. An op over the drawer's rate limit
+  what nobody else will see. The rejection echoes the commit's `game_id`
+  and `round` (the page's turn when it sent the stroke), so the page can
+  tell a late one from an earlier turn. An op over the drawer's rate limit
   (`StrokeRules.op_rate_limit/0`) gets no reply at all: the op stays at the
   head of the drawer's queue, which resends it after its retry delay, by
   when the window has room again, so nothing is lost.
@@ -342,7 +350,9 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
           stroke_id: clean_stroke_id(stroke.id),
           reason: reason,
           strokes: strokes,
-          op_seq: op_seq(params)
+          op_seq: op_seq(params),
+          game_id: CommandParams.string(params, :game_id),
+          round: if(is_integer(Map.get(params, :round)), do: Map.get(params, :round))
         )
 
       {:error, reason} ->

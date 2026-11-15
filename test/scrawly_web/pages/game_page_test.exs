@@ -52,7 +52,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       # The page param stays a prop (component.props.room_id), never state.
       refute Map.has_key?(state, :room_id)
       assert state.room_code == room.code
-      assert state.room_name == "Room #{room.name}"
+      # The name alone: the template adds "room ·" where it wants it.
+      assert state.room_name == room.name
       assert state.room_status == :lobby
       assert state.game_id == ""
       assert state.game_started == false
@@ -98,7 +99,11 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert html =~ "game-page-marker"
       assert html =~ ~s|Hologram.dispatchAction("page_shown", "page"|
       assert html =~ Integer.to_string(state.mount_id)
-      assert html =~ "Room #{room.name}"
+      # The marker carries the instance (drawing_manager.mjs pages its op queue).
+      assert html =~ ~s|data-mount="#{state.mount_id}"|
+      assert html =~ "room · #{room.name}"
+      assert html =~ ~s|<h1 class="lobby-title">#{room.name}</h1>|
+      refute html =~ "Room #{room.name}"
       refute html =~ "room not found"
     end
 
@@ -143,7 +148,9 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
         {component, server} = GamePage.init(%{room_id: room_id}, %Hologram.Component{}, server)
 
         assert %Hologram.Component{state: state} = component
-        assert state == %{room_missing?: true}
+        assert %{room_missing?: true, page_shown?: false, mount_id: mount_id} = state
+        assert map_size(state) == 3
+        assert is_integer(mount_id)
         # The user (or nil) is stashed for AppLayout on this branch too.
         assert Map.has_key?(server.stash, :current_user)
         assert server.subscriptions == []
@@ -154,8 +161,24 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
         html = render_template(state)
         assert html =~ "room not found"
         refute html =~ "game-page-marker"
-        refute html =~ "page_shown"
+        # Its own page_shown script: a Back/Forward restore goes home again.
+        assert html =~ ~s(dispatchAction("page_shown")
       end
+    end
+
+    test "the placeholder goes home again when Back/Forward restores it" do
+      placeholder = %Hologram.Component{
+        props: %{room_id: "r1"},
+        state: %{room_missing?: true, page_shown?: false, mount_id: 7}
+      }
+
+      first = GamePage.action(:page_shown, %{mount_id: "7"}, placeholder)
+      assert first.state.page_shown? == true
+      assert first.next_action == nil
+
+      again = GamePage.action(:page_shown, %{mount_id: "7"}, first)
+      assert again.next_action.name == :go_home
+      assert GamePage.action(:go_home, %{}, again).next_page == ScrawlyWeb.Pages.HomePage
     end
 
     test "a dissolved room is not started again", %{room: room, creator: creator} do
@@ -166,7 +189,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
         GamePage.init(%{room_id: room.id}, %Hologram.Component{}, server_for(creator))
 
       assert server.stash.current_user.id == creator.id
-      assert component.state == %{room_missing?: true}
+      assert %{room_missing?: true, page_shown?: false} = component.state
       assert component.next_action.name == :go_home
       assert component.next_page == nil
       assert render_template(component.state) =~ "room not found"
@@ -428,7 +451,15 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert result.state.round == 1
       assert result.state.phase == :choosing
       assert result.state.room_status == :playing
-      assert result.state.current_drawer == %{id: @drawer, username: "Alice"}
+      # Name and avatar for the canvas header (the player's own avatar, the
+      # default when the player list doesn't carry one).
+      assert result.state.current_drawer == %{
+               id: @drawer,
+               username: "Alice",
+               avatar_id: "a-mushroom",
+               avatar_color: "3"
+             }
+
       assert result.state.is_drawer == false
       assert result.state.can_start_game == false
       assert result.state.current_word == nil
@@ -727,14 +758,16 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert result.state.last_seq == 11
     end
 
-    test "the drawer's tabs keep their own canvas" do
+    test "the drawer's tabs keep their own canvas; another tab's undo leaves it too" do
       drawer = playing(current_user_id: @drawer, is_drawer: true, drawing_strokes: [@stroke])
 
       {result, calls} =
         js_calls(fn -> GamePage.action(:drawing_undone, %{stroke_id: "s-1", seq: 11}, drawer) end)
 
       assert result.state.drawing_strokes == [@stroke]
-      assert calls == []
+      # drawing_manager.mjs drops it only if this tab still holds it (another
+      # of the drawer's tabs undid it).
+      assert calls == [forgetStroke: ["s-1"]]
     end
 
     test "a stale snapshot can't bring the undone stroke back" do
@@ -905,7 +938,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert result.state.drawing_strokes == strokes
       assert result.state.resync_requested_at == nil
       assert result.state.resync_owed_seq == nil
-      assert {:setStrokes, [strokes]} in calls
+      assert {:settleRemoteStrokes, [["s-1", "s-2"]]} in calls
       assert result.next_command == nil
     end
 
@@ -1048,9 +1081,20 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
           channel_connected: true
         )
 
-      shown = GamePage.action(:page_shown, %{mount_id: "1"}, restored)
+      {shown, shown_calls} =
+        js_calls(fn -> GamePage.action(:page_shown, %{mount_id: "1"}, restored) end)
 
       assert_resync(shown, true)
+      # The canvas belongs to this instance again (its queued ops resume),
+      # with the tool the restored toolbar shows; the other rooms' channels
+      # the tab may hold go with the resync.
+      assert [
+               {:restoreCanvas, [_mount_id]},
+               {:setToolColor, ["#000000"]},
+               {:setToolWidth, [2]},
+               {:takeStaleRoomChannels, ["r1"]}
+             ] = shown_calls
+
       assert shown.state.restoring? == true
       assert shown.state.last_tick_at == nil
 
@@ -1058,7 +1102,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
 
       {result, calls} = js_calls(fn -> GamePage.action(:room_resynced, view, settled(shown)) end)
 
-      assert {:restoreStrokes, [[@stroke]]} in calls
+      # The drawer's canvas: the room's strokes plus the ops still queued.
+      assert {:rebaseCanvas, [[@stroke]]} in calls
       assert {:ensureGameChannel, ["tok", "ABCD"]} in calls
       assert result.state.restoring? == false
       assert result.state.last_seq == 20

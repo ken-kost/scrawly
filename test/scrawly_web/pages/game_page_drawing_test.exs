@@ -11,6 +11,7 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
   use Scrawly.DataCase, async: false
 
   import Scrawly.RoomTestHelpers
+  import Scrawly.JsCallTrace, only: [js_calls: 1]
 
   alias Scrawly.Games.{RoomServer, StrokeRules}
   alias ScrawlyWeb.Pages.GamePage
@@ -147,6 +148,26 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
       assert strokes(ctx.room) == []
     end
 
+    test "a rejection echoes the turn the commit was sent in (game_id, round)", ctx do
+      result =
+        run(:complete_stroke, ctx.room, tab(ctx.creator), %{
+          path: "",
+          game_id: "g-1",
+          round: 3,
+          op_epoch: "e",
+          op_seq: 1
+        })
+
+      assert_rejected(result, :invalid_stroke, [])
+      assert %{game_id: "g-1", round: 3, op_seq: 1} = result.next_action.params
+
+      # Anything else is echoed as nil.
+      result =
+        run(:complete_stroke, ctx.room, tab(ctx.creator), %{path: "", game_id: 7, round: "3"})
+
+      assert %{game_id: nil, round: nil} = result.next_action.params
+    end
+
     test "every stroke command replies :stroke_op_acked with its op_seq", ctx do
       server = tab(ctx.creator)
 
@@ -219,7 +240,8 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
       assert strokes(ctx.room) == []
 
       assert_published(ctx.room, :stroke_completed, Map.put(@drawn, :stroke_id, @stroke_id))
-      assert_published(ctx.room, :drawing_cleared, %{})
+      # The clearing tab's epoch, so the drawer's other tabs can tell it apart.
+      assert_published(ctx.room, :drawing_cleared, %{op_epoch: @op.op_epoch})
     end
 
     test "a forged user_id param changes nothing for the drawer", ctx do
@@ -230,7 +252,7 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
       assert_published(ctx.room, :stroke_completed, Map.put(@drawn, :stroke_id, @stroke_id))
 
       run(:clear_drawing_cmd, ctx.room, tab(ctx.creator), forged)
-      assert_published(ctx.room, :drawing_cleared, %{})
+      assert_published(ctx.room, :drawing_cleared, %{op_epoch: nil})
     end
   end
 
@@ -409,7 +431,7 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
     test ":send_stroke_op puts the op's command, with no user_id" do
       component = %Hologram.Component{
         props: %{room_id: "r1"},
-        state: %{current_user_id: "forged"}
+        state: %{current_user_id: "forged", game_id: "g1", round: 2}
       }
 
       op = %{op_epoch: "e1", op_seq: 3}
@@ -430,6 +452,7 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
 
       assert commit.next_command.name == :complete_stroke
 
+      # The page's turn goes along (echoed back by a rejection).
       assert commit.next_command.params == %{
                room_id: "r1",
                op_epoch: "e1",
@@ -437,7 +460,9 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
                stroke_id: "s-1",
                path: "M 1 2",
                color: "#000000",
-               width: 2
+               width: 2,
+               game_id: "g1",
+               round: 2
              }
 
       undo =
@@ -492,16 +517,43 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
     end
 
     test ":stroke_rejected replaces the drawer's strokes with the stored ones" do
-      component = %Hologram.Component{state: %{drawing_strokes: [@stroke, @stroke2]}}
+      state = %{drawing_strokes: [@stroke, @stroke2], is_drawer: true, game_id: "g1", round: 2}
+      component = %Hologram.Component{state: state}
+      rejection = %{stroke_id: "s-2", reason: :invalid_stroke, strokes: [@stroke], op_seq: 2}
 
-      result =
-        GamePage.action(
-          :stroke_rejected,
-          %{stroke_id: "s-2", reason: :invalid_stroke, strokes: [@stroke], op_seq: 2},
-          component
-        )
+      {result, calls} =
+        js_calls(fn ->
+          GamePage.action(
+            :stroke_rejected,
+            Map.merge(rejection, %{game_id: "g1", round: 2}),
+            component
+          )
+        end)
 
       assert result.state.drawing_strokes == [@stroke]
+      assert calls == [applyRejectedStrokes: [2, [@stroke]]]
+    end
+
+    test "a :stroke_rejected from another turn, or on a viewer's page, changes nothing" do
+      state = %{drawing_strokes: [@stroke, @stroke2], is_drawer: true, game_id: "g1", round: 2}
+      rejection = %{stroke_id: "s-2", reason: :invalid_stroke, strokes: [@stroke], op_seq: 2}
+
+      for {page_state, turn} <- [
+            {state, %{game_id: "g1", round: 1}},
+            {state, %{game_id: "g0", round: 2}},
+            {state, %{game_id: nil, round: nil}},
+            {%{state | is_drawer: false}, %{game_id: "g1", round: 2}}
+          ] do
+        component = %Hologram.Component{state: page_state}
+
+        {result, calls} =
+          js_calls(fn ->
+            GamePage.action(:stroke_rejected, Map.merge(rejection, turn), component)
+          end)
+
+        assert result == component
+        assert calls == []
+      end
     end
   end
 end

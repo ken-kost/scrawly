@@ -1,10 +1,15 @@
 defmodule ScrawlyWeb.Pages.GameScorePage do
   use ScrawlyWeb.Page
+  use Hologram.JS
+
+  js_import :noteRoomChannel, from: "./room_channels.mjs"
+  js_import :takeStaleRoomChannels, from: "./room_channels.mjs"
 
   route "/game-results/:game_id"
   param :game_id, :string
 
   alias Scrawly.Games.{RoomServer, StrokeRules}
+  alias ScrawlyWeb.{CommandParams, RoomSubscriptions}
   alias ScrawlyWeb.Pages.{GamePage, HomePage}
 
   @tick_ms 1_000
@@ -29,7 +34,7 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
           []
       end
 
-    {room_id, room_name, round_details, game_date, creator_id} =
+    {found?, room_id, room_name, round_details, game_date, creator_id} =
       case Scrawly.Games.get_game_by_id(game_id) do
         {:ok, game} ->
           {rname, cid} =
@@ -68,21 +73,25 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
               }
             end)
 
-          {game.room_id, rname, details, format_date(game.created_at), cid}
+          {true, game.room_id, rname, details, format_date(game.created_at), cid}
 
         _ ->
-          {nil, "Unknown", [], nil, nil}
+          {false, nil, nil, [], nil, nil}
       end
 
     is_host = user_id != nil and user_id == creator_id
 
-    # The countdown shows only while the room is actually in :post_game.
-    countdown_ms = post_game_remaining_ms(room_id)
+    # The countdown back to the room shows only for the game the room has
+    # just finished (in :post_game) and to one of its players
+    # (countdown_ms/3).
+    countdown_ms = countdown_ms(room_id, game_id, user_id)
     room_active = countdown_ms != nil
 
     # Every key in every branch: the countdown actions read them all.
     component =
       component
+      |> put_state(:not_found?, not found?)
+      |> put_state(:headline, headline(results))
       |> put_state(:results, results)
       |> put_state(:current_user_id, user_id)
       |> put_state(:room_id, room_id)
@@ -100,6 +109,9 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
       |> put_state(:tick_gen, System.unique_integer([:positive]))
       |> put_state(:is_host, is_host)
       |> put_state(:room_dissolved, not room_active)
+      # Keys the template's inline script (:page_shown) to this instance.
+      |> put_state(:mount_id, System.unique_integer([:positive]))
+      |> put_state(:page_shown?, false)
 
     if room_active do
       {put_action(component, :start_countdown), put_subscription(server, {:room, room_id})}
@@ -112,14 +124,48 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   defp format_date(nil), do: nil
   defp format_date(datetime), do: Calendar.strftime(datetime, "%b %d, %Y at %H:%M")
 
-  # ms before the room returns to the lobby (View.public/1), or nil when it is
-  # not running or not in :post_game.
-  defp post_game_remaining_ms(nil), do: nil
+  # The page's title: the winner, or the players who share the top score.
+  defp headline([]), do: "game ended."
+  defp headline([%{score: 0} | _]), do: "no one scored."
 
-  defp post_game_remaining_ms(room_id) do
-    case RoomServer.get_state(room_id) do
-      {:ok, %{status: :post_game} = rs} -> Map.get(rs, :post_game_remaining_ms) || 0
+  defp headline([%{score: top} | _] = results) do
+    case Enum.filter(results, &(&1.score == top)) do
+      [winner] -> "#{winner.player_username} wins."
+      tied -> "#{join_names(Enum.map(tied, & &1.player_username))} tie."
+    end
+  end
+
+  defp join_names([a, b]), do: "#{a} and #{b}"
+  defp join_names([a | rest]), do: "#{a}, #{join_names(rest)}"
+
+  @doc """
+  The ms before `room_id` returns to the lobby (`View.public/1`), when the
+  score page of `game_id` counts down for `user_id`: the room is running and
+  in `:post_game`, `game_id` is the game it has just finished (its
+  `last_game_id`; for a room process restarted in `:post_game`, which lost
+  it, the room's latest completed game) and `user_id` is one of its players.
+  Otherwise nil: the page then only offers "back to home".
+  """
+  @spec countdown_ms(term, term, term) :: non_neg_integer | nil
+  def countdown_ms(room_id, game_id, user_id)
+      when is_binary(room_id) and is_binary(game_id) and is_binary(user_id) do
+    with {:ok, %{status: :post_game} = rs} <- RoomServer.get_state(room_id),
+         true <- Enum.any?(rs.players || [], &(&1.id == user_id)),
+         true <- latest_game?(rs, game_id) do
+      Map.get(rs, :post_game_remaining_ms) || 0
+    else
       _ -> nil
+    end
+  end
+
+  def countdown_ms(_room_id, _game_id, _user_id), do: nil
+
+  defp latest_game?(%{last_game_id: last}, game_id) when is_binary(last), do: last == game_id
+
+  defp latest_game?(rs, game_id) do
+    case Scrawly.Games.get_games_for_room(rs.room_id) do
+      {:ok, [%{id: ^game_id} | _]} -> true
+      _ -> false
     end
   end
 
@@ -151,11 +197,71 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   #     the page shows "back to home".
 
   def action(:start_countdown, _params, component) do
+    JS.call(:noteRoomChannel, [component.state.room_id])
     ends_at = System.monotonic_time(:millisecond) + component.state.countdown_ms
 
     component
     |> put_state(:countdown_ends_at, ends_at)
     |> put_tick()
+  end
+
+  # ── Back/Forward ────────────────────────────────────────────────────
+  #
+  # Dispatched by the template's inline script each time this page
+  # instance's markup is put into the document: on its first render, and
+  # again when Back/Forward restores the page from Hologram's snapshot. A
+  # restore runs neither init nor :start_countdown, its tick chain died with
+  # the page it left, and the server still holds the subscriptions of the
+  # page shown before. So the second time round the page asks the room again
+  # (:resync_countdown): still in the post-game window for this viewer ->
+  # a new chain from the room's remaining time and the room subscription
+  # again (:countdown_resynced); otherwise "back to home" (:room_gone), never
+  # a navigation. Either way the other pages' subscriptions go.
+  def action(:page_shown, _params, component) do
+    # Hologram 0.12.8 keeps the put_page/2 that left this page in the
+    # component it saves (only next_action and next_command are cleared), so
+    # after a restore the first action to return it would navigate there again
+    # (Back from a game page bounced straight back to it). Drop it.
+    component = %{component | next_page: nil}
+    state = component.state
+
+    cond do
+      not state.page_shown? ->
+        put_state(component, :page_shown?, true)
+
+      state.room_id != nil and (not state.room_dissolved or state.leaving) ->
+        gen = state.tick_gen + 1
+        stale_rooms = JS.call(:takeStaleRoomChannels, [state.room_id])
+
+        component
+        |> put_state(:tick_gen, gen)
+        |> put_state(:leaving, false)
+        |> put_state(:lobby_ready, false)
+        |> put_state(:recheck_attempts, 0)
+        |> put_command(:resync_countdown,
+          room_id: state.room_id,
+          game_id: component.props.game_id,
+          gen: gen,
+          stale_rooms: list_or_empty(stale_rooms)
+        )
+
+      true ->
+        stale_rooms = JS.call(:takeStaleRoomChannels, [nil])
+        put_command(component, :drop_stale_subscriptions, stale_rooms: list_or_empty(stale_rooms))
+    end
+  end
+
+  # Reply to :resync_countdown while the post-game window is still open.
+  def action(:countdown_resynced, %{gen: gen, remaining_ms: ms}, component) do
+    if gen == component.state.tick_gen and not component.state.leaving do
+      component
+      |> put_state(:room_dissolved, false)
+      |> put_state(:countdown_ms, ms)
+      |> put_state(:countdown, seconds_left(ms))
+      |> put_action(:start_countdown)
+    else
+      component
+    end
   end
 
   def action(:countdown_tick, %{gen: gen}, component) do
@@ -228,6 +334,14 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   # must not crash this one.
   def action(:private_state, _params, component), do: component
 
+  # HomePage's `:lobby` actions, which reach this page when it was restored
+  # by Back/Forward from the home page, until the restore's command deletes
+  # that subscription (ScrawlyWeb.RoomSubscriptions).
+  def action(:lobby_room_changed, _params, component), do: component
+  def action(:lobby_room_removed, _params, component), do: component
+  def action(:lobby_chat_received, _params, component), do: component
+  def action(:lobby_chat_cleared, _params, component), do: component
+
   # ── Navigation ──────────────────────────────────────────────────────
 
   def action(:go_home, _params, component), do: leave_for_home(component)
@@ -270,6 +384,9 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   end
 
   defp seconds_left(ms), do: div(ms + 999, 1000)
+
+  defp list_or_empty(list) when is_list(list), do: list
+  defp list_or_empty(_other), do: []
 
   defp put_tick(component) do
     put_action(component,
@@ -331,6 +448,40 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
     end
   end
 
+  # After a Back/Forward restore of a page that was counting down: replies
+  # :countdown_resynced (the room's remaining ms, and the room's subscription
+  # again) while countdown_ms/3 still holds for the session user, else
+  # :room_gone. Drops the other pages' subscriptions either way (the room's
+  # own too when it no longer counts down).
+  def command(:resync_countdown, params, server) do
+    with {:ok, room_id} <- CommandParams.uuid(params, :room_id),
+         game_id when is_binary(game_id) <- CommandParams.string(params, :game_id) do
+      gen = Map.get(params, :gen)
+
+      case countdown_ms(room_id, game_id, ScrawlyWeb.Auth.user_id(server)) do
+        nil ->
+          server
+          |> RoomSubscriptions.drop_stale(
+            Map.update(params, :stale_rooms, [room_id], &[room_id | List.wrap(&1)])
+          )
+          |> put_action(:room_gone, gen: gen)
+
+        ms ->
+          server
+          |> RoomSubscriptions.drop_stale(params, keep_room: room_id)
+          |> put_subscription({:room, room_id})
+          |> put_action(:countdown_resynced, gen: gen, remaining_ms: ms)
+      end
+    else
+      _ -> CommandParams.deny_invalid(server, :resync_countdown)
+    end
+  end
+
+  # After a Back/Forward restore of a page that wasn't counting down: drops
+  # the subscriptions the page shown before left behind.
+  def command(:drop_stale_subscriptions, params, server),
+    do: RoomSubscriptions.drop_stale(server, params)
+
   # Shape-checked like GamePage's room commands; malformed params and unknown
   # names are denied, never raised on.
   def command(name, params, server) when name in [:leave_room, :dissolve_room] do
@@ -351,6 +502,19 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   def template do
     ~HOLO"""
     <div class="page page-narrow">
+      <script>Hologram.dispatchAction("page_shown", "page", \{mount_id: "{@mount_id}"\});</script>
+      {%if @not_found?}
+      <div class="row" style="margin-bottom: 24px;">
+        <button class="app-btn app-btn-ghost app-btn-sm" $click={:go_home}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="14" height="14"><path d="M19 12H5M11 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          back to rooms
+        </button>
+      </div>
+      <section class="surface" style="padding: 32px; text-align: center;">
+        <h1 style="font-size: 28px; font-weight: 600; margin: 0 0 8px;">game not found.</h1>
+        <p style="color: var(--muted); margin: 0;">there are no results for this game. it may never have finished.</p>
+      </section>
+      {%else}
       <div class="row" style="margin-bottom: 24px;">
         <button class="app-btn app-btn-ghost app-btn-sm" $click={:go_home}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="14" height="14"><path d="M19 12H5M11 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -359,19 +523,17 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
       </div>
 
       <section style="margin-bottom: 32px;">
-        <div class="between" style="align-items: flex-end;">
-          <div>
+        <div class="between score-head" style="align-items: flex-end;">
+          <div class="score-title">
             <div class="section-label">game over · room {@room_name}</div>
-            <h1 style="font-size: 48px; font-weight: 600; letter-spacing: -0.03em; margin: 6px 0 0; line-height: 1;">
-              {%if length(@results) > 0}{List.first(@results).player_username} wins.{%else}game ended.{/if}
-            </h1>
+            <h1 class="score-headline">{@headline}</h1>
             {%if @game_date}
               <div class="mono" style="color: var(--muted); font-size: 13px; margin-top: 8px;">{@game_date}</div>
             {/if}
           </div>
           {%if @room_id && !@room_dissolved}
-            <div class="surface" style="padding: 16px; min-width: 240px;">
-              <div class="section-label">next round in</div>
+            <div class="surface score-countdown" style="padding: 16px; min-width: 240px;">
+              <div class="section-label">back to the lobby in</div>
               <div class="timer-big mono" style="font-size: 36px; margin: 6px 0;">{@countdown}s</div>
               <div class="bar accent"><div style={"width: " <> Integer.to_string(min(100, round(@countdown / @countdown_total * 100))) <> "%;"}></div></div>
               <div class="row" style="gap: 8px; margin-top: 12px;">
@@ -482,6 +644,7 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
             {/for}
           </div>
         </div>
+      {/if}
       {/if}
     </div>
     """

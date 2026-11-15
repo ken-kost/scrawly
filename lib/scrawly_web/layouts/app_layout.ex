@@ -116,6 +116,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     |> put_reset_defaults()
     |> put_state(:recovery_code, nil)
     |> put_state(:recovery_code_saved, false)
+    |> put_state(:recovery_code_copied, false)
     |> put_state(:pending_auth, nil)
   end
 
@@ -156,7 +157,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
             <span class="blob"></span>
           </div>
           <div class="app-header-inner">
-            <div class="row" style="gap: 32px;">
+            <div class="row header-left">
               <Link to={ScrawlyWeb.Pages.HomePage}>
                 <div class="brand">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -253,7 +254,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                 <Link to={ScrawlyWeb.Pages.ProfilePage}>
                   <span class="user-chip" title="Edit profile">
                     <Avatar avatar_id={@avatar_id} color={@avatar_color} size="xs" />
-                    <span>{@username}</span>
+                    <span class="user-chip-name">{@username}</span>
                   </span>
                 </Link>
                 <button
@@ -401,7 +402,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
         {/if}
 
         {%if @recovery_code}
-          <RecoveryCodePanel code={@recovery_code} saved={@recovery_code_saved} />
+          <RecoveryCodePanel code={@recovery_code} saved={@recovery_code_saved} copied={@recovery_code_copied} />
         {/if}
 
         {%if @show_register_modal}
@@ -645,7 +646,15 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     })
   end
 
+  # Signed in (or registered): the page the user is on loads again, now with
+  # the session (logging in from history shows their history). A reload, not
+  # put_page: the page's server-side init must run for the new identity, and
+  # a same-URL navigation would restore the snapshot of the signed-out page.
   def action(:auth_success, %{username: username} = params, component) do
+    ~JS"""
+    window.location.reload();
+    """
+
     component
     |> put_state(:authenticated, true)
     |> put_state(:username, username)
@@ -656,7 +665,6 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     |> put_state(:login_email, "")
     |> put_state(:register_email, "")
     |> put_state(:auth_error, nil)
-    |> put_page(ScrawlyWeb.Pages.HomePage)
   end
 
   def action(:auth_error, %{message: message}, component) do
@@ -715,7 +723,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
   end
 
   # ── Recovery code panel (after register or reset) ───────────────
-  # The session is already signed in; :auth_success (header + navigation)
+  # The session is already signed in; :auth_success (header + reload)
   # waits until the user has seen the code and pressed continue.
 
   def action(:show_recovery_code, %{code: code} = params, component) do
@@ -731,7 +739,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
 
   def action(:copy_recovery_code, _params, component) do
     JS.call(:copyRecoveryCode, [component.state.recovery_code])
-    component
+    put_state(component, :recovery_code_copied, true)
   end
 
   def action(:download_recovery_code, _params, component) do
@@ -750,6 +758,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
       component
       |> put_state(:recovery_code, nil)
       |> put_state(:recovery_code_saved, false)
+      |> put_state(:recovery_code_copied, false)
       |> put_state(:pending_auth, nil)
 
     if pending, do: put_action(component, :auth_success, pending), else: component

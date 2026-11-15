@@ -12,11 +12,13 @@ defmodule ScrawlyWeb.Pages.HomePage do
   js_import :copyRecoveryCode, from: "../components/recovery_code.mjs"
   js_import :downloadRecoveryCode, from: "../components/recovery_code.mjs"
 
+  js_import :takeStaleRoomChannels, from: "./room_channels.mjs"
+
   route "/"
 
   alias Scrawly.Games.{LobbyChatServer, RoomServer}
   alias Scrawly.Games.RoomServer.Broadcasts
-  alias ScrawlyWeb.CommandParams
+  alias ScrawlyWeb.{CommandParams, RoomSubscriptions}
   alias ScrawlyWeb.Components.RoomList
   alias ScrawlyWeb.Components.GameDemo
   alias ScrawlyWeb.Components.RecoveryCodePanel
@@ -62,6 +64,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
       |> put_reset_defaults()
       |> put_state(:recovery_code, nil)
       |> put_state(:recovery_code_saved, false)
+      |> put_state(:recovery_code_copied, false)
       # Demo board tool state — sent down as props to GameDemo
       |> put_state(:demo_color, "#000000")
       |> put_state(:demo_width, 2)
@@ -114,9 +117,9 @@ defmodule ScrawlyWeb.Pages.HomePage do
           </div>
         </div>
         <div class="meta">
-          <div class="section-label">today</div>
-          <div class="big">{length(@rooms)} <span style="color: var(--muted); font-size: 12px;">rooms</span></div>
-          <div class="v" style="margin-top: 6px;">live · {length(@rooms)} open</div>
+          <div class="section-label">lobby</div>
+          <div class="big">{length(@rooms)} <span style="color: var(--muted); font-size: 12px;">{if(length(@rooms) == 1, do: "open room", else: "open rooms")}</span></div>
+          <div class="v" style="margin-top: 6px;">live · {Enum.sum(Enum.map(@rooms, fn room -> length(room.players) end))} waiting to play</div>
         </div>
       </section>
 
@@ -343,7 +346,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
       {/if}
 
       {%if @recovery_code}
-        <RecoveryCodePanel code={@recovery_code} saved={@recovery_code_saved} />
+        <RecoveryCodePanel code={@recovery_code} saved={@recovery_code_saved} copied={@recovery_code_copied} />
       {/if}
     </div>
     """
@@ -521,12 +524,13 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_state(:show_login_modal, false)
     |> put_state(:recovery_code, code)
     |> put_state(:recovery_code_saved, false)
+    |> put_state(:recovery_code_copied, false)
     |> clear_secret_fields()
   end
 
   def action(:copy_recovery_code, _params, component) do
     JS.call(:copyRecoveryCode, [component.state.recovery_code])
-    component
+    put_state(component, :recovery_code_copied, true)
   end
 
   def action(:download_recovery_code, _params, component) do
@@ -542,6 +546,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
     component
     |> put_state(:recovery_code, nil)
     |> put_state(:recovery_code_saved, false)
+    |> put_state(:recovery_code_copied, false)
     |> put_action(:reload_home)
   end
 
@@ -608,10 +613,6 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_command(:create_room, params)
   end
 
-  def action(:home, _params, component) do
-    put_page(component, ScrawlyWeb.Pages.HomePage)
-  end
-
   def action(:join_room, %{room_id: room_id}, component) do
     put_action(component, :join_room_with_user, room_id: room_id)
   end
@@ -654,7 +655,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # ── Lobby & Room Actions ──────────────────────────────────────────
 
   def action(:connect_lobby, _params, component) do
-    JS.call(:connectDemoBoard, [])
+    JS.call(:connectDemoBoard, [demo_tools(component.state)])
     component
   end
 
@@ -662,13 +663,25 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # markup is put into the document: on its first render, and again when
   # Back/Forward restores the page from Hologram's snapshot. A restore runs
   # neither init nor its queued actions, brings back the lists the page was
-  # left with, and the connection no longer holds the page's `:lobby`
-  # subscription, so the second time round the page reloads both lists and
-  # subscribes again (:resync_lobby), and reconnects the demo board.
+  # left with, and the server still holds the subscriptions of the page shown
+  # before (e.g. a game page's room channels) instead of `:lobby`. So the
+  # second time round the page reloads both lists, subscribes again and
+  # drops the rooms' subscriptions (:resync_lobby), and reconnects the demo
+  # board with the tool the restored toolbar shows.
   def action(:page_shown, _params, component) do
+    # Hologram 0.12.8 keeps the put_page/2 that left this page in the
+    # component it saves (only next_action and next_command are cleared), so
+    # after a restore the first action to return it would navigate there again
+    # (Back from a game page bounced straight back to it). Drop it.
+    component = %{component | next_page: nil}
+
     if component.state.page_shown? do
-      JS.call(:connectDemoBoard, [])
-      put_command(component, :resync_lobby)
+      JS.call(:connectDemoBoard, [demo_tools(component.state)])
+      stale_rooms = JS.call(:takeStaleRoomChannels, [nil])
+
+      put_command(component, :resync_lobby,
+        stale_rooms: if(is_list(stale_rooms), do: stale_rooms, else: [])
+      )
     else
       put_state(component, :page_shown?, true)
     end
@@ -677,11 +690,6 @@ defmodule ScrawlyWeb.Pages.HomePage do
   def action(:join_room_with_user, %{room_id: room_id}, component) do
     JS.call(:disconnectDemoBoard, [])
     put_page(component, ScrawlyWeb.Pages.GamePage, room_id: room_id)
-  end
-
-  def action(:watch_room, %{room_id: room_id}, component) do
-    JS.call(:disconnectDemoBoard, [])
-    put_command(component, :enter_watch_mode, room_id: room_id)
   end
 
   # ── Lobby broadcasts (`:lobby`) ───────────────────────────────────
@@ -729,6 +737,20 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_state(:lobby_chat_messages, messages)
   end
 
+  # ── Other pages' broadcasts ───────────────────────────────────────
+  # GamePage's / GameScorePage's room actions ({:room}, {:room_player}). They
+  # reach this page when it was restored by Back/Forward from a game page,
+  # until the restore's :resync_lobby deletes those subscriptions
+  # (ScrawlyWeb.RoomSubscriptions). Explicit clauses, no catch-all: a new
+  # broadcast action needs one here.
+
+  def action(:room_delta, _params, component), do: component
+  def action(:chat_appended, _params, component), do: component
+  def action(:stroke_completed, _params, component), do: component
+  def action(:drawing_cleared, _params, component), do: component
+  def action(:drawing_undone, _params, component), do: component
+  def action(:private_state, _params, component), do: component
+
   # ── Lobby chat ────────────────────────────────────────────────────
 
   def action(:update_lobby_chat_input, %{event: %{value: val}}, component) do
@@ -769,6 +791,15 @@ defmodule ScrawlyWeb.Pages.HomePage do
     if gen == component.state.lobby_chat_notice_gen,
       do: put_state(component, :lobby_chat_notice, nil),
       else: component
+  end
+
+  # The demo board's tool as the page's toolbar shows it.
+  defp demo_tools(state) do
+    %{
+      color: Map.get(state, :demo_color, "#000000"),
+      width: Map.get(state, :demo_width, 2),
+      eraser: Map.get(state, :demo_eraser, false)
+    }
   end
 
   defp chat_notice(:rate_limited), do: "slow down: at most 4 messages every 5 seconds."
@@ -872,27 +903,15 @@ defmodule ScrawlyWeb.Pages.HomePage do
     end
   end
 
-  # Set watch_mode flag in session, then navigate to game page
-  def command(:enter_watch_mode, params, server) do
-    case CommandParams.uuid(params, :room_id) do
-      {:ok, room_id} ->
-        server
-        |> put_session(:watch_mode, "yes")
-        |> put_action(:join_room_with_user, room_id: room_id)
-
-      :error ->
-        CommandParams.deny_invalid(server, :enter_watch_mode)
-    end
-  end
-
   def command(:send_lobby_chat, params, server) when is_map(params) do
     ScrawlyWeb.LobbyChat.send_message(params, server)
   end
 
-  # After a Back/Forward restore (:page_shown): the current lists, and the
-  # :lobby subscription again.
-  def command(:resync_lobby, _params, server) do
+  # After a Back/Forward restore (:page_shown): the current lists, the
+  # :lobby subscription again, and none to the rooms in `stale_rooms`.
+  def command(:resync_lobby, params, server) do
     server
+    |> RoomSubscriptions.drop_stale(params, keep_lobby?: true)
     |> put_subscription(Broadcasts.lobby_channel())
     |> put_action(:lobby_resynced,
       rooms: RoomServer.list_lobby_rooms(),

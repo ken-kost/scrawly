@@ -55,6 +55,31 @@ defmodule ScrawlyWeb.CommandParams do
     end
   end
 
+  @doc """
+  The UUID strings in the list under `key`, at most `max` of them (anything
+  else in the list is skipped); `[]` when `key` holds no list.
+  """
+  @spec uuids(term, atom, pos_integer) :: [String.t()]
+  def uuids(params, key, max) when is_map(params) do
+    case Map.get(params, key) do
+      list when is_list(list) ->
+        list
+        |> Enum.take(max)
+        |> Enum.flat_map(fn value ->
+          case is_binary(value) and Ecto.UUID.cast(value) do
+            {:ok, uuid} -> [uuid]
+            _ -> []
+          end
+        end)
+        |> Enum.uniq()
+
+      _ ->
+        []
+    end
+  end
+
+  def uuids(_params, _key, _max), do: []
+
   @doc "Denies a command whose params don't have the expected shape."
   @spec deny_invalid(Server.t(), term) :: Server.t()
   def deny_invalid(%Server{} = server, command), do: Auth.deny(server, command, :invalid_params)

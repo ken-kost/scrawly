@@ -121,7 +121,9 @@ defmodule ScrawlyWeb.CommandTotalityTest do
     assert :refresh_socket_token in command_names(GamePage)
     assert :leave_room in command_names(GameScorePage)
     assert :save_password in command_names(ProfilePage)
-    assert command_names(PastGamesPage) == []
+    assert command_names(PastGamesPage) == [:drop_stale_subscriptions]
+    assert :drop_stale_subscriptions in command_names(ProfilePage)
+    assert :resync_countdown in command_names(GameScorePage)
   end
 
   test "no command of any page, layout or component raises on malformed params", ctx do

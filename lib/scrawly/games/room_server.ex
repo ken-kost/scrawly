@@ -499,8 +499,9 @@ defmodule Scrawly.Games.RoomServer do
 
   @doc """
   Clears the canvas for the current drawer (`authorize/3` `:draw`) and
-  publishes `:drawing_cleared`. A stale `op` changes nothing and returns
-  `:duplicate`.
+  publishes `:drawing_cleared` (`%{op_epoch}`: the epoch of `op`, or nil, so
+  the drawer's other tabs can tell it from their own). A stale `op` changes
+  nothing and returns `:duplicate`.
   """
   @spec clear_drawing(term, term, stroke_op) ::
           :ok | :duplicate | {:error, :not_drawer | :wrong_phase | :rate_limited | :not_found}
@@ -1568,6 +1569,11 @@ defmodule Scrawly.Games.RoomServer do
     end
   end
 
+  # The clearing tab's epoch goes out with the clear: the drawer's other
+  # tabs follow a clear that isn't theirs (drawing_manager.mjs).
+  defp op_epoch({epoch, _seq}), do: epoch
+  defp op_epoch(_op), do: nil
+
   defp clear_strokes(state, op) do
     case fresh_stroke_op(state, op) do
       :ok ->
@@ -1575,7 +1581,7 @@ defmodule Scrawly.Games.RoomServer do
           state
           |> put_stroke_op(op)
           |> put_strokes([])
-          |> Broadcasts.publish(:drawing_cleared, %{})
+          |> Broadcasts.publish(:drawing_cleared, %{op_epoch: op_epoch(op)})
 
         {:reply, :ok, new_state}
 

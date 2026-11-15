@@ -14,19 +14,28 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :setToolColor, from: "./drawing_manager.mjs"
   js_import :setToolWidth, from: "./drawing_manager.mjs"
   js_import :undoStroke, from: "./drawing_manager.mjs"
-  js_import :setStrokes, from: "./drawing_manager.mjs"
   js_import :removeRemoteOverlay, from: "./drawing_manager.mjs"
+  js_import :settleRemoteStrokes, from: "./drawing_manager.mjs"
+  js_import :clearRemoteStrokes, from: "./drawing_manager.mjs"
   js_import :mountCanvas, from: "./drawing_manager.mjs"
   js_import :restoreStrokes, from: "./drawing_manager.mjs"
+  js_import :restoreCanvas, from: "./drawing_manager.mjs"
+  js_import :rebaseCanvas, from: "./drawing_manager.mjs"
+  js_import :adoptStroke, from: "./drawing_manager.mjs"
+  js_import :forgetStroke, from: "./drawing_manager.mjs"
+  js_import :applyRoomClear, from: "./drawing_manager.mjs"
   js_import :endDrawingPhase, from: "./drawing_manager.mjs"
   js_import :ackStrokeOp, from: "./drawing_manager.mjs"
   js_import :rejectStrokeOp, from: "./drawing_manager.mjs"
   js_import :applyRejectedStrokes, from: "./drawing_manager.mjs"
 
+  js_import :noteRoomChannel, from: "./room_channels.mjs"
+  js_import :takeStaleRoomChannels, from: "./room_channels.mjs"
+
   route "/game/:room_id"
   param :room_id, :string
 
-  alias ScrawlyWeb.Components.{ChatBox, ScoreBoard, DrawingCanvas}
+  alias ScrawlyWeb.Components.{Avatar, ChatBox, ScoreBoard, DrawingCanvas}
   alias ScrawlyWeb.Pages.GamePage.Commands
   alias Scrawly.Games.RoomServer
 
@@ -64,7 +73,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # full snapshot with the room's seq, and the page subscribes to the room's
   # public channel and to its own user's private one.
   def init(%{room_id: room_id}, component, server) do
-    watch_mode = get_session(server, :watch_mode) == "yes"
     user_id = ScrawlyWeb.Auth.user_id(server)
     user = current_user_or_nil(server)
     server = put_stash(server, :current_user, user)
@@ -81,7 +89,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:room_missing?, false)
               |> put_state(:watching?, false)
               |> put_state(:room_code, rs.code)
-              |> put_state(:room_name, "Room #{rs.name}")
+              |> put_state(:room_name, rs.name)
               |> put_state(:room_status, rs.status)
               |> put_state(:players, rs.players)
               |> put_state(:max_players, rs.max_players)
@@ -129,13 +137,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:tick_gen, System.unique_integer([:positive]))
               |> put_state(:last_tick_at, nil)
               |> put_state(:zero_since, nil)
-              |> put_state(
-                :current_drawer,
-                if(rs.current_drawer_id,
-                  do: %{id: rs.current_drawer_id, username: rs.drawer_name},
-                  else: nil
-                )
-              )
+              |> put_state(:current_drawer, drawer_of(rs, rs.players, rs.current_drawer_id))
               |> put_state(:current_word, rs.current_word)
               |> put_state(:current_word_display, rs.word_display)
               |> put_state(:word_length, rs.word_length)
@@ -175,8 +177,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
             already_watching =
               user_id != nil and Enum.any?(rs.watchers || [], &(&1.id == user_id))
 
-            server = put_session(server, :watch_mode, nil)
-
             # :mounted runs first on every fresh page load; `join` is the
             # join command it sends, if any. put_page/3 is ignored from init
             # (only next_action is read on mount), so the score page is
@@ -191,7 +191,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
                   |> put_state(:watching?, true)
                   |> put_mounted(nil)
 
-                watch_mode or user_id == nil ->
+                user_id == nil ->
                   component
                   |> put_state(:watching?, true)
                   |> put_mounted(:watcher)
@@ -234,6 +234,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
   defp room_missing(component) do
     component
     |> put_state(:room_missing?, true)
+    |> put_state(:mount_id, System.unique_integer([:positive]))
+    |> put_state(:page_shown?, false)
     |> put_action(:go_home)
   end
 
@@ -249,7 +251,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # `:watcher`), whose :room_resynced reply connects it for a new member
   # (GameChannel refuses non-members).
   def action(:mounted, %{join: join}, component) do
-    JS.call(:mountCanvas, [])
+    JS.call(:mountCanvas, [Map.get(component.state, :mount_id)])
+    JS.call(:noteRoomChannel, [component.props.room_id])
+    push_tool(component.state)
 
     if component.state.is_drawer do
       JS.call(:restoreStrokes, [component.state.drawing_strokes])
@@ -275,11 +279,29 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # markup is put into the document: on its first render, and again when
   # Back/Forward restores the page from Hologram's snapshot. A restore runs
   # neither init nor :mounted and brings back the state (and the seq) the page
-  # was left with, while the connection dropped the page's subscriptions when
-  # it was left. So the second time round the page resyncs and subscribes
-  # again. A page left through "leave" holds no membership any more: it loads
-  # afresh instead, as a visit to its URL would.
+  # was left with, while the server still holds the subscriptions of the page
+  # shown before (ScrawlyWeb.RoomSubscriptions). So the second time round the
+  # page takes its canvas back (drawing_manager.mjs restoreCanvas: its own
+  # queued stroke ops are sent again), resyncs, subscribes again and drops
+  # the other pages' subscriptions. A page left through "leave" holds no
+  # membership any more: it loads afresh instead, as a visit to its URL would.
+  #
+  # The "room not found" placeholder goes home again when it is restored
+  # (init's :go_home ran only the first time).
+  def action(:page_shown, _params, %{state: %{room_missing?: true}} = component) do
+    component = %{component | next_page: nil}
+
+    if Map.get(component.state, :page_shown?) == true,
+      do: put_action(component, :go_home),
+      else: put_state(component, :page_shown?, true)
+  end
+
   def action(:page_shown, _params, component) do
+    # Hologram 0.12.8 keeps the put_page/2 that left this page in the
+    # component it saves (only next_action and next_command are cleared), so
+    # after a restore the first action to return it would navigate there again
+    # (Back from a game page bounced straight back to it). Drop it.
+    component = %{component | next_page: nil}
     state = component.state
 
     cond do
@@ -291,13 +313,17 @@ defmodule ScrawlyWeb.Pages.GamePage do
         component
 
       true ->
+        JS.call(:restoreCanvas, [state.mount_id])
+        push_tool(state)
+        stale_rooms = JS.call(:takeStaleRoomChannels, [component.props.room_id])
+
         component
         |> put_state(:restoring?, true)
         |> put_state(:last_tick_at, nil)
         |> put_state(:zero_since, nil)
         |> put_state(:resync_requested_at, nil)
         |> put_state(:stuck_seq, nil)
-        |> send_resync(true)
+        |> send_resync(true, stale_rooms)
     end
   end
 
@@ -367,9 +393,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  # Viewers render the completed strokes; the drawer's tabs already hold
-  # theirs (drawing_manager.mjs) and only advance the seq. Each viewer stroke
-  # keeps the seq it arrived with (stale snapshots, see :room_resynced).
+  # Viewers render the completed strokes; a drawer's tab already holds its
+  # own (drawing_manager.mjs) and only takes in one drawn in another of the
+  # drawer's tabs (adoptStroke). Each viewer stroke keeps the seq it arrived
+  # with (stale snapshots, see :room_resynced).
   def action(:stroke_completed, params, component) do
     case accept_seq(component, params) do
       {:apply, component, seq, gap} ->
@@ -382,14 +409,19 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
+  # A drawer's tab only follows a clear made in another of the drawer's tabs
+  # (`op_epoch` is the clearing tab's, see drawing_manager.mjs
+  # applyRoomClear). Viewers keep the live preview of a stroke started after
+  # the clear (clearRemoteStrokes).
   def action(:drawing_cleared, params, component) do
     case accept_seq(component, params) do
       {:apply, component, seq, gap} ->
         component =
           if component.state.is_drawer do
+            JS.call(:applyRoomClear, [Map.get(params, :op_epoch)])
             component
           else
-            JS.call(:setDrawingPath, [""])
+            JS.call(:clearRemoteStrokes, [])
 
             component
             |> put_state(:drawing_strokes, [])
@@ -406,12 +438,14 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # Only the undone stroke's id comes (the canvas is never re-sent): a
   # viewer drops that stroke from the list it renders. Live overlays of the
   # stroke being drawn stay. strokes_seq moves on, so a stale snapshot
-  # can't bring the stroke back.
+  # can't bring the stroke back. A drawer's tab drops it if another of the
+  # drawer's tabs undid it (its own undo already did).
   def action(:drawing_undone, params, component) do
     case accept_seq(component, params) do
       {:apply, component, seq, gap} ->
         component =
           if component.state.is_drawer do
+            JS.call(:forgetStroke, [Map.get(params, :stroke_id)])
             component
           else
             stroke_id = Map.get(params, :stroke_id)
@@ -584,7 +618,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # A command was rejected server-side (see ScrawlyWeb.Auth.deny/3): nothing
   # changed, but the page may be out of date, so it resyncs. A denied stroke
   # op leaves the drawer's op queue so the next one can go; a refused join
-  # says why in the lobby.
+  # says why in the lobby; a refused leave lets the page act again (other
+  # denials leave `leaving?` alone: the page may be on its way out).
   def action(:command_denied, params, component) do
     command = Map.get(params, :command)
 
@@ -597,9 +632,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
         do: put_state(component, :join_notice, join_denied_text(Map.get(params, :reason))),
         else: component
 
-    component
-    |> put_state(:leaving?, false)
-    |> request_resync()
+    component =
+      if command in [:leave_room, :leave_watcher],
+        do: put_state(component, :leaving?, false),
+        else: component
+
+    request_resync(component)
   end
 
   def action(:choose_word, %{word: word}, component) do
@@ -622,7 +660,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
       else
         message = component.state.new_message
         now = System.monotonic_time(:millisecond)
-        recent = Enum.filter(component.state.message_timestamps, fn ts -> now - ts < 5_000 end)
+        # A stamp later than now comes from another document's clock (a
+        # Back/Forward restore after a reload): it doesn't count.
+        recent =
+          Enum.filter(component.state.message_timestamps, fn ts ->
+            is_integer(ts) and ts <= now and now - ts < 5_000
+          end)
 
         if length(recent) >= 3 do
           component
@@ -732,6 +775,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     base = [room_id: component.props.room_id, op_epoch: op_epoch, op_seq: op_seq]
 
     case kind do
+      # The turn goes along so a rejection can be matched to it.
       "commit" ->
         put_command(
           component,
@@ -741,7 +785,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
               stroke_id: Map.get(op, :stroke_id),
               path: Map.get(op, :path),
               color: Map.get(op, :color),
-              width: Map.get(op, :width)
+              width: Map.get(op, :width),
+              game_id: Map.get(component.state, :game_id),
+              round: Map.get(component.state, :round)
             ]
         )
 
@@ -766,10 +812,22 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   # Reply to :complete_stroke when the server refused to store the stroke
-  # (invalid, or the canvas is full): show the drawer what everyone else sees.
+  # (invalid, or the canvas is full): show the drawer what everyone else
+  # sees. Only on the drawer's page and for the turn the stroke was drawn in
+  # (the commit's game_id / round, echoed back): a late reply from an earlier
+  # turn changes nothing. drawing_manager.mjs also ignores it unless its op
+  # is still the head of the queue.
   def action(:stroke_rejected, %{strokes: strokes} = params, component) do
-    JS.call(:applyRejectedStrokes, [Map.get(params, :op_seq), strokes])
-    put_state(component, :drawing_strokes, strokes)
+    state = component.state
+
+    if Map.get(state, :is_drawer) == true and
+         Map.get(params, :game_id) == Map.get(state, :game_id) and
+         Map.get(params, :round) == Map.get(state, :round) do
+      JS.call(:applyRejectedStrokes, [Map.get(params, :op_seq), strokes])
+      put_state(component, :drawing_strokes, strokes)
+    else
+      component
+    end
   end
 
   # The clear goes out through the op queue, after the ops queued before it.
@@ -819,6 +877,17 @@ defmodule ScrawlyWeb.Pages.GamePage do
     do: undo_last_stroke(component)
 
   def action(:shortcut_undo, _params, component), do: component
+
+  # ── Other pages' broadcasts ──────────────────────────────────────────
+  # HomePage's `:lobby` actions. They reach this page when it was restored
+  # by Back/Forward from the home page, until the restore's resync deletes
+  # that subscription (ScrawlyWeb.RoomSubscriptions). Explicit clauses, no
+  # catch-all: a new broadcast action needs one here.
+
+  def action(:lobby_room_changed, _params, component), do: component
+  def action(:lobby_room_removed, _params, component), do: component
+  def action(:lobby_chat_received, _params, component), do: component
+  def action(:lobby_chat_cleared, _params, component), do: component
 
   # Every room command needs a UUID `room_id` (plus `word` / `text` strings
   # where noted); Commands.valid_params/2 checks the shape and anything else
@@ -915,7 +984,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     cond do
       state.leaving? -> component
       is_integer(at) and now >= at and now - at < @resync_guard_ms -> component
-      true -> send_resync(component, false)
+      true -> send_resync(component, false, nil)
     end
   end
 
@@ -932,10 +1001,15 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  defp send_resync(component, resubscribe) do
+  # `stale_rooms` (a restore only): the other rooms whose channels the tab
+  # may still be subscribed to (room_channels.mjs).
+  defp send_resync(component, resubscribe, stale_rooms) do
+    params = [room_id: component.props.room_id, resubscribe: resubscribe]
+    params = if is_list(stale_rooms), do: params ++ [stale_rooms: stale_rooms], else: params
+
     component
     |> put_state(:resync_requested_at, System.monotonic_time(:millisecond))
-    |> put_command(:resync_room, room_id: component.props.room_id, resubscribe: resubscribe)
+    |> put_command(:resync_room, params)
   end
 
   # The snapshot answered the request; a gap seen meanwhile that it does not
@@ -971,6 +1045,15 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   defp add_viewer_stroke(component, params, seq) do
     if component.state.is_drawer do
+      JS.call(:adoptStroke, [
+        %{
+          id: Map.get(params, :stroke_id),
+          path: Map.get(params, :path),
+          color: Map.get(params, :color),
+          width: Map.get(params, :width)
+        }
+      ])
+
       component
     else
       strokes = component.state.drawing_strokes
@@ -993,8 +1076,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   # Viewers take the snapshot's strokes, plus strokes that arrived after it
-  # (unless the list was replaced after it: then theirs is newer). Clears the
-  # live overlays.
+  # (unless the list was replaced after it: then theirs is newer). The live
+  # overlays of strokes it holds go; those of strokes still being drawn stay.
   defp apply_snapshot_strokes(component, view, seq) do
     state = component.state
 
@@ -1014,7 +1097,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
           end)
 
         strokes = room ++ newer
-        JS.call(:setStrokes, [strokes])
+        JS.call(:settleRemoteStrokes, [Enum.map(strokes, & &1.id)])
 
         component
         |> put_state(:drawing_strokes, strokes)
@@ -1041,13 +1124,14 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  # After a Back/Forward restore: the canvas markup was rebuilt from state, so
-  # the drawer's strokes are merged back in from the room, and the game socket
-  # (closed or stale since the page was left) is joined again for a member.
+  # After a Back/Forward restore: the drawer's canvas becomes the room's
+  # strokes plus their own ops still queued (rebaseCanvas), drawing follows
+  # the room's phase again, and the game socket (closed or stale since the
+  # page was left) is joined again for a member.
   defp finish_restore(component, view) do
     if component.state.restoring? do
       if component.state.is_drawer do
-        JS.call(:restoreStrokes, [view.drawing_strokes || []])
+        JS.call(:rebaseCanvas, [view.drawing_strokes || []])
       end
 
       JS.call(:setDrawingEnabled, [can_draw?(component.state)])
@@ -1056,10 +1140,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
       if member?(component.state) and component.state.socket_token != "" do
         JS.call(:ensureGameChannel, [component.state.socket_token, component.state.room_code])
-        component
       else
-        component
+        JS.call(:disconnectGameChannel, [])
       end
+
+      component
     else
       maybe_connect_member_channel(component)
     end
@@ -1226,17 +1311,18 @@ defmodule ScrawlyWeb.Pages.GamePage do
     |> anchor_countdowns(view)
   end
 
+  # The drawer as the canvas header shows them: name and avatar.
   defp drawer_of(_view, _players, nil), do: nil
 
   defp drawer_of(view, players, drawer_id) do
-    name =
-      Map.get(view, :drawer_name) ||
-        case Enum.find(players, &(&1.id == drawer_id)) do
-          nil -> "Unknown"
-          player -> player.username
-        end
+    player = Enum.find(players || [], &(&1.id == drawer_id))
 
-    %{id: drawer_id, username: name}
+    %{
+      id: drawer_id,
+      username: Map.get(view, :drawer_name) || (player && player.username) || "Unknown",
+      avatar_id: (player && Map.get(player, :avatar_id)) || "a-mushroom",
+      avatar_color: (player && Map.get(player, :avatar_color)) || "3"
+    }
   end
 
   # A new game, a new turn or the end of the game: an empty canvas for
@@ -1385,17 +1471,24 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   # Shared by the toolbar buttons and the keyboard shortcuts.
   defp toggle_eraser(component) do
-    is_eraser = not Map.get(component.state, :draw_eraser, false)
+    component =
+      put_state(component, :draw_eraser, not Map.get(component.state, :draw_eraser, false))
 
-    if is_eraser do
+    push_tool(component.state)
+    component
+  end
+
+  # The tool the toolbar shows, into drawing_manager.mjs (whose tool is
+  # shared by every page instance of the tab): on :mounted, after a
+  # Back/Forward restore, and when the eraser toggles.
+  defp push_tool(state) do
+    if Map.get(state, :draw_eraser, false) do
       JS.call(:setToolColor, ["#FFFFFF"])
       JS.call(:setToolWidth, [20])
     else
-      JS.call(:setToolColor, [component.state.draw_color])
-      JS.call(:setToolWidth, [component.state.draw_width])
+      JS.call(:setToolColor, [Map.get(state, :draw_color, "#000000")])
+      JS.call(:setToolWidth, [Map.get(state, :draw_width, 2)])
     end
-
-    put_state(component, :draw_eraser, is_eraser)
   end
 
   defp undo_last_stroke(component) do
@@ -1442,10 +1535,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
     ~HOLO"""
     {%if @room_missing?}
     <div class="page page-mid">
+      <script>Hologram.dispatchAction("page_shown", "page", \{mount_id: "{@mount_id}"\});</script>
       <div class="mono" style="font-size: 12px; color: var(--muted);">room not found · returning to the lobby…</div>
     </div>
     {%else}
-    <span id="game-page-marker" hidden={true}></span>
+    <span id="game-page-marker" data-mount={@mount_id} hidden={true}></span>
     <script>Hologram.dispatchAction("page_shown", "page", \{mount_id: "{@mount_id}"\});</script>
     {%if !@game_started}
     <div class="page page-mid">
@@ -1549,7 +1643,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               </div>
               <div class="row" style="flex-wrap: wrap; gap: 6px;">
                 {%for w <- @watchers}
-                  <span class="chip">
+                  <span class="chip chip-name">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="12" height="12"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" stroke-linejoin="round"/><circle cx="12" cy="12" r="3"/></svg>
                     {w.username}
                   </span>
@@ -1667,12 +1761,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
         </div>
 
         <div class="canvas-shell">
-          <div class="between" style="padding: 10px 14px; border-bottom: 1px solid var(--hairline);">
+          <div class="between canvas-head" style="padding: 10px 14px; border-bottom: 1px solid var(--hairline);">
             <div class="row" style="gap: 8px;">
               {%if @current_drawer}
-                <span class="avatar" style={"width: 22px; height: 22px; border-radius: 999px; background: " <> Scrawly.Games.PlayerColor.for(@current_drawer.id) <> "; color: #0a0a0a; display: grid; place-items: center; font-size: 11px; font-weight: 600;"}>
-                  {String.upcase(String.slice(@current_drawer.username || "?", 0..0))}
-                </span>
+                <Avatar avatar_id={@current_drawer.avatar_id} color={@current_drawer.avatar_color} size="xs" />
                 <span style="font-size: 13px; font-weight: 500;">{@current_drawer.username}</span>
                 <span class="mono" style="font-size: 11px; color: var(--muted);">is drawing</span>
               {/if}
