@@ -14,8 +14,11 @@ defmodule ScrawlyWeb.Components.ChatBox do
   prop :is_drawer, :boolean, default: false
   prop :rate_limited, :boolean, default: false
   # A private hint for this user only (e.g. their line wasn't sent because it
-  # contained the word).
+  # contained the word, or it was one edit away from it).
   prop :notice, :string, default: nil
+  # Set once this user has guessed the word ("you got it · +350"): the input
+  # says so and stays open for chat.
+  prop :got_it, :string, default: nil
 
   def template do
     ~HOLO"""
@@ -50,7 +53,7 @@ defmodule ScrawlyWeb.Components.ChatBox do
       {/if}
       <form class="chat-input" $submit="send_message">
         <input type="text" name="message" maxlength="240"
-               placeholder={if(@current_user_id == nil, do: "sign in to chat", else: if(@is_drawer, do: "you are drawing — chat disabled", else: "type a guess..."))}
+               placeholder={placeholder(@current_user_id, @is_drawer, @got_it)}
                value={@current_message}
                disabled={@disabled || @current_user_id == nil}
                $change={:update_message}
@@ -60,6 +63,11 @@ defmodule ScrawlyWeb.Components.ChatBox do
     </div>
     """
   end
+
+  defp placeholder(nil, _is_drawer, _got_it), do: "sign in to chat"
+  defp placeholder(_user_id, true, _got_it), do: "you are drawing — chat disabled"
+  defp placeholder(_user_id, _is_drawer, got_it) when is_binary(got_it), do: got_it
+  defp placeholder(_user_id, _is_drawer, _got_it), do: "type a guess..."
 
   # No commands here. A forged one (the module is named in the request) is
   # denied instead of raising (see ScrawlyWeb.CommandParams).

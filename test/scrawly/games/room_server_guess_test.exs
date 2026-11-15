@@ -464,12 +464,14 @@ defmodule Scrawly.Games.RoomServerGuessTest do
       end
     end
 
+    # A typo one edit away is a close guess (play-feedback, see
+    # room_server_close_guess_test.exs): two edits away it is chat.
     test "a missing word or a typo is plain chat" do
       state = drawing_state(current_word: "jack in the box")
       assert {{:ok, :chat}, _} = submit(state, @p1, "jack in box")
 
       state = drawing_state(current_word: "ice cream")
-      assert {{:ok, :chat}, _} = submit(state, @p1, "icecreem")
+      assert {{:ok, :chat}, _} = submit(state, @p1, "icekreem")
     end
   end
 

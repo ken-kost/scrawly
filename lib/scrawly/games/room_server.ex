@@ -66,8 +66,11 @@ defmodule Scrawly.Games.RoomServer do
   # How long a finished game's score page shows before the room returns to the
   # lobby (`:return_to_lobby`).
   @post_game_ms 30_000
-  # How long a finished round shows its word before the next one starts.
-  @round_end_ms 3_000
+  # How long a finished round shows its word and its summary (View's
+  # round_summary) before the next one starts.
+  @round_end_ms 5_000
+  # A close guess is echoed to its sender cut to this many characters.
+  @close_echo_chars 40
   @no_word_text "No word could be picked, so the game ended."
   # Watch joins and leaves an actor may make per window, together: an over
   # the limit join is refused, a leave never is (and leaves can't outnumber
@@ -188,6 +191,10 @@ defmodule Scrawly.Games.RoomServer do
   """
   @spec post_game_ms() :: pos_integer
   def post_game_ms, do: @post_game_ms
+
+  @doc "How long, in ms, the `:round_end` pause lasts before the next turn starts."
+  @spec round_end_ms() :: pos_integer
+  def round_end_ms, do: @round_end_ms
 
   @doc """
   How long, in ms, a member's key may be missing from
@@ -332,18 +339,24 @@ defmodule Scrawly.Games.RoomServer do
       typed the word itself (`Guess.matches?/2`: case, accents, spacing and
       punctuation ignored, so "Ice-Cream!" and "icecream" score for "ice
       cream") while `:drawing`. The text is not stored; a `:correct_guess`
-      line is posted instead.
+      line is posted instead, and the word goes to that player alone, on
+      their own channel (`Broadcasts.push_private_slice/2`).
     * `{:ok, :suppressed}` - any other line that contains the word
       (`Guess.contains_word?/2`: the same variants, as a run of whole words)
       while `:drawing`: a line like "is it icecream?" or "lol it is ZZYZX",
       or the word from a player who already guessed or from a watcher.
       Nothing is stored or broadcast; only the sender is told.
+    * `{:ok, {:close, text}}` - a line one edit away from the word
+      (`Guess.close?/2`: an answer of 5 or more letters, compared on keys)
+      while `:drawing`, e.g. "popcorm" for "popcorn". Nothing is stored,
+      broadcast or scored; `text` is the sender's own line (cut to
+      #{@close_echo_chars} characters) for their private "is close" line.
     * `{:ok, :chat}` - anything else, stored and broadcast as `:chat`.
     * `{:error, :empty | :not_in_room | :rate_limited | :drawer_cannot_chat |
       :not_found}` - nothing changes.
   """
   @spec submit_message(term, term, term) ::
-          {:ok, {:correct, pos_integer} | :suppressed | :chat}
+          {:ok, {:correct, pos_integer} | {:close, String.t()} | :suppressed | :chat}
           | {:error, :empty | :not_in_room | :rate_limited | :drawer_cannot_chat | :not_found}
   def submit_message(room_id, user_id, text) do
     GenServer.call(via(room_id), {:submit_message, user_id, text})
@@ -1077,21 +1090,35 @@ defmodule Scrawly.Games.RoomServer do
   # broadcast: only the word itself (any `Guess.key/1` variant) from a player
   # who can still score counts as a guess; anything else that contains it is
   # suppressed. Whatever `Guess.matches?/2` accepts, `Guess.contains_word?/2`
-  # contains, so a line without the word is chat with one check.
+  # contains, so a line without the word is chat with one check, unless it is
+  # one edit away from the word (`Guess.close?/2`): that one stays private
+  # too, from anyone, so a near miss never hands the room a hint.
   defp deliver_message(state, sender, text) do
     word = state.current_word
 
     cond do
-      state.phase != :drawing or not Guess.contains_word?(text, word) ->
+      state.phase != :drawing ->
         {:reply, {:ok, :chat}, append_chat(state, sender, text)}
 
-      can_score?(state, sender.id) and Guess.matches?(text, word) ->
-        {new_state, points} = award_guess(state, sender.id)
-        {:reply, {:ok, {:correct, points}}, new_state}
+      Guess.contains_word?(text, word) ->
+        if can_score?(state, sender.id) and Guess.matches?(text, word) do
+          {new_state, points} = award_guess(state, sender.id)
+          {:reply, {:ok, {:correct, points}}, new_state}
+        else
+          {:reply, {:ok, :suppressed}, state}
+        end
+
+      Guess.close?(text, word) ->
+        {:reply, {:ok, {:close, close_echo(text)}}, state}
 
       true ->
-        {:reply, {:ok, :suppressed}, state}
+        {:reply, {:ok, :chat}, append_chat(state, sender, text)}
     end
+  end
+
+  defp close_echo(text) do
+    cut = Scrawly.Text.truncate(text, @close_echo_chars, @max_message_bytes)
+    if cut == text, do: text, else: String.trim_trailing(cut) <> "…"
   end
 
   defp can_score?(state, user_id) do
@@ -1109,7 +1136,9 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   # Scores a correct guess, posts the :correct_guess line, and ends the round
-  # early (scoring the drawer) once every non-drawer player has guessed.
+  # early (scoring the drawer) once every non-drawer player has guessed. The
+  # guesser's own channel then gets the word (after the delta that lists
+  # them in correct_guessers); nobody else's does.
   defp award_guess(state, player_id) do
     order = length(state.correct_guessers) + 1
     guess_pts = Scoring.guesser_points(time_left(state), state.round_duration, order: order)
@@ -1127,7 +1156,12 @@ defmodule Scrawly.Games.RoomServer do
     new_state =
       if all_guessed?(new_state), do: finish_all_guessed(new_state), else: new_state
 
-    {notify_waiters(new_state), guess_pts}
+    new_state =
+      new_state
+      |> notify_waiters()
+      |> Broadcasts.push_private_slice(player_id)
+
+    {new_state, guess_pts}
   end
 
   # Every player but the drawer has guessed (and there is at least one).

@@ -39,7 +39,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   param :room_id, :string
 
   alias ScrawlyWeb.Components.{Avatar, ChatBox, ScoreBoard, DrawingCanvas}
-  alias ScrawlyWeb.RoomSettings
+  alias ScrawlyWeb.{PlayFeedback, RoomSettings}
   alias ScrawlyWeb.Pages.GamePage.Commands
   alias Scrawly.Games.RoomServer
 
@@ -70,7 +70,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   # Page state is serialized into the HTML, so it is built from the session
   # user's own view of the room: only the drawer's view carries the word and
-  # the word choices (RoomServer.View.for_viewer/2).
+  # the word choices, and a player's view carries the word once they have
+  # guessed it (RoomServer.View.for_viewer/2).
   #
   # `room_id` is the page param, so it is a prop: actions read
   # `component.props.room_id` and the template `@room_id`. It is never copied
@@ -151,6 +152,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:current_word_display, rs.word_display)
               |> put_state(:word_length, rs.word_length)
               |> put_state(:revealed_word, rs.revealed_word)
+              # The points the user's own guess scored this round (nil until
+              # they guess), and the finished round during :round_end.
+              |> put_state(:guess_points, rs.guess_points)
+              |> put_state(:round_summary, rs.round_summary)
               |> put_state(:is_drawer, rs.is_drawer)
               |> put_state(:correct_guessers, rs.correct_guessers || [])
               |> put_state(:phase, rs.phase)
@@ -385,9 +390,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # carrying a seq but no chat and strokes could overtake broadcasts still in
   # flight on the stream and make the page drop them as stale.
   #
-  # The drawer's word choices and word come separately, unsequenced, on the
-  # user's own {:room_player} channel (:private_state), after the delta of
-  # the same transition, and in the choose_word reply.
+  # The drawer's word choices and word, and the word for a player who has
+  # just guessed it, come separately, unsequenced, on the user's own
+  # {:room_player} channel (:private_state), after the delta of the same
+  # transition, and in the choose_word reply.
 
   def action(:room_delta, params, component) do
     case accept_seq(component, params) do
@@ -495,7 +501,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  # The drawer's slice (RoomServer.View.private_slice/1): from the user's own
+  # The user's slice (RoomServer.View.private_slice/2): the drawer's, or the
+  # word for a player who has just guessed it. From the user's own
   # {:room_player} channel, after the round's delta, or the choose_word reply.
   # One for an earlier turn is ignored; one for a turn the page has not seen
   # yet (its delta was lost or is still on its way) is held until a delta
@@ -797,25 +804,48 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   # Reply to :submit_guess. Scores, guessers and chat lines arrive through
-  # :room_delta / :chat_appended; only the server-side rate limit and a
-  # suppressed line (it contained the word, so nobody saw it) need a hint,
-  # shown to the sender alone.
+  # :room_delta / :chat_appended, and the word for a correct guess on the
+  # user's own channel (:private_state). The reply itself says what only the
+  # sender may know: their points, the server-side rate limit, a suppressed
+  # line (it contained the word, so nobody saw it) and a near miss (one edit
+  # from the word, kept off the chat too).
+  def action(:guess_result, %{outcome: :correct, points: points}, component) do
+    state = component.state
+
+    component
+    |> put_state(:guess_points, points)
+    |> put_action(
+      name: :check_guessed_word,
+      params: %{game_id: state.game_id, round: state.round},
+      delay: @slice_grace_ms
+    )
+  end
+
   def action(:guess_result, %{outcome: :rate_limited}, component) do
     component
     |> put_state(:rate_limited, true)
     |> put_action(name: :clear_rate_limit, delay: 3_000)
   end
 
-  def action(:guess_result, %{outcome: :suppressed}, component) do
-    gen = Map.get(component.state, :chat_notice_gen, 0) + 1
+  def action(:guess_result, %{outcome: :suppressed}, component),
+    do: show_chat_notice(component, "not sent: your message contains the word")
 
-    component
-    |> put_state(:chat_notice, "not sent: your message contains the word")
-    |> put_state(:chat_notice_gen, gen)
-    |> put_action(name: :clear_chat_notice, params: %{gen: gen}, delay: 4_000)
-  end
+  def action(:guess_result, %{outcome: :close, text: text}, component) when is_binary(text),
+    do: show_chat_notice(component, PlayFeedback.close_notice(text))
 
   def action(:guess_result, _params, component), do: component
+
+  # The word a correct guess earns comes on the user's own channel; still
+  # missing this long after the reply (the push was lost), it comes with a
+  # resync's snapshot instead.
+  def action(:check_guessed_word, %{game_id: game_id, round: round}, component) do
+    state = component.state
+
+    if game_id == state.game_id and round == state.round and state.phase == :drawing and
+         state.current_word in [nil, ""] and not state.leaving?,
+       do: request_stuck_resync(component),
+       else: component
+  end
 
   def action(:clear_chat_notice, %{gen: gen}, component) do
     if gen == Map.get(component.state, :chat_notice_gen),
@@ -1098,6 +1128,17 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
+  # A private hint under the chat input for 4 s (a newer one is not cut
+  # short by an older one's timer).
+  defp show_chat_notice(component, text) do
+    gen = Map.get(component.state, :chat_notice_gen, 0) + 1
+
+    component
+    |> put_state(:chat_notice, text)
+    |> put_state(:chat_notice_gen, gen)
+    |> put_action(name: :clear_chat_notice, params: %{gen: gen}, delay: 4_000)
+  end
+
   # The countdown watchdog and the missing-slice check ask once per seq: a
   # room that is really stuck (or a drawer with really no choices) costs one
   # resync, not one every few seconds.
@@ -1215,15 +1256,17 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  # The drawer's word fields in a snapshot, applied like a pushed slice.
+  # The word fields of the drawer, or of a player who has guessed the word,
+  # in a snapshot, applied like a pushed slice.
   defp apply_snapshot_private(component, view) do
-    if Map.get(view, :is_drawer) == true do
+    if Map.get(view, :is_drawer) == true or Map.get(view, :current_word) != nil do
       slice = %{
         game_id: view.game_id || "",
         round: view.current_round || 0,
         phase: view.phase,
         current_word: view.current_word,
-        word_choices: view.word_choices || []
+        word_choices: view.word_choices || [],
+        guess_points: Map.get(view, :guess_points)
       }
 
       if slice.game_id == component.state.game_id and slice.round == component.state.round,
@@ -1272,6 +1315,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
       component
       |> put_state(:current_word, slice.current_word)
       |> put_state(:word_choices, slice.word_choices || [])
+      |> put_state(
+        :guess_points,
+        Map.get(slice, :guess_points) || Map.get(component.state, :guess_points)
+      )
     else
       component
     end
@@ -1404,6 +1451,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
       |> put_state(:current_word_display, Map.get(view, :word_display, ""))
       |> put_state(:word_length, Map.get(view, :word_length, 0))
       |> put_state(:revealed_word, Map.get(view, :revealed_word))
+      |> put_state(:round_summary, Map.get(view, :round_summary))
 
     component =
       if new_turn or game_over,
@@ -1437,8 +1485,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   # A new game, a new turn or the end of the game: an empty canvas for
-  # everyone (the drawer's local history and op queue included) and no word
-  # until the new drawer's slice arrives.
+  # everyone (the drawer's local history and op queue included), no word
+  # until the new drawer's slice arrives and no guess yet.
   defp reset_turn(component, seq) do
     JS.call(:setDrawingPath, [""])
 
@@ -1447,6 +1495,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     |> put_state(:strokes_seq, seq)
     |> put_state(:current_word, nil)
     |> put_state(:word_choices, [])
+    |> put_state(:guess_points, nil)
   end
 
   # Anchors the countdowns from a view, delta or init state (see the
@@ -1642,6 +1691,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # The inline script dispatches :page_shown whenever this page instance's
   # markup is inserted (Hologram runs the inline scripts a patch inserts, and
   # keys a script by its text, so @mount_id makes it run once per instance).
+  #
+  # The answer and its blanks render one `.word-chunk` per word
+  # (ScrawlyWeb.PlayFeedback), so a line only ever breaks between words.
   def template do
     ~HOLO"""
     {%if @room_missing?}
@@ -1814,19 +1866,31 @@ defmodule ScrawlyWeb.Pages.GamePage do
                 {%if @is_drawer}choose a word to draw{%else}{(@current_drawer && @current_drawer.username) || "drawer"} is choosing …{/if}
               </div>
             {%else}
-              <div class="word-letters">
-                {%if @revealed_word}
-                  {String.upcase(@revealed_word)}
+              {%if @revealed_word}
+                <div class="word-letters">
+                  {%for w <- PlayFeedback.word_blocks(String.upcase(@revealed_word))}<span class="word-chunk">{w}</span>{/for}
+                </div>
+              {%else}
+                {%if @current_word}
+                  <div class={"word-letters" <> if(@is_drawer, do: "", else: " got-it")}>
+                    {%for w <- PlayFeedback.word_blocks(String.upcase(@current_word))}<span class="word-chunk">{w}</span>{/for}
+                  </div>
                 {%else}
-                  {%if @is_drawer}
-                    {String.upcase(@current_word || "")}
+                  <div class="word-letters masked">
+                    {%for w <- PlayFeedback.mask_blocks(@current_word_display)}<span class="word-chunk">{w}</span>{/for}
+                  </div>
+                {/if}
+              {/if}
+              <div class="word-meta">
+                {%if @is_drawer}
+                  your word · {PlayFeedback.word_label(@current_word_display, @word_length)}
+                {%else}
+                  {%if @phase == :drawing and PlayFeedback.guessed?(@correct_guessers, @current_user_id, @guess_points)}
+                    <span class="got-it">{PlayFeedback.got_it(@guess_points)}</span>
                   {%else}
-                    {%if @current_word_display}{@current_word_display}{%else}_ _ _{/if}
+                    round {@round} of {@total_rounds} · {PlayFeedback.word_label(@current_word_display, @word_length)}
                   {/if}
                 {/if}
-              </div>
-              <div class="word-meta">
-                {%if @is_drawer}your word · {@word_length} letters{%else}round {@round} of {@total_rounds} · {@word_length} letters{/if}
               </div>
             {/if}
           </div>
@@ -1873,6 +1937,36 @@ defmodule ScrawlyWeb.Pages.GamePage do
         </div>
       {/if}
 
+      {%if @phase == :round_end and @round_summary}
+        <div class="choice-overlay round-summary-overlay">
+          <div class="choice-modal round-summary" role="status">
+            <div class="round-summary-head mono">round {@round_summary.round} · the answer was</div>
+            <div class="word-letters round-summary-answer">
+              {%for w <- PlayFeedback.word_blocks(String.upcase(@round_summary.word || ""))}<span class="word-chunk">{w}</span>{/for}
+            </div>
+            <div class="round-summary-rows">
+              {%for row <- @round_summary.players}
+                <div class={"round-summary-row" <> if(row.id == @current_user_id, do: " me", else: "")}>
+                  <span class="nm">
+                    {%if row.guessed}<span class="mark guessed" role="img" aria-label="guessed it">✓</span>{%else}<span class="mark"></span>{/if}
+                    {row.username}
+                  </span>
+                  <span class={"pts mono" <> if(row.points > 0, do: "", else: " none")}>{PlayFeedback.points_label(row.points)}</span>
+                </div>
+              {/for}
+              <div class={"round-summary-row drawer" <> if(@round_summary.drawer_id == @current_user_id, do: " me", else: "")}>
+                <span class="nm">
+                  <span class="mark" role="img" aria-label="drew">✎</span>
+                  {@round_summary.drawer_name} <span class="role">drew</span>
+                </span>
+                <span class={"pts mono" <> if(@round_summary.drawer_points > 0, do: "", else: " none")}>{PlayFeedback.points_label(@round_summary.drawer_points)}</span>
+              </div>
+            </div>
+            <div class="round-summary-next mono">{PlayFeedback.next_turn(@round_summary.next_drawer_name)}</div>
+          </div>
+        </div>
+      {/if}
+
       <div class="game-layout">
         <div class="panel">
           <div class="panel-head">
@@ -1880,7 +1974,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
             <span class="mono">round {@round}/{@total_rounds}</span>
           </div>
           <div class="panel-body" style="padding: 0;">
-            <ScoreBoard players={@players} />
+            <ScoreBoard players={@players}
+              drawer_id={@current_drawer && @current_drawer.id}
+              guessed_ids={@correct_guessers} />
           </div>
         </div>
 
@@ -1953,6 +2049,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
           <ChatBox messages={@chat_messages} current_message={@new_message}
             current_user_id={@current_user_id} is_drawer={@is_drawer}
             rate_limited={@rate_limited} notice={@chat_notice}
+            got_it={if PlayFeedback.guessed?(@correct_guessers, @current_user_id, @guess_points) do PlayFeedback.got_it(@guess_points) end}
             disabled={!@game_started or @is_drawer} />
         </div>
       </div>

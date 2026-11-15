@@ -268,7 +268,8 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   client. The room process checks the guess (`RoomServer.submit_message/3`);
   on a correct guess the session user's stored score is raised atomically.
 
-  Replies `:guess_result` with `outcome` (`:correct` also carries `points`), or
+  Replies `:guess_result` with `outcome` (`:correct` also carries `points`,
+  `:close` the sender's own `text`; the word itself never comes back here), or
   `:command_denied` for visitors without an account, non-members and rooms
   that no longer exist.
   """
@@ -282,6 +283,10 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
           {:ok, {:correct, points}} ->
             persist_guess_points(uid, points)
             put_action(server, :guess_result, outcome: :correct, points: points)
+
+          # The sender's own line, back to the sender alone.
+          {:ok, {:close, text}} ->
+            put_action(server, :guess_result, outcome: :close, text: text)
 
           {:ok, outcome} ->
             put_action(server, :guess_result, outcome: outcome)

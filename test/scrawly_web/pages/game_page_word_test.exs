@@ -318,12 +318,13 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
       GamePage.command(:submit_guess, guess, server_for(ctx.guesser))
       assert room_state!(ctx.room.id).phase == :round_end
 
-      for {_who, server} <- non_drawers(ctx) do
+      for {who, server} <- non_drawers(ctx) do
         params =
           GamePage.command(:resync_room, %{room_id: ctx.room.id}, server).next_action.params
 
         assert params.revealed_word == @word
-        assert params.current_word == nil
+        # The guesser has had the word since their guess (play-feedback).
+        assert params.current_word == if(who == :guesser, do: @word)
         assert params.word_choices == []
       end
 

@@ -12,8 +12,9 @@ defmodule Scrawly.Games.RoomServer.Broadcasts do
     * `{:room_player, room_id, user_id}` - one user's private channel. A page
       subscribes to its own session user's channel in `init/3` (the grant is
       made on the server and receipts are signed, so nobody can subscribe to
-      another user's). The drawer's word choices and committed word go only
-      here (`push_private_slice/1`), never on `{:room}`; they carry no seq.
+      another user's). The drawer's word choices and committed word, and the
+      word for a player who has just guessed it, go only here
+      (`push_private_slice/1,2`), never on `{:room}`; they carry no seq.
 
   Only the room process calls these, so seqs are produced by one process and
   arrive in order; the seq exists to detect loss, not to fix ordering.
@@ -69,15 +70,31 @@ defmodule Scrawly.Games.RoomServer.Broadcasts do
   """
   @spec push_private_slice(map) :: map
   def push_private_slice(%{current_drawer_id: drawer_id} = state) do
-    if View.drawer?(state, drawer_id) do
-      Hologram.Realtime.broadcast_action(
-        player_channel(state.room_id, drawer_id),
-        :private_state,
-        View.private_slice(state)
-      )
-    end
+    if View.drawer?(state, drawer_id), do: send_slice(state, drawer_id)
+    state
+  end
+
+  @doc """
+  Sends `user_id` their private slice (`View.private_slice/2`) as
+  `:private_state` on their own channel, when they may see the word: the
+  drawer, or a player who has guessed it this round (`View.guessed?/2`).
+  The room calls it right after a correct guess, AFTER that guess's
+  `:room_delta`. Returns the state unchanged; does nothing for anyone else.
+  """
+  @spec push_private_slice(map, term) :: map
+  def push_private_slice(state, user_id) do
+    if View.drawer?(state, user_id) or View.guessed?(state, user_id),
+      do: send_slice(state, user_id)
 
     state
+  end
+
+  defp send_slice(state, user_id) do
+    Hologram.Realtime.broadcast_action(
+      player_channel(state.room_id, user_id),
+      :private_state,
+      View.private_slice(state, user_id)
+    )
   end
 
   @doc """

@@ -7,6 +7,9 @@ defmodule Scrawly.Games.Guess do
   accents, spacing, hyphens, apostrophes and other punctuation don't matter.
   """
 
+  # Answers whose key is shorter than this never get "close" guesses.
+  @close_min_length 5
+
   @doc """
   The comparison key of `text`: `normalize/1`, then every space removed.
 
@@ -83,6 +86,48 @@ defmodule Scrawly.Games.Guess do
   def contains_word?(_text, _word), do: false
 
   @doc """
+  The shortest answer key (`key/1`, in characters) a guess can be "close" to:
+  shorter answers are too easy to hit by accident one edit away.
+  """
+  @spec close_min_length() :: pos_integer
+  def close_min_length, do: @close_min_length
+
+  @doc """
+  True when `guess` is one edit away from `word`: their `key/1` forms are at
+  a Damerau-Levenshtein distance of exactly 1 (one character added, missing
+  or changed, or two neighbours swapped). Only for answers whose key has at
+  least `close_min_length/0` characters.
+
+  Keys are compared, so case, accents, spacing and punctuation never count
+  as edits, and characters (graphemes) are counted, not bytes:
+
+      iex> Scrawly.Games.Guess.close?("popcorm", "popcorn")
+      true
+      iex> Scrawly.Games.Guess.close?("Pop-Corm!", "popcorn")
+      true
+      iex> Scrawly.Games.Guess.close?("popocrn", "popcorn")
+      true
+      iex> Scrawly.Games.Guess.close?("popcorn", "popcorn")
+      false
+      iex> Scrawly.Games.Guess.close?("hut", "hat")
+      false
+
+  A guess with the same key (a match) or an empty key is never close.
+  """
+  @spec close?(term, term) :: boolean
+  def close?(guess, word) when is_binary(guess) and is_binary(word) do
+    word_key = key(word)
+    guess_key = key(guess)
+    word_length = String.length(word_key)
+
+    word_length >= @close_min_length and guess_key != "" and guess_key != word_key and
+      abs(String.length(guess_key) - word_length) <= 1 and
+      one_edit?(String.graphemes(guess_key), String.graphemes(word_key))
+  end
+
+  def close?(_guess, _word), do: false
+
+  @doc """
   Lowercase, accents stripped (canonical decomposition minus combining
   marks), every run of characters that are neither letters nor digits
   (punctuation, whitespace, symbols) turned into one space, trimmed.
@@ -126,4 +171,15 @@ defmodule Scrawly.Games.Guess do
       _ -> false
     end
   end
+
+  # Exactly one edit turns the first list into the second: the common prefix
+  # is skipped, then at the first difference the rest must line up after one
+  # swap of neighbours, one change, one extra or one missing character.
+  # Equal lists are not one edit apart.
+  defp one_edit?([same | a], [same | b]), do: one_edit?(a, b)
+  defp one_edit?([x, y | a], [y, x | b]) when a == b, do: true
+  defp one_edit?([_ | a], [_ | b]) when a == b, do: true
+  defp one_edit?([_ | a], b) when a == b, do: true
+  defp one_edit?(a, [_ | b]) when a == b, do: true
+  defp one_edit?(_a, _b), do: false
 end

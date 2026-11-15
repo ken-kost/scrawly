@@ -799,7 +799,19 @@ html, body {
   letter-spacing: 0.4em;
   text-indent: 0.4em;
   font-weight: 500;
+  /* One block per word (.word-chunk): a line breaks only between words. A
+     single word wider than the line still wraps inside itself. */
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  column-gap: 0.6em;
+  row-gap: 2px;
 }
+.word-chunk { max-width: 100%; }
+/* Blanks already hold a space between letters, so they sit closer. */
+.word-letters.masked { letter-spacing: 0.12em; text-indent: 0.12em; column-gap: 1.8em; }
+.word-letters.got-it,
+.word-meta .got-it { color: var(--success); }
 .word-meta {
   font-size: 11px;
   color: var(--muted);
@@ -877,6 +889,9 @@ html, body {
 .scoreboard .nm { font-size: 14px; display: flex; align-items: center; gap: 6px; }
 .scoreboard .pts { font-family: 'Geist Mono', ui-monospace, monospace; font-size: 13px; }
 .scoreboard .guessed { color: var(--success); }
+.scoreboard .sb-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scoreboard .sb-mark { display: inline-flex; flex: none; color: var(--muted); }
+.scoreboard .sb-mark.guessed { color: var(--success); }
 
 /* Sized to the canvas and its toolbar: a taller chat panel beside it must
    not stretch it into an empty band under the toolbar. */
@@ -1197,6 +1212,7 @@ html, body {
   .game-bar .left, .game-bar .right { justify-content: flex-start; flex-wrap: wrap; }
   .game-bar .right { justify-content: space-between; }
   .word-letters { font-size: 18px; letter-spacing: 0.3em; }
+  .word-letters.masked { letter-spacing: 0.1em; text-indent: 0.1em; }
 
   .game-layout { padding: 12px 16px 24px; gap: 12px; }
   .lobby-grid { gap: 16px; }
@@ -1448,6 +1464,49 @@ html, body {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/* ─── Round summary (the :round_end pause) ──────────────────────── */
+/* Lighter than the word choice and click-through: it only informs, and the
+   chat stays usable behind it for the few seconds it shows. */
+.round-summary-overlay {
+  background: rgba(10, 10, 10, 0.35);
+  backdrop-filter: none;
+  pointer-events: none;
+}
+.round-summary {
+  pointer-events: auto;
+  max-width: 420px;
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  padding: 22px 24px 18px;
+}
+.round-summary-head,
+.round-summary-next {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.round-summary-answer { margin: 8px 0 16px; font-size: 20px; }
+.round-summary-rows { border-top: 1px solid var(--hairline); text-align: left; }
+.round-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 2px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 14px;
+}
+.round-summary-row .nm { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.round-summary-row .mark { width: 14px; flex: none; text-align: center; color: var(--muted); }
+.round-summary-row .mark.guessed { color: var(--success); }
+.round-summary-row .role { color: var(--muted); font-size: 12px; }
+.round-summary-row .pts { font-size: 13px; }
+.round-summary-row .pts.none { color: var(--muted); }
+.round-summary-row.me { font-weight: 600; }
+.round-summary-row.drawer { background: color-mix(in oklch, var(--accent) 10%, transparent); }
+.round-summary-next { margin-top: 14px; }
 
 /* ─── Avatar tiles ────────────────────────────────────────────────── */
 /* 24 background tones used by preset avatars. Two HSL rings sampled
