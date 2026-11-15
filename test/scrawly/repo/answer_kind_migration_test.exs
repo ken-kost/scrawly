@@ -57,8 +57,11 @@ defmodule Scrawly.Repo.AnswerKindMigrationTest do
     Ecto.UUID.load!(id)
   end
 
+  # Sorted here, not with ORDER BY: how Postgres orders text depends on the
+  # database's collation (C.UTF-8 locally, en_US.utf8 in CI's postgres image).
   defp column_kinds do
-    Repo.query!("SELECT name, answer_kind FROM rooms WHERE name LIKE 'TEST wc%' ORDER BY name").rows
+    Repo.query!("SELECT name, answer_kind FROM rooms WHERE name LIKE 'TEST wc%'").rows
+    |> Enum.sort()
   end
 
   test "one word per answer becomes words, two or three become phrases", %{migration: migration} do
