@@ -111,7 +111,7 @@ defmodule Scrawly.Games.RoomTest do
 
     test "generate_ai_words rejects a prompt over 200 characters before calling the model" do
       assert {:error, %Ash.Error.Invalid{}} =
-               Scrawly.Games.generate_ai_words(String.duplicate("p", 201), 1)
+               Scrawly.Games.generate_ai_words(String.duplicate("p", 201), :words)
     end
   end
 

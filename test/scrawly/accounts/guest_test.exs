@@ -44,7 +44,13 @@ defmodule Scrawly.Accounts.GuestTest do
 
       result = ScrawlyWeb.Pages.HomePage.command(:create_room, %{name: "TEST guest"}, server)
 
-      assert result.next_action == nil
+      # The form says why (create-room-form); no room is created.
+      assert result.next_action.name == :create_room_failed
+
+      assert result.next_action.params == %{
+               field: nil,
+               message: "register an account to create rooms"
+             }
     end
   end
 

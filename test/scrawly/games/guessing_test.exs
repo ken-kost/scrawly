@@ -111,9 +111,7 @@ defmodule Scrawly.Games.GuessingTest do
 
   describe "game flow with guessing" do
     setup do
-      {:ok, existing} = Games.get_all_words()
-      Enum.each(existing, fn w -> Ash.destroy!(w) end)
-      Scrawly.Games.Word.seed_words()
+      Games.sync_words()
 
       {:ok, player1} =
         Ash.create(User, %{email: "drawer-#{System.unique_integer([:positive])}@test.com"},

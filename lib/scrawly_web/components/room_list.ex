@@ -2,6 +2,7 @@ defmodule ScrawlyWeb.Components.RoomList do
   use Hologram.Component
 
   alias ScrawlyWeb.Components.Avatar
+  alias ScrawlyWeb.RoomSettings
 
   prop :rooms, :list, required: true
 
@@ -21,8 +22,13 @@ defmodule ScrawlyWeb.Components.RoomList do
               <span class="name">{room.name}</span>
               <span class="meta">
                 <span>[{Map.get(room, :code, "") || ""}]</span>
-                <span>[{if((Map.get(room, :word_source, :local) || :local) == :ai, do: "ai", else: "local")}]</span>
-                <span>{Map.get(room, :round_duration, 60) || 60}s × {Map.get(room, :round_multiplier, 1) || 1}r</span>
+                <span>{RoomSettings.summary(room)}</span>
+                {%if RoomSettings.themes_label(Map.get(room, :themes))}
+                  <span class="room-themes" title={RoomSettings.themes_list(Map.get(room, :themes))}>themes: {RoomSettings.themes_label(Map.get(room, :themes))}</span>
+                {/if}
+                {%if RoomSettings.theme(room)}
+                  <span class="room-theme">theme: {RoomSettings.theme(room)}</span>
+                {/if}
               </span>
             </div>
             <div class="avatar-stack">

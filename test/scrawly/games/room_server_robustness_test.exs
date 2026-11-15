@@ -9,7 +9,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
   import Scrawly.RoomTestHelpers
 
   alias Scrawly.{Accounts, Games}
-  alias Scrawly.Games.{Game, RoomServer, Scoring, Word}
+  alias Scrawly.Games.{AnswerKind, Game, RoomServer, Scoring, WordList}
   alias Scrawly.Games.RoomServer.{GameFlow, View}
   alias ScrawlyWeb.Pages.{GamePage, GameScorePage}
 
@@ -70,10 +70,8 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
     end
   end
 
-  defp builtin_words(word_count) do
-    Word.word_list()
-    |> Enum.filter(fn {{n, _difficulty}, _words} -> n == word_count end)
-    |> Enum.flat_map(fn {_key, words} -> words end)
+  defp builtin_words(kind) do
+    for %{text: text} <- WordList.entries(), AnswerKind.of(text) == kind, do: text
   end
 
   # ── G1 ────────────────────────────────────────────────────────────────────
@@ -103,7 +101,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
           room_with(players, %{max_players: 12, round_multiplier: multiplier})
 
         assert {:ok, state} =
-                 RoomServer.start_game(room.id, creator.id, %{word_choices: ["zzyzx"]})
+                 RoomServer.start_game(room.id, creator.id, %{word_choices: choices(["zzyzx"])})
 
         expected = RoomServer.total_rounds(players, multiplier)
         assert state.total_rounds == expected
@@ -117,7 +115,9 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
   describe "G3: a room restarted mid-game" do
     test "returns to the lobby, cancels the stale Game and says why" do
       {room, [creator, player]} = room_with(2)
-      {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: ["zzyzx"]})
+
+      {:ok, started} =
+        RoomServer.start_game(room.id, creator.id, %{word_choices: choices(["zzyzx"])})
 
       kill_room!(room)
       assert reload_room!(room).status == :playing
@@ -133,7 +133,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
 
       # Nothing is stuck: the creator can start again.
       assert {:ok, %{status: :playing}} =
-               RoomServer.start_game(room.id, creator.id, %{word_choices: ["zzyzx"]})
+               RoomServer.start_game(room.id, creator.id, %{word_choices: choices(["zzyzx"])})
     end
   end
 
@@ -169,16 +169,20 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
     test "with no words in the DB the built-in list fills the choices" do
       assert Games.get_word_count() == 0
 
-      for word_count <- 1..3 do
-        builtin = builtin_words(word_count)
-        {choices, [], 0} = GameFlow.pick_word_choices([], [], word_count, 3)
+      for answer_kind <- AnswerKind.all() do
+        {choices, [], 0} = GameFlow.pick_word_choices([], [], answer_kind, 3)
+        texts = Enum.map(choices, & &1.text)
 
         assert length(choices) == 3
-        assert Enum.uniq(choices) == choices
-        assert Enum.all?(choices, &(&1 in builtin))
+        assert Enum.uniq(texts) == texts
+        assert Enum.all?(texts, &(&1 in (builtin_words(:word) ++ builtin_words(:phrase))))
+        assert Enum.all?(texts, &AnswerKind.allows?(answer_kind, &1))
+        assert Enum.map(choices, & &1.difficulty) == [:easy, :medium, :hard]
+      end
 
-        assert {:ok, word} = Games.get_random_word(word_count: word_count)
-        assert word in builtin
+      for kind <- [:word, :phrase] do
+        assert {:ok, word} = Games.get_random_word(kind: kind)
+        assert word in builtin_words(kind)
       end
     end
 
@@ -186,7 +190,9 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
       {room, [creator, player]} = room_with(2)
 
       {:ok, _} = RoomServer.start_game(room.id, creator.id, %{})
-      assert {:ok, %{word_choices: [first, _, _]}} = RoomServer.get_view(room.id, creator.id)
+
+      assert {:ok, %{word_choices: [%{text: first}, _, _]}} =
+               RoomServer.get_view(room.id, creator.id)
 
       {:ok, _} = RoomServer.choose_word(room.id, creator.id, first)
       assert expire_round!(room).phase == :round_end
@@ -198,7 +204,9 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
 
     test "a turn with nothing to choose ends the game instead of freezing" do
       {room, [creator, _player]} = room_with(2)
-      {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: ["zzyzx"]})
+
+      {:ok, started} =
+        RoomServer.start_game(room.id, creator.id, %{word_choices: choices(["zzyzx"])})
 
       :sys.replace_state(pid_of(room), &%{&1 | word_choices: []})
       send(pid_of(room), {:word_choice_timeout, started.game_id, 1})
@@ -232,7 +240,10 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
         room_with(2, %{word_source: :ai, prompt: "TEST ocean animals"})
 
       {:ok, _} =
-        RoomServer.start_game(room.id, creator.id, %{word_choices: ["zzyzx"], ai_words: []})
+        RoomServer.start_game(room.id, creator.id, %{
+          word_choices: choices(["zzyzx"]),
+          ai_words: []
+        })
 
       room_pid = pid_of(room)
       test_pid = self()
@@ -253,7 +264,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
 
       on_exit(fn -> :telemetry.detach(handler) end)
 
-      send(room_pid, {:refill_ai_words, room.id, 1, 2, :fun})
+      send(room_pid, {:refill_ai_words, room.id, 2, :fun})
       assert_receive {:ai_call_in, worker}, 1_000
       refute worker == room_pid
 
@@ -272,7 +283,10 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
         room_with(2, %{word_source: :ai, prompt: "TEST ocean animals"})
 
       {:ok, started} =
-        RoomServer.start_game(room.id, creator.id, %{word_choices: ["zzyzx"], ai_words: ["old"]})
+        RoomServer.start_game(room.id, creator.id, %{
+          word_choices: choices(["zzyzx"]),
+          ai_words: ["old"]
+        })
 
       ref = make_ref()
       :sys.replace_state(pid_of(room), &%{&1 | ai_refill: {ref, started.game_id}})
@@ -316,7 +330,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
 
     test "the drawer leaving while drawing ends the turn and the next player draws", ctx do
       %{room: room, a: a, b: b, c: c} = ctx
-      word = hd(to_round_two!(ctx).word_choices)
+      word = hd(to_round_two!(ctx).word_choices).text
       {:ok, %{phase: :drawing}} = RoomServer.choose_word(room.id, b.id, word)
 
       leave!(room, b)
@@ -372,7 +386,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
       round_two = advance!(room)
       assert round_two.current_drawer_id == b.id
 
-      {:ok, _} = RoomServer.choose_word(room.id, b.id, hd(round_two.word_choices))
+      {:ok, _} = RoomServer.choose_word(room.id, b.id, hd(round_two.word_choices).text)
       assert expire_round!(room).phase == :round_end
       advance!(room)
 
@@ -381,7 +395,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
 
     test "a departed drawer can't draw and never gets the word", ctx do
       %{room: room, b: b} = ctx
-      word = hd(to_round_two!(ctx).word_choices)
+      word = hd(to_round_two!(ctx).word_choices).text
       {:ok, _} = RoomServer.choose_word(room.id, b.id, word)
 
       leave!(room, b)
@@ -399,7 +413,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
         current_drawer_id: "gone",
         phase: :choosing,
         current_word: "zzyzx",
-        word_choices: ["zzyzx"],
+        word_choices: [%{text: "zzyzx", difficulty: :hard}],
         players: [%{id: "a", username: "A"}]
       }
 
@@ -428,7 +442,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
 
   describe "G10: after a game the room stays joinable" do
     defp finish_game!(room, creator) do
-      {:ok, _} = RoomServer.start_game(room.id, creator.id, %{word_choices: ["zzyzx"]})
+      {:ok, _} = RoomServer.start_game(room.id, creator.id, %{word_choices: choices(["zzyzx"])})
       {:ok, %{status: :post_game}} = RoomServer.end_game(room.id)
     end
 
@@ -485,7 +499,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
 
     test "a refused join replies :command_denied with the reason" do
       {room, [a, _b]} = room_with(2)
-      {:ok, _} = RoomServer.start_game(room.id, a.id, %{word_choices: ["zzyzx"]})
+      {:ok, _} = RoomServer.start_game(room.id, a.id, %{word_choices: choices(["zzyzx"])})
 
       result = GamePage.command(:join_room, %{room_id: room.id}, server_for(create_user()))
 
@@ -500,7 +514,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
   describe "G11: rounds time out from the room itself" do
     test "a RoundTimer restart can't stall a round" do
       {room, [a, _b]} = room_with(2)
-      {:ok, _} = RoomServer.start_game(room.id, a.id, %{word_choices: ["zzyzx"]})
+      {:ok, _} = RoomServer.start_game(room.id, a.id, %{word_choices: choices(["zzyzx"])})
       :sys.replace_state(pid_of(room), &%{&1 | round_duration: 1})
       {:ok, %{phase: :drawing}} = RoomServer.choose_word(room.id, a.id, "zzyzx")
 
@@ -558,7 +572,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
       {room, [a, _b]} = room_with(2)
       old = for n <- 1..10, do: %{game_id: "g#{n}", total_rounds: 2, players: [], winner: nil}
       :sys.replace_state(pid_of(room), &%{&1 | past_games: old})
-      {:ok, started} = RoomServer.start_game(room.id, a.id, %{word_choices: ["zzyzx"]})
+      {:ok, started} = RoomServer.start_game(room.id, a.id, %{word_choices: choices(["zzyzx"])})
       subscribe({:room, room.id})
 
       {:ok, _} = RoomServer.end_game(room.id)
@@ -607,7 +621,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
       Accounts.add_score!(a.id, 10)
       Accounts.add_score!(b.id, 40)
 
-      {:ok, _} = RoomServer.start_game(room.id, a.id, %{word_choices: ["zzyzx"]})
+      {:ok, _} = RoomServer.start_game(room.id, a.id, %{word_choices: choices(["zzyzx"])})
 
       assert reload_user!(a).score == 0
       assert reload_user!(b).score == 0

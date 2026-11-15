@@ -61,9 +61,10 @@ defmodule Scrawly.Games.Game do
         description "Previously used words to exclude from selection"
       end
 
-      argument :word_count, :integer do
-        default 1
-        description "Number of words per entry (1, 2, or 3)"
+      argument :kind, :atom do
+        default :word
+        constraints one_of: [:word, :phrase]
+        description "What to pick without an override word: a word or a phrase"
       end
 
       argument :override_word, :string do
@@ -78,9 +79,9 @@ defmodule Scrawly.Games.Game do
           Ash.Changeset.change_attribute(changeset, :current_word, override)
         else
           used = Ash.Changeset.get_argument(changeset, :used_words) || []
-          word_count = Ash.Changeset.get_argument(changeset, :word_count) || 1
+          kind = Ash.Changeset.get_argument(changeset, :kind) || :word
 
-          case Scrawly.Games.get_random_word(exclude: used, word_count: word_count) do
+          case Scrawly.Games.get_random_word(exclude: used, kind: kind) do
             {:ok, word} ->
               Ash.Changeset.change_attribute(changeset, :current_word, word)
 

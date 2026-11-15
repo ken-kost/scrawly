@@ -60,8 +60,8 @@ defmodule Scrawly.Games.RoomServerBroadcastTest do
     {:ok, _} = RoomServer.join(room.id, %{id: user.id, username: user.username, score: 0})
   end
 
-  defp start!(room, creator, choices \\ @choices) do
-    {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: choices})
+  defp start!(room, creator, entries \\ @choices) do
+    {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: choices(entries)})
     started
   end
 
@@ -148,12 +148,53 @@ defmodule Scrawly.Games.RoomServerBroadcastTest do
                round: 1,
                phase: :choosing,
                current_word: nil,
-               word_choices: @choices
+               word_choices: choices(@choices)
              }
 
       refute Map.has_key?(slice, :seq)
       refute Map.has_key?(delta, :word_choices)
       assert player.id != drawer_id
+    end
+
+    test "the choices' difficulties reach the drawer alone; the chosen one, everyone", ctx do
+      %{room: room, creator: creator, player: player} = ctx
+      join!(room, player)
+      subscribe_all(ctx)
+
+      start!(room, creator, [{@word, :easy}, {"TESTquokka", :medium}, {"TESTfjord", :hard}])
+      choosing = drain()
+
+      {to_drawer, to_others} =
+        Enum.split_with(
+          choosing,
+          &match?({{:room_player, _, id}, _, _, _} when id == creator.id, &1)
+        )
+
+      assert [{_, :private_state, %{word_choices: drawer_choices}, _}] = to_drawer
+      assert Enum.map(drawer_choices, & &1.difficulty) == [:easy, :medium, :hard]
+
+      # Nothing on {:room} or the other player's channel names a difficulty
+      # while the drawer chooses.
+      assert to_others != []
+      refute Enum.any?(to_others, &match?({{:room_player, _, _}, _, _, _}, &1))
+
+      for {_, _, params, _} <- to_others do
+        assert Map.get(params, :word_difficulty) == nil
+        refute inspect(params, limit: :infinity) =~ ~r/:easy|:medium|:hard/
+      end
+
+      # Nor does the other player's own view of the room.
+      {:ok, view} = RoomServer.get_view(room.id, player.id)
+      assert view.word_choices == [] and view.word_difficulty == nil
+      refute inspect(view, limit: :infinity) =~ ~r/:easy|:medium|:hard/
+
+      # Once the drawer picks the hard one, its difficulty goes to everyone.
+      {:ok, _} = RoomServer.choose_word(room.id, creator.id, "TESTfjord")
+
+      assert [%{word_difficulty: :hard}] =
+               for({{:room, _}, :room_delta, delta, _} <- drain(), do: delta)
+
+      assert {:ok, %{word_difficulty: :hard}} = RoomServer.get_view(room.id, player.id)
     end
 
     test "commit: the word follows the :drawing delta, from choose_word and from the auto-pick",

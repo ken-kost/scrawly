@@ -79,7 +79,8 @@ defmodule ScrawlyWeb.Pages.GamePageRobustnessTest do
           disabled: false,
           is_drawer: false,
           rate_limited: false,
-          notice: "not sent: your message contains the word"
+          notice: "not sent: your message contains the word",
+          got_it: nil
         })
         |> Renderer.render_dom(%Renderer.Env{}, %Hologram.Server{})
 

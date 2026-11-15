@@ -2,13 +2,19 @@ defmodule Scrawly.Games.WordTest do
   use Scrawly.DataCase
 
   alias Scrawly.Games
+  alias Scrawly.Games.{AnswerKind, Word, WordList}
 
   setup do
-    # Clear stale words from previous seeds, then re-seed with difficulty data
-    {:ok, existing} = Games.get_all_words()
-    Enum.each(existing, fn w -> Ash.destroy!(w) end)
-    Scrawly.Games.Word.seed_words()
+    Games.sync_words()
     :ok
+  end
+
+  # Entries of the word file of a kind (:word or :phrase) and difficulty.
+  defp file_count(difficulty, kind) do
+    Enum.count(
+      WordList.entries(),
+      &(&1.difficulty == difficulty and AnswerKind.of(&1.text) == kind)
+    )
   end
 
   describe "word selection" do
@@ -29,10 +35,8 @@ defmodule Scrawly.Games.WordTest do
       assert length(unique_words) > 1
     end
 
-    test "word list contains words across all word counts" do
-      word_count = Games.get_word_count()
-      # 100 1-word + 100 2-word + 100 3-word = ~300 total
-      assert word_count > 200
+    test "the table holds every entry of the word file" do
+      assert Games.get_word_count() == length(WordList.entries())
     end
 
     test "all words are valid strings" do
@@ -44,7 +48,7 @@ defmodule Scrawly.Games.WordTest do
         assert is_binary(word.text)
         assert String.length(word.text) > 0
         assert String.length(word.text) <= 60
-        assert Regex.match?(~r/^[a-zA-Z\s]+$/, word.text)
+        assert Regex.match?(~r/\A[a-z' -]+\z/, word.text)
       end)
     end
   end
@@ -77,56 +81,74 @@ defmodule Scrawly.Games.WordTest do
       {:ok, medium} = Games.get_words_by_difficulty(:medium)
       {:ok, hard} = Games.get_words_by_difficulty(:hard)
 
-      # Each difficulty has entries across word_counts 1, 2, and 3
+      # Each difficulty has single words and phrases
       assert length(easy) >= 60
       assert length(medium) >= 60
       assert length(hard) >= 60
     end
   end
 
-  describe "word_count filtering" do
-    test "get_words_by_difficulty_and_word_count filters correctly" do
-      {:ok, one_word_easy} = Games.get_words_by_difficulty_and_word_count(:easy, 1)
-      assert length(one_word_easy) == 30
+  describe "selection by kind" do
+    test "get_words_by_difficulty_and_kind returns words or phrases of every length" do
+      for difficulty <- WordList.difficulties() do
+        {:ok, words} = Games.get_words_by_difficulty_and_kind(difficulty, :word)
+        assert length(words) == file_count(difficulty, :word)
+        assert Enum.all?(words, &(&1.difficulty == difficulty and &1.word_count == 1))
 
-      Enum.each(one_word_easy, fn w ->
-        assert w.difficulty == :easy
-        assert w.word_count == 1
-      end)
+        {:ok, phrases} = Games.get_words_by_difficulty_and_kind(difficulty, :phrase)
+        assert length(phrases) == file_count(difficulty, :phrase)
+        assert phrases != []
+        assert Enum.all?(phrases, &(&1.difficulty == difficulty and &1.word_count in 2..4))
+      end
 
-      {:ok, two_word_medium} = Games.get_words_by_difficulty_and_word_count(:medium, 2)
-      assert length(two_word_medium) > 0
-
-      Enum.each(two_word_medium, fn w ->
-        assert w.difficulty == :medium
-        assert w.word_count == 2
-        assert length(String.split(w.text)) == 2
-      end)
+      {:ok, hard} = Games.get_words_by_difficulty_and_kind(:hard, :phrase)
+      assert hard |> Enum.map(& &1.word_count) |> Enum.uniq() |> Enum.sort() == [2, 3, 4]
     end
 
-    test "get_random_word with word_count returns correct word count" do
-      {:ok, word} = Games.get_random_word(word_count: 2)
-      assert length(String.split(word)) == 2
+    test "an unknown kind is invalid" do
+      for kind <- [:phrases, :words, 2, nil] do
+        assert {:error, %Ash.Error.Invalid{}} =
+                 Games.get_words_by_difficulty_and_kind(:easy, kind)
+      end
+    end
 
-      {:ok, word3} = Games.get_random_word(word_count: 3)
-      assert length(String.split(word3)) == 3
+    test "get_random_word returns the kind asked for, a word by default" do
+      for _ <- 1..30 do
+        {:ok, word} = Games.get_random_word()
+        assert AnswerKind.of(word) == :word
+
+        {:ok, word} = Games.get_random_word(kind: :word)
+        assert AnswerKind.of(word) == :word
+
+        {:ok, phrase} = Games.get_random_word(kind: :phrase)
+        assert AnswerKind.of(phrase) == :phrase
+      end
+    end
+
+    # No four-word phrase is easy: phrases are one pool, never picked by
+    # their exact word count, so every difficulty yields one.
+    test "every difficulty has phrases to pick" do
+      for difficulty <- WordList.difficulties(), _ <- 1..5 do
+        {:ok, phrase} = Games.get_random_word(kind: :phrase, difficulty: difficulty)
+        assert AnswerKind.of(phrase) == :phrase
+      end
     end
   end
 
   describe "smart word selection" do
     test "get_random_word with difficulty option returns word of that difficulty" do
-      {:ok, word} = Games.get_random_word(difficulty: :easy, word_count: 1)
-      {:ok, easy_words} = Games.get_words_by_difficulty_and_word_count(:easy, 1)
+      {:ok, word} = Games.get_random_word(difficulty: :easy, kind: :word)
+      {:ok, easy_words} = Games.get_words_by_difficulty_and_kind(:easy, :word)
       easy_texts = Enum.map(easy_words, & &1.text)
       assert word in easy_texts
     end
 
     test "get_random_word excludes specified words" do
       # Get all 1-word easy words and exclude all but one
-      {:ok, easy_words} = Games.get_words_by_difficulty_and_word_count(:easy, 1)
+      {:ok, easy_words} = Games.get_words_by_difficulty_and_kind(:easy, :word)
       all_but_last = easy_words |> Enum.map(& &1.text) |> Enum.drop(-1)
 
-      {:ok, word} = Games.get_random_word(difficulty: :easy, word_count: 1, exclude: all_but_last)
+      {:ok, word} = Games.get_random_word(difficulty: :easy, kind: :word, exclude: all_but_last)
       refute word in all_but_last
     end
 
@@ -135,45 +157,139 @@ defmodule Scrawly.Games.WordTest do
       {:ok, word} =
         Games.get_random_word(
           difficulty: :easy,
-          word_count: 1,
-          exclude: Scrawly.Games.Word.all_words_flat()
+          kind: :word,
+          exclude: Enum.map(WordList.entries(), & &1.text)
         )
 
       assert is_binary(word)
     end
   end
 
-  describe "seeding (QA env note)" do
-    test "seed_words/0 is idempotent" do
-      expected =
-        Scrawly.Games.Word.word_list()
-        |> Enum.flat_map(fn {{word_count, _difficulty}, words} ->
-          Enum.map(words, &{&1, word_count})
-        end)
-        |> Enum.uniq()
+  describe "sync_words/0" do
+    defp table, do: Map.new(Games.get_all_words!(), &{&1.text, &1})
 
-      assert Games.get_word_count() == length(expected)
+    test "fills an empty table with exactly the file's entries" do
+      Enum.each(Games.get_all_words!(), &Ash.destroy!/1)
 
-      Scrawly.Games.Word.seed_words()
-      Scrawly.Games.Word.seed_words()
+      entries = WordList.entries()
+      assert Games.sync_words() == %{inserted: length(entries), updated: 0, deleted: 0}
 
-      assert Games.get_word_count() == length(expected)
+      table = table()
+      assert map_size(table) == length(entries)
+
+      for entry <- entries do
+        row = Map.fetch!(table, entry.text)
+        assert {row.difficulty, row.theme} == {entry.difficulty, entry.theme}
+        assert row.word_count == WordList.word_count(entry.text)
+      end
     end
 
-    test "priv/repo/seeds.exs seeds the words, and running it again adds none" do
-      {:ok, existing} = Games.get_all_words()
-      Enum.each(existing, &Ash.destroy!/1)
+    test "inserts the entries the table lacks" do
+      [first, second | _] = WordList.entries()
+      Enum.each([first, second], &Ash.destroy!(table()[&1.text]))
 
-      ExUnit.CaptureIO.capture_io(fn -> Code.eval_file("priv/repo/seeds.exs") end)
+      assert Games.sync_words() == %{inserted: 2, updated: 0, deleted: 0}
+      assert Map.has_key?(table(), first.text) and Map.has_key?(table(), second.text)
+    end
 
-      count = Games.get_word_count()
-      # The curated list: 300 each of 1-, 2- and 3-word entries.
-      assert count >= 850
+    test "updates the difficulty and theme of rows that differ from the file" do
+      entry = hd(WordList.entries())
+      other_difficulty = hd(WordList.difficulties() -- [entry.difficulty])
+      row = table()[entry.text]
+
+      Ash.update!(row, %{difficulty: other_difficulty, theme: :sports})
+
+      assert Games.sync_words() == %{inserted: 0, updated: 1, deleted: 0}
+
+      synced = table()[entry.text]
+      assert synced.id == row.id
+      assert {synced.difficulty, synced.theme} == {entry.difficulty, entry.theme}
+    end
+
+    test "deletes rows that are no longer in the file" do
+      Games.create_word!(%{text: "test stale word", difficulty: :easy})
+      Games.create_word!(%{text: "teststale", difficulty: :hard})
+
+      assert Games.sync_words() == %{inserted: 0, updated: 0, deleted: 2}
+      refute Map.has_key?(table(), "test stale word")
+      assert Games.get_word_count() == length(WordList.entries())
+    end
+
+    test "a second run changes nothing" do
+      ids = Map.new(table(), fn {text, row} -> {text, row.id} end)
+
+      assert Games.sync_words() == %{inserted: 0, updated: 0, deleted: 0}
+      assert Map.new(table(), fn {text, row} -> {text, row.id} end) == ids
+    end
+
+    test "priv/repo/seeds.exs runs it" do
+      Enum.each(Games.get_all_words!(), &Ash.destroy!/1)
+
+      first = ExUnit.CaptureIO.capture_io(fn -> Code.eval_file("priv/repo/seeds.exs") end)
+      assert first =~ "words: #{length(WordList.entries())} inserted, 0 updated, 0 deleted"
 
       second = ExUnit.CaptureIO.capture_io(fn -> Code.eval_file("priv/repo/seeds.exs") end)
-      refute second =~ ~r/: [1-9]\d*\/\d+ created/
+      assert second =~ "words: 0 inserted, 0 updated, 0 deleted"
+    end
+  end
 
-      assert Games.get_word_count() == count
+  describe "the Word resource" do
+    test "creating a word that already exists fails with a validation error" do
+      text = hd(WordList.entries()).text
+
+      for duplicate <- [text, String.upcase(text), "  #{text}  "] do
+        assert {:error, %Ash.Error.Invalid{} = error} =
+                 Games.create_word(%{text: duplicate, difficulty: :easy})
+
+        assert Exception.message(error) =~ "has already been taken"
+      end
+
+      assert Games.get_word_count() == length(WordList.entries())
+    end
+
+    test "stores the text lowercase and derives word_count from it" do
+      word = Games.create_word!(%{text: "TEST Big Wave", difficulty: :medium})
+      assert {word.text, word.word_count} == {"test big wave", 3}
+
+      word = Games.create_word!(%{text: "test-run", difficulty: :medium})
+      assert word.word_count == 1
+    end
+
+    test "takes phrases of up to four words" do
+      word = Games.create_word!(%{text: "test in the box", difficulty: :hard, theme: :objects})
+      assert word.word_count == 4
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Games.create_word(%{text: "test in the big box", difficulty: :hard})
+    end
+
+    test "does not accept word_count as input" do
+      assert {:error, %Ash.Error.Invalid{}} =
+               Games.create_word(%{text: "test words", difficulty: :easy, word_count: 1})
+    end
+
+    test "theme is optional and one of the word file's themes" do
+      assert Games.create_word!(%{text: "testa", difficulty: :easy}).theme == nil
+      assert Games.create_word!(%{text: "testb", difficulty: :easy, theme: :food}).theme == :food
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Games.create_word(%{text: "testc", difficulty: :easy, theme: :pets})
+    end
+  end
+
+  describe "builtin_words/2" do
+    test "are the word file's entries of that kind (and difficulty)" do
+      for kind <- [:word, :phrase], difficulty <- WordList.difficulties() do
+        words = Word.builtin_words(kind, difficulty)
+        assert length(words) == file_count(difficulty, kind)
+        assert Enum.all?(words, &(AnswerKind.of(&1) == kind))
+      end
+
+      assert length(Word.builtin_words(:phrase)) ==
+               Enum.sum(for d <- WordList.difficulties(), do: file_count(d, :phrase))
+
+      assert length(Word.builtin_words(:word)) + length(Word.builtin_words(:phrase)) ==
+               length(WordList.entries())
     end
   end
 end

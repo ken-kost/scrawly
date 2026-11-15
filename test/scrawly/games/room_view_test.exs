@@ -9,7 +9,12 @@ defmodule Scrawly.Games.RoomViewTest do
   alias Scrawly.Games.RoomServer.{GameFlow, View}
 
   @word "zzyzx"
-  @choices ["zzyzx", "quokka", "fjord"]
+  @choice_texts ["zzyzx", "quokka", "fjord"]
+  @choices [
+    %{text: "zzyzx", difficulty: :easy},
+    %{text: "quokka", difficulty: :medium},
+    %{text: "fjord", difficulty: :hard}
+  ]
   @drawer "drawer-id"
   @p1 "p1-id"
   @watcher "watcher-id"
@@ -25,6 +30,7 @@ defmodule Scrawly.Games.RoomViewTest do
     :word_display,
     :word_length,
     :revealed_word,
+    :word_difficulty,
     :round_remaining_ms,
     :choice_remaining_ms,
     :round_duration,
@@ -43,7 +49,9 @@ defmodule Scrawly.Games.RoomViewTest do
     :total_rounds,
     :current_drawer_id,
     :phase,
-    :drawing_strokes
+    :drawing_strokes,
+    :guess_points,
+    :round_summary
   ]
 
   # What a :room_delta and View.public/1 must carry for client countdowns.
@@ -127,8 +135,27 @@ defmodule Scrawly.Games.RoomViewTest do
 
     test "carry no candidate word while choosing" do
       state = choosing()
-      refute_leaks(View.public(state), @choices)
-      refute_leaks(View.delta(state), @choices)
+      refute_leaks(View.public(state), @choice_texts)
+      refute_leaks(View.delta(state), @choice_texts)
+    end
+
+    test "carry no difficulty while choosing, the chosen word's once it is drawn" do
+      # A choosing state never holds a current difficulty, but even one
+      # left over would not show.
+      for state <- [choosing(), choosing(current_difficulty: :hard)],
+          map <- [View.public(state), View.delta(state), View.for_viewer(state, @p1)] do
+        assert map.word_difficulty == nil
+        refute dump(Map.delete(map, :word_difficulty)) =~ ~r/easy|medium|hard/
+      end
+
+      for state <- [room(current_difficulty: :hard), round_end(current_difficulty: :hard)],
+          map <- [View.public(state), View.delta(state), View.for_viewer(state, @watcher)] do
+        assert map.word_difficulty == :hard
+      end
+
+      # An AI word has none; the lobby and a game's end neither.
+      assert View.public(room(current_difficulty: nil)).word_difficulty == nil
+      assert View.public(lobby()).word_difficulty == nil
     end
 
     test "drop round_results, keep the strokes init reads" do
@@ -142,7 +169,7 @@ defmodule Scrawly.Games.RoomViewTest do
       public = View.public(lobby())
 
       for key <-
-            [:name, :code, :players, :max_players, :status, :word_count, :word_source] ++
+            [:name, :code, :players, :max_players, :status, :answer_kind, :word_source] ++
               [:prompt, :ai_tone, :round_multiplier, :round_duration, :chat_messages] do
         assert Map.has_key?(public, key)
       end
@@ -189,6 +216,7 @@ defmodule Scrawly.Games.RoomViewTest do
         assert view.word_choices == []
         refute dump(Map.drop(view, [:revealed_word])) =~ @word
         refute dump(view) =~ "quokka"
+        refute dump(view) =~ ":medium"
       end
     end
 
@@ -311,6 +339,183 @@ defmodule Scrawly.Games.RoomViewTest do
       end
 
       assert View.public(room([])).choice_remaining_ms == 0
+    end
+  end
+
+  describe "a player who has guessed the word (play-feedback)" do
+    defp guessed(attrs \\ []) do
+      room(
+        [
+          correct_guessers: [@p1],
+          players: [
+            %{id: @drawer, username: "Drawer", score: 0},
+            %{id: @p1, username: "P1", score: 450},
+            %{id: "p2-id", username: "P2", score: 100}
+          ],
+          round_start_scores: %{@drawer => 0, @p1 => 100, "p2-id" => 100}
+        ] ++ attrs
+      )
+    end
+
+    test "for_viewer/2 gives them the word and their points; nobody else gets either" do
+      state = guessed()
+
+      view = View.for_viewer(state, @p1)
+      assert view.current_word == @word
+      assert view.guess_points == 350
+      assert view.is_drawer == false
+      assert view.word_choices == []
+
+      for viewer <- ["p2-id", @watcher, nil] do
+        view = View.for_viewer(state, viewer)
+        assert view.current_word == nil
+        assert view.guess_points == nil
+        refute dump(view) =~ @word
+      end
+
+      assert View.for_viewer(state, @drawer).current_word == @word
+      assert View.for_viewer(state, @drawer).guess_points == nil
+    end
+
+    test "only while they are a player: a watcher id in correct_guessers gets nothing" do
+      state = guessed(correct_guessers: [@watcher, @p1])
+      assert View.for_viewer(state, @watcher).current_word == nil
+      refute View.guessed?(state, @watcher)
+      assert View.guessed?(state, @p1)
+      refute View.guessed?(state, nil)
+      refute View.guessed?(%{state | players: Enum.reject(state.players, &(&1.id == @p1))}, @p1)
+    end
+
+    test "public/1 and delta/1 never carry the word for them" do
+      state = guessed()
+      refute_leaks(View.public(state), @word)
+      refute_leaks(View.delta(state), @word)
+    end
+
+    test "private_slice/2: the guesser's word and points, the drawer's as before, nothing else" do
+      state = guessed()
+
+      assert View.private_slice(state, @p1) == %{
+               game_id: "TEST-game",
+               round: 1,
+               phase: :drawing,
+               current_word: @word,
+               word_choices: [],
+               guess_points: 350
+             }
+
+      assert View.private_slice(state, @drawer) == View.private_slice(state)
+
+      assert View.private_slice(state) == %{
+               game_id: "TEST-game",
+               round: 1,
+               phase: :drawing,
+               current_word: @word,
+               word_choices: []
+             }
+
+      for viewer <- ["p2-id", @watcher, nil] do
+        slice = View.private_slice(state, viewer)
+        assert slice.current_word == nil
+        refute dump(slice) =~ @word
+      end
+    end
+  end
+
+  describe "round_summary/1" do
+    defp result(attrs) do
+      Map.merge(
+        %{
+          round: 1,
+          drawer_id: @drawer,
+          drawer_name: "Drawer",
+          word: @word,
+          difficulty: :hard,
+          drawer_points: 275,
+          player_scores: [
+            %{id: @drawer, username: "Drawer", points: 275, guessed: false, is_drawer: true},
+            %{id: "p0-id", username: "P0", points: 0, guessed: false, is_drawer: false},
+            %{id: @p1, username: "P1", points: 200, guessed: true, is_drawer: false},
+            %{id: "p2-id", username: "P2", points: 350, guessed: true, is_drawer: false}
+          ],
+          drawing_strokes: [%{path: "M0 0 L1 1", color: "#000000", width: 2}],
+          drawing_truncated: false
+        },
+        Map.new(attrs)
+      )
+    end
+
+    defp ended(attrs) do
+      round_end(
+        [
+          players: [
+            %{id: @drawer, username: "Drawer", score: 275},
+            %{id: "p0-id", username: "P0", score: 0},
+            %{id: @p1, username: "P1", score: 200},
+            %{id: "p2-id", username: "P2", score: 350}
+          ],
+          turn_queue: [@p1, "p2-id"],
+          round_results: [result([])]
+        ] ++ attrs
+      )
+    end
+
+    test "the answer, every player highest first, the drawer and who draws next" do
+      summary = View.round_summary(ended([]))
+
+      assert summary == %{
+               round: 1,
+               word: @word,
+               difficulty: :hard,
+               players: [
+                 %{id: "p2-id", username: "P2", points: 350, guessed: true},
+                 %{id: @p1, username: "P1", points: 200, guessed: true},
+                 %{id: "p0-id", username: "P0", points: 0, guessed: false}
+               ],
+               drawer_id: @drawer,
+               drawer_name: "Drawer",
+               drawer_points: 275,
+               next_drawer_name: "P1"
+             }
+
+      assert View.public(ended([])).round_summary == summary
+      assert View.delta(ended([])).round_summary == summary
+      assert View.for_viewer(ended([]), nil).round_summary == summary
+      refute dump(summary) =~ "M0 0"
+    end
+
+    test "is nil in every other phase, so the answer never goes out early" do
+      for state <- [
+            lobby(),
+            choosing(round_results: [result([])]),
+            room(round_results: [result([])])
+          ] do
+        assert View.round_summary(state) == nil
+        assert View.public(state).round_summary == nil
+        assert View.delta(state).round_summary == nil
+      end
+    end
+
+    test "is nil when the round has no result (the drawer left while choosing)" do
+      assert View.round_summary(ended(round_results: [result(round: 0)])) == nil
+      assert View.round_summary(ended(round_results: [])) == nil
+    end
+
+    test "an AI word's round, or a result without a difficulty, has none" do
+      ai = ended(round_results: [result(difficulty: nil)])
+      assert View.round_summary(ai).difficulty == nil
+
+      legacy = ended(round_results: [Map.delete(result([]), :difficulty)])
+      assert View.round_summary(legacy).difficulty == nil
+    end
+
+    test "next drawer: the first queued drawer still in the room, none after the last round" do
+      gone = ended(turn_queue: ["left-id", "p2-id"])
+      assert View.round_summary(gone).next_drawer_name == "P2"
+
+      assert View.round_summary(ended(turn_queue: [])).next_drawer_name == nil
+      last = ended(current_round: 3, total_rounds: 3, round_results: [result(round: 3)])
+      assert View.round_summary(last).next_drawer_name == nil
     end
   end
 

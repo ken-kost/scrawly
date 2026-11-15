@@ -32,10 +32,14 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :noteRoomChannel, from: "./room_channels.mjs"
   js_import :takeStaleRoomChannels, from: "./room_channels.mjs"
 
+  js_import :copyInviteLink, from: "./room_links.mjs"
+  js_import :selectInviteLink, from: "./room_links.mjs"
+
   route "/game/:room_id"
   param :room_id, :string
 
-  alias ScrawlyWeb.Components.{Avatar, ChatBox, ScoreBoard, DrawingCanvas}
+  alias ScrawlyWeb.Components.{Avatar, ChatBox, ScoreBoard, DrawingCanvas, RoomSettingsForm}
+  alias ScrawlyWeb.{PlayFeedback, RoomSettings}
   alias ScrawlyWeb.Pages.GamePage.Commands
   alias Scrawly.Games.RoomServer
 
@@ -55,13 +59,22 @@ defmodule ScrawlyWeb.Pages.GamePage do
   @max_chat 50
   # A refused game socket asks for a fresh socket token at most this often.
   @token_refresh_ms 30_000
+  # A start request with no answer after this long (the AI call's own
+  # timeout is 60 s) gives the start button back.
+  @start_game_timeout_ms 90_000
+  # How long the invite button reads "copied".
+  @invite_copied_ms 2_000
+  # A settings save with no answer after this long gives the form back.
+  @save_settings_timeout_ms 20_000
 
   @room_commands ~w(resync_room join_room join_as_watcher leave_watcher start_game leave_room
-                    submit_guess choose_word complete_stroke clear_drawing_cmd undo_drawing_cmd)a
+                    submit_guess choose_word complete_stroke clear_drawing_cmd undo_drawing_cmd
+                    update_room_settings)a
 
   # Page state is serialized into the HTML, so it is built from the session
   # user's own view of the room: only the drawer's view carries the word and
-  # the word choices (RoomServer.View.for_viewer/2).
+  # the word choices, and a player's view carries the word once they have
+  # guessed it (RoomServer.View.for_viewer/2).
   #
   # `room_id` is the page param, so it is a prop: actions read
   # `component.props.room_id` and the template `@room_id`. It is never copied
@@ -142,6 +155,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:current_word_display, rs.word_display)
               |> put_state(:word_length, rs.word_length)
               |> put_state(:revealed_word, rs.revealed_word)
+              # The chosen word's difficulty, for everyone once it is chosen
+              # (nil for an AI word); the choices carry their own.
+              |> put_state(:word_difficulty, rs.word_difficulty)
+              # The points the user's own guess scored this round (nil until
+              # they guess), and the finished round during :round_end.
+              |> put_state(:guess_points, rs.guess_points)
+              |> put_state(:round_summary, rs.round_summary)
               |> put_state(:is_drawer, rs.is_drawer)
               |> put_state(:correct_guessers, rs.correct_guessers || [])
               |> put_state(:phase, rs.phase)
@@ -155,15 +175,40 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:draw_color, "#000000")
               |> put_state(:draw_width, 2)
               |> put_state(:draw_eraser, false)
+              # On a phone the scores are a one-line strip; tapping it shows
+              # the full list over the canvas until the next tap.
+              |> put_state(:show_all_scores, false)
               |> put_state(:leaving?, false)
               |> put_state(:watchers, rs.watchers || [])
-              |> put_state(:word_count, rs.word_count || 1)
+              |> put_state(:answer_kind, rs.answer_kind)
+              |> put_state(:themes, Map.get(rs, :themes) || [])
               |> put_state(:word_source, rs.word_source || :local)
               |> put_state(:prompt, rs.prompt || "")
               |> put_state(:creator_name, rs.creator_name || "")
               |> put_state(:round_duration, rs.round_duration || 60)
               |> put_state(:round_multiplier, rs.round_multiplier || 1)
               |> put_state(:ai_tone, rs.ai_tone || :fun)
+              # The host pressed start and the start command (which makes the
+              # AI call for a themed room) hasn't been answered yet.
+              |> put_state(:starting_game?, false)
+              |> put_state(:start_game_attempt, 0)
+              # The host's settings form (RoomSettingsForm). Each opening
+              # gets a new cid (`room_settings_form` counts them), so it
+              # starts from the room's current settings
+              # (`room_settings_initial`, taken when it opens).
+              |> put_state(:show_room_settings, false)
+              |> put_state(:room_settings_form, 0)
+              |> put_state(:room_settings_initial, %{})
+              |> put_state(:saving_room_settings?, false)
+              |> put_state(:room_settings_attempt, 0)
+              |> put_state(:room_settings_errors, %{})
+              # "Copy invite link": :idle, :copied (for @invite_copied_ms,
+              # `invite_copy_gen` names the latest copy) or :manual (the
+              # browser refused, `invite_link` is shown to copy by hand). The
+              # link is only ever built in the browser (room_links.mjs).
+              |> put_state(:invite_copy, :idle)
+              |> put_state(:invite_copy_gen, 0)
+              |> put_state(:invite_link, nil)
               # A socket-only token (ScrawlyWeb.SocketToken), never the
               # session's sign-in token: state is rendered into the HTML and
               # snapshotted for Back/Forward. Refreshed by every snapshot
@@ -243,6 +288,15 @@ defmodule ScrawlyWeb.Pages.GamePage do
     put_action(component, name: :mounted, params: [join: join])
   end
 
+  # A Back/Forward restore drops the pending :reset_invite_copy, so a
+  # "copied" button goes back to idle (a shown link stays).
+  defp restored_invite_copy(state) do
+    case Map.get(state, :invite_copy) do
+      :manual -> :manual
+      _copied_or_idle -> :idle
+    end
+  end
+
   # First action after every fresh page load, once the DOM exists. Restores the
   # drawer's canvas from the room's strokes (independent of the game socket),
   # turns the stroke engine on or off (can_draw?/1), anchors init's
@@ -318,7 +372,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
         stale_rooms = JS.call(:takeStaleRoomChannels, [component.props.room_id])
 
         component
+        |> close_room_settings()
         |> put_state(:restoring?, true)
+        |> put_state(:invite_copy, restored_invite_copy(state))
         |> put_state(:last_tick_at, nil)
         |> put_state(:zero_since, nil)
         |> put_state(:resync_requested_at, nil)
@@ -355,9 +411,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # carrying a seq but no chat and strokes could overtake broadcasts still in
   # flight on the stream and make the page drop them as stale.
   #
-  # The drawer's word choices and word come separately, unsequenced, on the
-  # user's own {:room_player} channel (:private_state), after the delta of
-  # the same transition, and in the choose_word reply.
+  # The drawer's word choices and word, and the word for a player who has
+  # just guessed it, come separately, unsequenced, on the user's own
+  # {:room_player} channel (:private_state), after the delta of the same
+  # transition, and in the choose_word reply.
 
   def action(:room_delta, params, component) do
     case accept_seq(component, params) do
@@ -465,7 +522,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  # The drawer's slice (RoomServer.View.private_slice/1): from the user's own
+  # The user's slice (RoomServer.View.private_slice/2): the drawer's, or the
+  # word for a player who has just guessed it. From the user's own
   # {:room_player} channel, after the round's delta, or the choose_word reply.
   # One for an earlier turn is ignored; one for a turn the page has not seen
   # yet (its delta was lost or is still on its way) is held until a delta
@@ -637,7 +695,164 @@ defmodule ScrawlyWeb.Pages.GamePage do
         do: put_state(component, :leaving?, false),
         else: component
 
+    component =
+      if command == :start_game, do: put_state(component, :starting_game?, false), else: component
+
+    component =
+      if command == :update_room_settings and component.state.saving_room_settings?,
+        do:
+          room_settings_failed(component, :form, settings_denied_text(Map.get(params, :reason))),
+        else: component
+
     request_resync(component)
+  end
+
+  # ── Invite link ──────────────────────────────────────────────────────
+  # room_links.mjs builds `<origin>/r/<code>` from window.location.origin
+  # (never from the request's Host header), copies it and answers with
+  # :invite_link_copied.
+
+  def action(:copy_invite_link, _params, component) do
+    code = component.state.room_code
+    if is_binary(code), do: JS.call(:copyInviteLink, [code])
+    component
+  end
+
+  def action(:invite_link_copied, %{copied: true}, component) do
+    gen = component.state.invite_copy_gen + 1
+
+    component
+    |> put_state(:invite_copy, :copied)
+    |> put_state(:invite_copy_gen, gen)
+    |> put_state(:invite_link, nil)
+    |> put_action(name: :reset_invite_copy, params: %{gen: gen}, delay: @invite_copied_ms)
+  end
+
+  # Nothing could copy (no Clipboard API on plain http, a refused permission,
+  # no execCommand): the link is shown, selected, to copy by hand.
+  def action(:invite_link_copied, %{link: link}, component) when is_binary(link) do
+    JS.call(:selectInviteLink, ["invite-link"])
+
+    component
+    |> put_state(:invite_copy, :manual)
+    |> put_state(:invite_link, link)
+  end
+
+  def action(:invite_link_copied, _params, component), do: component
+
+  # Only the latest copy's: an earlier timer must not cut a later "copied" short.
+  def action(:reset_invite_copy, %{gen: gen}, component) do
+    state = component.state
+
+    if state.invite_copy == :copied and gen == state.invite_copy_gen,
+      do: put_state(component, :invite_copy, :idle),
+      else: component
+  end
+
+  # The start button. It reads "preparing words…" until the game starts (a
+  # room view with a game), the start is refused (:command_denied) or no
+  # answer came for @start_game_timeout_ms.
+  def action(:request_start_game, _params, component) do
+    state = component.state
+
+    if state.can_start_game and not state.starting_game? do
+      attempt = state.start_game_attempt + 1
+
+      component
+      |> put_state(:starting_game?, true)
+      |> put_state(:start_game_attempt, attempt)
+      |> put_command(:start_game, room_id: component.props.room_id)
+      |> put_action(
+        name: :start_game_timed_out,
+        params: %{attempt: attempt},
+        delay: @start_game_timeout_ms
+      )
+    else
+      component
+    end
+  end
+
+  def action(:start_game_timed_out, %{attempt: attempt}, component) do
+    state = component.state
+
+    if state.starting_game? and attempt == state.start_game_attempt do
+      component
+      |> put_state(:starting_game?, false)
+      |> request_resync()
+    else
+      component
+    end
+  end
+
+  # ── Room settings (the host, in the lobby) ──────────────────────────
+  # The form (RoomSettingsForm) holds the values; this page sends them and
+  # shows the outcome. The form stays open, "saving…", until the server
+  # answers: :room_settings_saved closes it (the change itself comes to
+  # every page as a :room_delta), :room_settings_failed or a denial shows
+  # why and keeps the values. No answer after @save_settings_timeout_ms
+  # gives the form back. The form closes by itself when the room leaves its
+  # lobby, and after a Back/Forward restore.
+
+  def action(:edit_room_settings, _params, component) do
+    state = component.state
+
+    if can_edit_settings?(state) do
+      component
+      |> put_state(:show_room_settings, true)
+      |> put_state(:room_settings_form, state.room_settings_form + 1)
+      |> put_state(:room_settings_initial, current_settings(state))
+      |> put_state(:saving_room_settings?, false)
+      |> put_state(:room_settings_errors, %{})
+    else
+      component
+    end
+  end
+
+  # Cancel, the close button, Escape. A save already sent still runs.
+  def action(:hide_room_settings, _params, component), do: close_room_settings(component)
+
+  def action(:save_room_settings, %{values: values}, component) when is_map(values) do
+    state = component.state
+
+    if state.show_room_settings and not state.saving_room_settings? and
+         can_edit_settings?(state) do
+      attempt = state.room_settings_attempt + 1
+
+      component
+      |> put_state(:saving_room_settings?, true)
+      |> put_state(:room_settings_attempt, attempt)
+      |> put_state(:room_settings_errors, %{})
+      |> put_command(:update_room_settings, room_id: component.props.room_id, settings: values)
+      |> put_action(
+        name: :save_room_settings_timed_out,
+        params: %{attempt: attempt},
+        delay: @save_settings_timeout_ms
+      )
+    else
+      component
+    end
+  end
+
+  # Only while a save is waiting: a reply to a form the host has closed
+  # since then changes nothing.
+  def action(:room_settings_saved, _params, component) do
+    if component.state.saving_room_settings?,
+      do: close_room_settings(component),
+      else: component
+  end
+
+  def action(:room_settings_failed, params, component) do
+    if component.state.saving_room_settings?,
+      do: room_settings_failed(component, Map.get(params, :field), Map.get(params, :message)),
+      else: component
+  end
+
+  def action(:save_room_settings_timed_out, %{attempt: attempt}, component) do
+    state = component.state
+
+    if state.saving_room_settings? and attempt == state.room_settings_attempt,
+      do: room_settings_failed(component, :form, "no answer from the server, try again"),
+      else: component
   end
 
   def action(:choose_word, %{word: word}, component) do
@@ -687,25 +902,48 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   # Reply to :submit_guess. Scores, guessers and chat lines arrive through
-  # :room_delta / :chat_appended; only the server-side rate limit and a
-  # suppressed line (it contained the word, so nobody saw it) need a hint,
-  # shown to the sender alone.
+  # :room_delta / :chat_appended, and the word for a correct guess on the
+  # user's own channel (:private_state). The reply itself says what only the
+  # sender may know: their points, the server-side rate limit, a suppressed
+  # line (it contained the word, so nobody saw it) and a near miss (one edit
+  # from the word, kept off the chat too).
+  def action(:guess_result, %{outcome: :correct, points: points}, component) do
+    state = component.state
+
+    component
+    |> put_state(:guess_points, points)
+    |> put_action(
+      name: :check_guessed_word,
+      params: %{game_id: state.game_id, round: state.round},
+      delay: @slice_grace_ms
+    )
+  end
+
   def action(:guess_result, %{outcome: :rate_limited}, component) do
     component
     |> put_state(:rate_limited, true)
     |> put_action(name: :clear_rate_limit, delay: 3_000)
   end
 
-  def action(:guess_result, %{outcome: :suppressed}, component) do
-    gen = Map.get(component.state, :chat_notice_gen, 0) + 1
+  def action(:guess_result, %{outcome: :suppressed}, component),
+    do: show_chat_notice(component, "not sent: your message contains the word")
 
-    component
-    |> put_state(:chat_notice, "not sent: your message contains the word")
-    |> put_state(:chat_notice_gen, gen)
-    |> put_action(name: :clear_chat_notice, params: %{gen: gen}, delay: 4_000)
-  end
+  def action(:guess_result, %{outcome: :close, text: text}, component) when is_binary(text),
+    do: show_chat_notice(component, PlayFeedback.close_notice(text))
 
   def action(:guess_result, _params, component), do: component
+
+  # The word a correct guess earns comes on the user's own channel; still
+  # missing this long after the reply (the push was lost), it comes with a
+  # resync's snapshot instead.
+  def action(:check_guessed_word, %{game_id: game_id, round: round}, component) do
+    state = component.state
+
+    if game_id == state.game_id and round == state.round and state.phase == :drawing and
+         state.current_word in [nil, ""] and not state.leaving?,
+       do: request_stuck_resync(component),
+       else: component
+  end
 
   def action(:clear_chat_notice, %{gen: gen}, component) do
     if gen == Map.get(component.state, :chat_notice_gen),
@@ -722,10 +960,16 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def action(:clear_message, _params, component),
     do: put_state(component, :new_message, "")
 
+  # Shows the newest line: the bottom of the list, or on a phone, where the
+  # list runs newest first (`column-reverse`, whose scroll offsets are
+  # negative), its top. chat_scroll.js does the same on every change.
   def action(:scroll_chat, _params, component) do
     JS.exec(~JS"""
       var el = document.getElementById('chat-messages');
-      if (el) { el.scrollTop = el.scrollHeight; }
+      if (el) {
+        var reversed = getComputedStyle(el).flexDirection === 'column-reverse';
+        el.scrollTop = reversed ? -el.scrollHeight : el.scrollHeight;
+      }
     """)
 
     component
@@ -855,6 +1099,22 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   def action(:undo_drawing, _params, component), do: undo_last_stroke(component)
 
+  # ── Score strip (phones) ───────────────────────────────────────────
+  # Under 720 px the scoreboard is a one-line strip; a tap on it shows the
+  # full list over the canvas, and the next tap, a tap outside it or Escape
+  # hides it again. Wider screens always show the full list, so there the
+  # flag changes nothing on screen.
+
+  def action(:toggle_scores, _params, component),
+    do:
+      put_state(
+        component,
+        :show_all_scores,
+        not Map.get(component.state, :show_all_scores, false)
+      )
+
+  def action(:hide_scores, _params, component), do: put_state(component, :show_all_scores, false)
+
   # ── Drawer keyboard shortcuts ──────────────────────────────────────
   # The `<window>` bindings render only inside the drawer's toolbar. Key
   # filters match a superset of modifiers and fire on auto-repeat, so these
@@ -915,6 +1175,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
   defp room_command(:leave_room, params, server), do: Commands.leave_room(params, server)
   defp room_command(:submit_guess, params, server), do: Commands.submit_guess(params, server)
   defp room_command(:choose_word, params, server), do: Commands.choose_word(params, server)
+
+  defp room_command(:update_room_settings, params, server),
+    do: Commands.update_room_settings(params, server)
 
   defp room_command(:complete_stroke, params, server),
     do: Commands.complete_stroke(params, server)
@@ -986,6 +1249,17 @@ defmodule ScrawlyWeb.Pages.GamePage do
       is_integer(at) and now >= at and now - at < @resync_guard_ms -> component
       true -> send_resync(component, false, nil)
     end
+  end
+
+  # A private hint under the chat input for 4 s (a newer one is not cut
+  # short by an older one's timer).
+  defp show_chat_notice(component, text) do
+    gen = Map.get(component.state, :chat_notice_gen, 0) + 1
+
+    component
+    |> put_state(:chat_notice, text)
+    |> put_state(:chat_notice_gen, gen)
+    |> put_action(name: :clear_chat_notice, params: %{gen: gen}, delay: 4_000)
   end
 
   # The countdown watchdog and the missing-slice check ask once per seq: a
@@ -1105,15 +1379,17 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  # The drawer's word fields in a snapshot, applied like a pushed slice.
+  # The word fields of the drawer, or of a player who has guessed the word,
+  # in a snapshot, applied like a pushed slice.
   defp apply_snapshot_private(component, view) do
-    if Map.get(view, :is_drawer) == true do
+    if Map.get(view, :is_drawer) == true or Map.get(view, :current_word) != nil do
       slice = %{
         game_id: view.game_id || "",
         round: view.current_round || 0,
         phase: view.phase,
         current_word: view.current_word,
-        word_choices: view.word_choices || []
+        word_choices: view.word_choices || [],
+        guess_points: Map.get(view, :guess_points)
       }
 
       if slice.game_id == component.state.game_id and slice.round == component.state.round,
@@ -1162,6 +1438,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
       component
       |> put_state(:current_word, slice.current_word)
       |> put_state(:word_choices, slice.word_choices || [])
+      |> put_state(
+        :guess_points,
+        Map.get(slice, :guess_points) || Map.get(component.state, :guess_points)
+      )
     else
       component
     end
@@ -1218,6 +1498,46 @@ defmodule ScrawlyWeb.Pages.GamePage do
     uid != nil and
       (Enum.any?(state.players, &(&1.id == uid)) or Enum.any?(state.watchers, &(&1.id == uid)))
   end
+
+  # ── Room settings helpers ───────────────────────────────────────────
+
+  # The host, in the lobby, before a start is on its way.
+  defp can_edit_settings?(state) do
+    state.is_creator and not state.watching? and state.room_status == :lobby and
+      not state.game_started and not state.starting_game?
+  end
+
+  # The room's settings as the page holds them, for the form to start from.
+  defp current_settings(state) do
+    %{
+      name: state.room_name,
+      max_players: state.max_players,
+      answer_kind: state.answer_kind,
+      themes: state.themes,
+      word_source: state.word_source,
+      prompt: state.prompt,
+      round_duration: state.round_duration,
+      round_multiplier: state.round_multiplier,
+      ai_tone: state.ai_tone
+    }
+  end
+
+  defp close_room_settings(component) do
+    component
+    |> put_state(:show_room_settings, false)
+    |> put_state(:saving_room_settings?, false)
+    |> put_state(:room_settings_errors, %{})
+  end
+
+  defp room_settings_failed(component, field, message) do
+    component
+    |> put_state(:saving_room_settings?, false)
+    |> put_state(:room_settings_errors, %{(field || :form) => message})
+  end
+
+  defp settings_denied_text(:wrong_state), do: "settings can only change in the lobby"
+  defp settings_denied_text(:not_creator), do: "only the host can change the settings"
+  defp settings_denied_text(_reason), do: "couldn't save the settings, try again"
 
   # ── The one reducer ─────────────────────────────────────────────────
   #
@@ -1283,6 +1603,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
         :can_start_game,
         state.is_creator and length(players) >= 2 and game_id == nil
       )
+      |> put_state(:starting_game?, Map.get(state, :starting_game?, false) and game_id == nil)
       |> put_state(:game_started, active)
       |> put_state(:game_id, game_id || "")
       |> put_state(:round, round)
@@ -1293,6 +1614,15 @@ defmodule ScrawlyWeb.Pages.GamePage do
       |> put_state(:current_word_display, Map.get(view, :word_display, ""))
       |> put_state(:word_length, Map.get(view, :word_length, 0))
       |> put_state(:revealed_word, Map.get(view, :revealed_word))
+      |> put_state(:word_difficulty, Map.get(view, :word_difficulty))
+      |> put_state(:round_summary, Map.get(view, :round_summary))
+      |> put_settings(view)
+
+    # The settings form is the lobby's: it goes when the room leaves it.
+    component =
+      if active or view.status != :lobby,
+        do: close_room_settings(component),
+        else: component
 
     component =
       if new_turn or game_over,
@@ -1311,6 +1641,25 @@ defmodule ScrawlyWeb.Pages.GamePage do
     |> anchor_countdowns(view)
   end
 
+  # The room's settings from a delta or a snapshot (RoomServer.View.settings/1;
+  # the host may change them in the lobby). A key the view lacks keeps its
+  # value; round_duration follows the countdowns (put_countdown_anchors/2).
+  defp put_settings(component, view) do
+    state = component.state
+
+    component
+    |> put_state(:room_name, Map.get(view, :name) || Map.get(state, :room_name))
+    |> put_state(:answer_kind, Map.get(view, :answer_kind) || Map.get(state, :answer_kind))
+    |> put_state(:themes, Map.get(view, :themes) || Map.get(state, :themes) || [])
+    |> put_state(:word_source, Map.get(view, :word_source) || Map.get(state, :word_source))
+    |> put_state(:prompt, Map.get(view, :prompt, Map.get(state, :prompt)) || "")
+    |> put_state(
+      :round_multiplier,
+      Map.get(view, :round_multiplier) || Map.get(state, :round_multiplier)
+    )
+    |> put_state(:ai_tone, Map.get(view, :ai_tone) || Map.get(state, :ai_tone))
+  end
+
   # The drawer as the canvas header shows them: name and avatar.
   defp drawer_of(_view, _players, nil), do: nil
 
@@ -1326,8 +1675,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   # A new game, a new turn or the end of the game: an empty canvas for
-  # everyone (the drawer's local history and op queue included) and no word
-  # until the new drawer's slice arrives.
+  # everyone (the drawer's local history and op queue included), no word
+  # until the new drawer's slice arrives and no guess yet.
   defp reset_turn(component, seq) do
     JS.call(:setDrawingPath, [""])
 
@@ -1336,6 +1685,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     |> put_state(:strokes_seq, seq)
     |> put_state(:current_word, nil)
     |> put_state(:word_choices, [])
+    |> put_state(:guess_points, nil)
   end
 
   # Anchors the countdowns from a view, delta or init state (see the
@@ -1531,6 +1881,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # The inline script dispatches :page_shown whenever this page instance's
   # markup is inserted (Hologram runs the inline scripts a patch inserts, and
   # keys a script by its text, so @mount_id makes it run once per instance).
+  #
+  # The answer and its blanks render one `.word-chunk` per word
+  # (ScrawlyWeb.PlayFeedback), so a line only ever breaks between words.
   def template do
     ~HOLO"""
     {%if @room_missing?}
@@ -1565,9 +1918,21 @@ defmodule ScrawlyWeb.Pages.GamePage do
             <span class="chip chip-strong">lobby</span>
           </div>
 
-          <div class="lobby-code" style="margin-bottom: 24px;">
-            <span class="label">code</span>
-            <span class="code">{@room_code}</span>
+          <div class="lobby-invite">
+            <div class="lobby-code">
+              <span class="label">code</span>
+              <span class="code">{@room_code}</span>
+              <button type="button" class="app-btn app-btn-sm" $click="copy_invite_link">
+                {%if @invite_copy == :copied}copied{%else}copy invite link{/if}
+              </button>
+            </div>
+            {%if @invite_copy == :manual}
+              <div class="invite-manual">
+                <label class="field-label" for="invite-link">copy this link</label>
+                <input class="app-input mono" id="invite-link" type="text" readonly={true} value={@invite_link} />
+                <div class="field-hint">your browser didn't let us copy it. select the link and copy it.</div>
+              </div>
+            {/if}
           </div>
 
           <div class="section-label" style="margin-bottom: 10px;">players · {length(@players)}/{@max_players}</div>
@@ -1597,9 +1962,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
           <div class="row" style="margin-top: 24px; gap: 8px;">
             {%if @is_creator}
               <button class="app-btn app-btn-primary app-btn-lg" style="flex: 1;"
-                      disabled={!@can_start_game}
-                      $click={command: :start_game, params: %{room_id: @room_id}}>
-                {%if @can_start_game}start game{%else}need 2+ players{/if}
+                      disabled={!@can_start_game or @starting_game?}
+                      $click="request_start_game">
+                {%if @starting_game?}preparing words…{%else}{%if @can_start_game}start game{%else}need 2+ players{/if}{/if}
               </button>
             {/if}
             {%if @join_notice != nil and @current_user_id != nil and !@watching? and length(@players) < @max_players and !Enum.any?(@players, fn p -> p.id == @current_user_id end)}
@@ -1614,22 +1979,35 @@ defmodule ScrawlyWeb.Pages.GamePage do
             <div class="mono" style="font-size: 12px; color: var(--danger); margin-top: 10px; text-align: center;">{@join_notice}</div>
           {/if}
           <div class="mono" style="font-size: 11px; color: var(--muted); margin-top: 10px; text-align: center;">
-            share the code to invite friends
+            send the link or the code to your friends
           </div>
         </div>
 
         <div>
           <div class="surface" style="overflow: hidden;">
-            <div class="panel-head">settings</div>
+            <div class="panel-head">
+              <span>settings</span>
+              {%if @is_creator and !@watching?}
+                <button type="button" class="app-btn app-btn-sm panel-head-btn"
+                        disabled={@starting_game?} $click="edit_room_settings">edit</button>
+              {/if}
+            </div>
             <div class="spec-grid">
-              <div class="spec"><div class="k">word source</div><div class="v">[{if(@word_source == :ai, do: "ai", else: "local")}]</div></div>
-              <div class="spec"><div class="k">words / round</div><div class="v">{@word_count}</div></div>
-              <div class="spec"><div class="k">duration</div><div class="v">{@round_duration}s</div></div>
-              <div class="spec"><div class="k">rounds / player</div><div class="v">{@round_multiplier}×</div></div>
-              {%if @prompt != "" && @prompt != nil}
+              <div class="spec"><div class="k">answers</div><div class="v">{RoomSettings.answers_label(@answer_kind)}</div></div>
+              <div class="spec"><div class="k">draw time</div><div class="v">{RoomSettings.draw_time_label(@round_duration)}</div></div>
+              <div class="spec"><div class="k">turns each</div><div class="v">{@round_multiplier}</div></div>
+              <div class="spec"><div class="k">topic</div><div class="v">{RoomSettings.topic_label(@word_source, @themes)}</div></div>
+              {%if @word_source != :ai and RoomSettings.themes_label(@themes)}
                 <div class="spec" style="grid-column: 1 / -1; border-right: 0;">
-                  <div class="k">prompt</div>
-                  <div class="v" style="font-size: 14px; color: var(--ink-2);">{@prompt}</div>
+                  <div class="k">themes</div>
+                  <div class="v" style="font-size: 14px; color: var(--ink-2);" title={RoomSettings.themes_list(@themes)}>{RoomSettings.themes_label(@themes)}</div>
+                </div>
+              {/if}
+              {%if RoomSettings.theme(%{word_source: @word_source, prompt: @prompt})}
+                <div class="spec" style="grid-column: 1 / -1; border-right: 0;">
+                  <div class="k">theme</div>
+                  <div class="v" style="font-size: 14px; color: var(--ink-2); overflow-wrap: anywhere;">{@prompt}</div>
+                  <div class="mono" style="font-size: 11px; color: var(--muted); margin-top: 4px;">style: {@ai_tone}</div>
                 </div>
               {/if}
             </div>
@@ -1668,17 +2046,31 @@ defmodule ScrawlyWeb.Pages.GamePage do
           {/if}
         </div>
       </div>
+
+      {%if @show_room_settings}
+        <div class="scrim">
+          <RoomSettingsForm cid={"room-settings-" <> Integer.to_string(@room_settings_form)}
+                            initial={@room_settings_initial}
+                            on_submit={:save_room_settings} on_cancel={:hide_room_settings}
+                            busy={@saving_room_settings?} errors={@room_settings_errors}
+                            min_players={max(length(@players), 2)}
+                            title="room settings"
+                            subtitle="the next game plays with these. everyone here sees the change."
+                            submit_label="save" busy_label="saving…"
+                            name_placeholder={RoomSettings.default_name(@current_user_username)} />
+        </div>
+      {/if}
     </div>
     {/if}
 
     {%if @game_started}
-    <div>
+    <div class="game-screen">
       <div class="game-bar">
         <div class="game-bar-inner">
           <div class="left">
             <button class="app-btn app-btn-ghost app-btn-sm" $click={:leave_room}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="14" height="14"><path d="M19 12H5M11 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              leave
+              <span class="leave-label">leave</span>
             </button>
             <span class="section-label">{@room_name} · {@room_code}</span>
             <span class="chip chip-live">live</span>
@@ -1690,24 +2082,37 @@ defmodule ScrawlyWeb.Pages.GamePage do
                 {%if @is_drawer}choose a word to draw{%else}{(@current_drawer && @current_drawer.username) || "drawer"} is choosing …{/if}
               </div>
             {%else}
-              <div class="word-letters">
-                {%if @revealed_word}
-                  {String.upcase(@revealed_word)}
+              {%if @revealed_word}
+                <div class="word-letters">
+                  {%for w <- PlayFeedback.word_blocks(String.upcase(@revealed_word))}<span class="word-chunk">{w}</span>{/for}
+                </div>
+              {%else}
+                {%if @current_word}
+                  <div class={"word-letters" <> if(@is_drawer, do: "", else: " got-it")}>
+                    {%for w <- PlayFeedback.word_blocks(String.upcase(@current_word))}<span class="word-chunk">{w}</span>{/for}
+                  </div>
                 {%else}
-                  {%if @is_drawer}
-                    {String.upcase(@current_word || "")}
+                  <div class="word-letters masked">
+                    {%for w <- PlayFeedback.mask_blocks(@current_word_display)}<span class="word-chunk">{w}</span>{/for}
+                  </div>
+                {/if}
+              {/if}
+              <div class="word-meta">
+                {%if @is_drawer}
+                  your word · {PlayFeedback.word_label(@current_word_display, @word_length)}
+                {%else}
+                  {%if @phase == :drawing and PlayFeedback.guessed?(@correct_guessers, @current_user_id, @guess_points)}
+                    <span class="got-it">{PlayFeedback.got_it(@guess_points)}</span>
                   {%else}
-                    {%if @current_word_display}{@current_word_display}{%else}_ _ _{/if}
+                    round {@round} of {@total_rounds} · {PlayFeedback.word_label(@current_word_display, @word_length)}
                   {/if}
                 {/if}
-              </div>
-              <div class="word-meta">
-                {%if @is_drawer}your word · {@word_length} letters{%else}round {@round} of {@total_rounds} · {@word_length} letters{/if}
+                {%if @word_difficulty}<span class={PlayFeedback.difficulty_class(@word_difficulty)}>{PlayFeedback.difficulty_label(@word_difficulty)}</span>{/if}
               </div>
             {/if}
           </div>
           <div class="right">
-            <div>
+            <div class="round-pips">
               {%if @total_rounds && @total_rounds > 0}
                 {%for i <- 1..@total_rounds}
                   {%if i < @round}<span class="round-pip on"></span>{%else}{%if i == @round}<span class="round-pip now"></span>{%else}<span class="round-pip"></span>{/if}{/if}
@@ -1717,10 +2122,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
             <div class="col" style="align-items: center; gap: 4px;">
               {%if @phase == :choosing}
                 <div class="timer timer-big mono">{@choice_time_left}s</div>
-                <div class="bar accent" style="width: 80px;"><div style={"width: " <> Integer.to_string(min(100, round((@choice_time_left / max(@choice_duration, 1)) * 100))) <> "%;"}></div></div>
+                <div class="bar accent timer-bar"><div style={"width: " <> Integer.to_string(min(100, round((@choice_time_left / max(@choice_duration, 1)) * 100))) <> "%;"}></div></div>
               {%else}
                 <div class="timer timer-big mono">{@time_left}s</div>
-                <div class="bar accent" style="width: 80px;"><div style={"width: " <> Integer.to_string(min(100, round((@time_left / max(@round_duration, 1)) * 100))) <> "%;"}></div></div>
+                <div class="bar accent timer-bar"><div style={"width: " <> Integer.to_string(min(100, round((@time_left / max(@round_duration, 1)) * 100))) <> "%;"}></div></div>
               {/if}
             </div>
           </div>
@@ -1735,7 +2140,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
               <div class="choice-sub mono">{@choice_time_left}s to pick · auto-picks at 0</div>
               <div class="choice-options">
                 {%for w <- @word_choices}
-                  <button class="choice-btn" $click={:choose_word, word: w}>{w}</button>
+                  <button class="choice-btn" $click={:choose_word, word: w.text}>
+                    <span class="choice-word">{w.text}</span>
+                    {%if w.difficulty}<span class={PlayFeedback.difficulty_class(w.difficulty)}>{PlayFeedback.difficulty_label(w.difficulty)}</span>{/if}
+                  </button>
                 {/for}
               </div>
             {%else}
@@ -1749,19 +2157,66 @@ defmodule ScrawlyWeb.Pages.GamePage do
         </div>
       {/if}
 
+      {%if @phase == :round_end and @round_summary}
+        <div class="choice-overlay round-summary-overlay">
+          <div class="choice-modal round-summary" role="status">
+            <div class="round-summary-head mono">
+              round {@round_summary.round} · the answer was
+              {%if @round_summary.difficulty}<span class={PlayFeedback.difficulty_class(@round_summary.difficulty)}>{PlayFeedback.difficulty_label(@round_summary.difficulty)}</span>{/if}
+            </div>
+            <div class="word-letters round-summary-answer">
+              {%for w <- PlayFeedback.word_blocks(String.upcase(@round_summary.word || ""))}<span class="word-chunk">{w}</span>{/for}
+            </div>
+            <div class="round-summary-rows">
+              {%for row <- @round_summary.players}
+                <div class={"round-summary-row" <> if(row.id == @current_user_id, do: " me", else: "")}>
+                  <span class="nm">
+                    {%if row.guessed}<span class="mark guessed" role="img" aria-label="guessed it">✓</span>{%else}<span class="mark"></span>{/if}
+                    {row.username}
+                  </span>
+                  <span class={"pts mono" <> if(row.points > 0, do: "", else: " none")}>{PlayFeedback.points_label(row.points)}</span>
+                </div>
+              {/for}
+              <div class={"round-summary-row drawer" <> if(@round_summary.drawer_id == @current_user_id, do: " me", else: "")}>
+                <span class="nm">
+                  <span class="mark" role="img" aria-label="drew">✎</span>
+                  {@round_summary.drawer_name} <span class="role">drew</span>
+                </span>
+                <span class={"pts mono" <> if(@round_summary.drawer_points > 0, do: "", else: " none")}>{PlayFeedback.points_label(@round_summary.drawer_points)}</span>
+              </div>
+            </div>
+            <div class="round-summary-next mono">{PlayFeedback.next_turn(@round_summary.next_drawer_name)}</div>
+          </div>
+        </div>
+      {/if}
+
       <div class="game-layout">
-        <div class="panel">
-          <div class="panel-head">
-            <span>scores</span>
-            <span class="mono">round {@round}/{@total_rounds}</span>
+        <div class={"panel scores-panel" <> if(@show_all_scores, do: " open", else: "")}>
+          <div class="scores-sheet" id="scores-sheet"
+            $click="toggle_scores"
+            $click_outside={if @show_all_scores do :hide_scores end}>
+            <div class="panel-head">
+              <span>scores</span>
+              <span class="mono">round {@round}/{@total_rounds}</span>
+            </div>
+            <div class="panel-body" style="padding: 0;">
+              <ScoreBoard players={@players}
+                drawer_id={@current_drawer && @current_drawer.id}
+                guessed_ids={@correct_guessers} />
+            </div>
+            <button type="button" class="scores-toggle" aria-controls="scores-sheet"
+              aria-expanded={if @show_all_scores do "true" else "false" end}>
+              <span class="visually-hidden">{if @show_all_scores do "hide the scores" else "show all scores" end}</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
           </div>
-          <div class="panel-body" style="padding: 0;">
-            <ScoreBoard players={@players} />
-          </div>
+          {%if @show_all_scores}
+            <window $key_down.escape="hide_scores" />
+          {/if}
         </div>
 
         <div class="canvas-shell">
-          <div class="between canvas-head" style="padding: 10px 14px; border-bottom: 1px solid var(--hairline);">
+          <div class="between canvas-head">
             <div class="row" style="gap: 8px;">
               {%if @current_drawer}
                 <Avatar avatar_id={@current_drawer.avatar_id} color={@current_drawer.avatar_color} size="xs" />
@@ -1810,7 +2265,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
                 $key_down.meta+z.prevent_default={:shortcut_undo, via: :meta} />
             </div>
           {%else}
-            <div class="toolbar" style="justify-content: space-between;">
+            <div class="toolbar toolbar-viewer" style="justify-content: space-between;">
               <div class="row" style="gap: 8px;">
                 <span class="chip">spectator tools are disabled</span>
               </div>
@@ -1829,6 +2284,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
           <ChatBox messages={@chat_messages} current_message={@new_message}
             current_user_id={@current_user_id} is_drawer={@is_drawer}
             rate_limited={@rate_limited} notice={@chat_notice}
+            got_it={if PlayFeedback.guessed?(@correct_guessers, @current_user_id, @guess_points) do PlayFeedback.got_it(@guess_points) end}
             disabled={!@game_started or @is_drawer} />
         </div>
       </div>

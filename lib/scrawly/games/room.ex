@@ -5,8 +5,7 @@ defmodule Scrawly.Games.Room do
     data_layer: AshPostgres.DataLayer,
     notifiers: [Ash.Notifier.PubSub]
 
-  require AshAi.Actions
-
+  alias Scrawly.Games.{AnswerKind, WordList}
   alias Scrawly.Validations.MaxBytes
 
   postgres do
@@ -27,7 +26,8 @@ defmodule Scrawly.Games.Room do
         :name,
         :max_players,
         :creator_id,
-        :word_count,
+        :answer_kind,
+        :themes,
         :word_source,
         :prompt,
         :round_duration,
@@ -43,9 +43,53 @@ defmodule Scrawly.Games.Room do
       validate {MaxBytes, attribute: :name, max: 160}
       validate {MaxBytes, attribute: :prompt, max: 800}
 
-      change fn changeset, _context ->
-        Ash.Changeset.force_change_attribute(changeset, :code, generate_room_code())
+      # A room that plays its own theme needs one (blank is nil: Ash trims).
+      validate present(:prompt) do
+        where attribute_equals(:word_source, :ai)
+        message "is required when the room plays its own theme"
       end
+
+      # A room that plays its own theme plays none of the built-in themes.
+      change Scrawly.Games.Room.Changes.DropThemesWhenAi
+
+      change fn changeset, _context ->
+        Ash.Changeset.force_change_attribute(changeset, :code, generate_code())
+      end
+    end
+
+    # The host's settings form in the lobby (RoomServer.update_settings/3):
+    # the fields a new room is created with, never its status, code or
+    # creator. Same rules as :create, and only a room in its lobby takes
+    # them (that check is part of the UPDATE).
+    update :update_settings do
+      accept [
+        :name,
+        :max_players,
+        :answer_kind,
+        :themes,
+        :word_source,
+        :prompt,
+        :round_duration,
+        :round_multiplier,
+        :ai_tone
+      ]
+
+      validate attribute_equals(:status, :lobby) do
+        message "can only change in the lobby"
+      end
+
+      validate {MaxBytes, attribute: :name, max: 160}
+      validate {MaxBytes, attribute: :prompt, max: 800}
+
+      validate present(:prompt) do
+        where attribute_equals(:word_source, :ai)
+        message "is required when the room plays its own theme"
+      end
+
+      # A room that plays the built-in list keeps no theme of its own, and
+      # one that plays its own theme keeps none of the built-in themes.
+      change Scrawly.Games.Room.Changes.DropThemeWhenLocal
+      change Scrawly.Games.Room.Changes.DropThemesWhenAi
     end
 
     update :join_room do
@@ -180,12 +224,13 @@ defmodule Scrawly.Games.Room do
       end
     end
 
-    # AI word generation — prompt-backed action via ash_ai
+    # AI word generation via ash_ai. Scrawly.Games.AiWords builds the prompt
+    # for the room's answer kind and filters what the model returns.
     action :generate_ai_words, {:array, :string} do
       description """
-      Generates a list of drawing words/phrases based on a theme prompt.
-      Each entry matches the specified word_count constraint (1, 2, or 3 words).
-      Words should be concrete, drawable things suitable for a drawing game.
+      Generates drawing answers for a theme prompt: words, phrases or both,
+      as the room's answer kind says. Answers are concrete, drawable things
+      suitable for a drawing game.
       """
 
       argument :prompt, :string do
@@ -195,9 +240,10 @@ defmodule Scrawly.Games.Room do
         description "The theme or category for word generation, e.g. 'ocean animals' or 'things in a kitchen'"
       end
 
-      argument :word_count, :integer do
+      argument :answer_kind, :atom do
         allow_nil? false
-        description "Number of words per entry: 1, 2, or 3"
+        constraints one_of: AnswerKind.all()
+        description "words (one word each), phrases (2 to 4 words each) or mixed"
       end
 
       argument :num_words, :integer do
@@ -212,20 +258,7 @@ defmodule Scrawly.Games.Room do
         description "The tone/style of words: fun, creative, or weird"
       end
 
-      run AshAi.Actions.prompt(
-            LangChain.ChatModels.ChatOpenAI.new!(%{model: "gpt-4o-mini"}),
-            prompt: """
-            Generate exactly <%= @input.arguments.num_words %> unique drawing game words/phrases based on this theme: "<%= @input.arguments.prompt %>".
-
-            RULES:
-            - Each entry MUST be exactly <%= @input.arguments.word_count %> word(s) long.
-            - Words generated based on a prompt.
-            - Keep them <%= @input.arguments.tone %>.
-            - No duplicates. Every single entry must be unique.
-            - Return exactly <%= @input.arguments.num_words %> entries, no more, no less.
-            """,
-            tools: false
-          )
+      run Scrawly.Games.AiWords
     end
   end
 
@@ -283,11 +316,22 @@ defmodule Scrawly.Games.Room do
       public? true
     end
 
-    attribute :word_count, :integer do
+    # Words, phrases or both (Scrawly.Games.AnswerKind).
+    attribute :answer_kind, :atom do
       allow_nil? false
-      default 1
+      default AnswerKind.default()
       public? true
-      constraints min: 1, max: 3
+      constraints one_of: AnswerKind.all()
+    end
+
+    # The built-in list's themes the room's choices come from
+    # (WordList.themes/0, in that order); [] is every theme. Only for rooms
+    # that play the built-in list (DropThemesWhenAi).
+    attribute :themes, {:array, :atom} do
+      allow_nil? false
+      default []
+      public? true
+      constraints items: [one_of: WordList.themes()], nil_items?: false
     end
 
     attribute :word_source, :atom do
@@ -347,7 +391,13 @@ defmodule Scrawly.Games.Room do
     identity :unique_code, [:code]
   end
 
-  defp generate_room_code do
+  @doc """
+  A new room code: 6 characters of the RFC 4648 base32 alphabet (A-Z and
+  2-7, so never 0, 1, 8 or 9). `ScrawlyWeb.RoomCodes` checks typed codes
+  against the same alphabet.
+  """
+  @spec generate_code() :: String.t()
+  def generate_code do
     :crypto.strong_rand_bytes(4)
     |> Base.encode32(case: :upper, padding: false)
     |> String.slice(0, 6)

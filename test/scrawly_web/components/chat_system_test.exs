@@ -332,11 +332,12 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       assert result.next_action.delay == 3_000
     end
 
+    # A :correct reply keeps the points (play-feedback, see
+    # game_page_play_feedback_test.exs).
     test "other guess results change nothing" do
       comp = base_component()
 
       for params <- [
-            %{outcome: :correct, points: 300},
             %{outcome: :chat},
             %{outcome: :drawer_cannot_chat},
             %{outcome: :empty}

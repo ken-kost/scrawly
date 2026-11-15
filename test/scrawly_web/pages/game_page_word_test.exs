@@ -28,7 +28,8 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
     assert GamePage.command(:join_room, %{room_id: room.id}, server_for(guesser)).next_action.name ==
              :room_resynced
 
-    {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: @choices})
+    {:ok, started} =
+      RoomServer.start_game(room.id, creator.id, %{word_choices: choices(@choices)})
 
     assert GamePage.command(:join_as_watcher, %{room_id: room.id}, server_for(spectator)).next_action.name ==
              :room_resynced
@@ -123,7 +124,7 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
       end
 
       drawer = init_page(ctx.room, server_for(ctx.creator)).state
-      assert drawer.word_choices == @choices
+      assert drawer.word_choices == choices(@choices)
       assert drawer.choice_time_left in 1..15
       assert drawer.choice_remaining_ms in 1..15_000
       assert drawer.choice_duration == 15
@@ -248,14 +249,21 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
       assert_receive {:broadcast_action, {:room_player, _, _}, :private_state,
                       %{phase: :choosing, word_choices: [_ | _] = choices} = slice, _}
 
+      # One easy, one medium and one hard, for the drawer's eyes only.
+      assert Enum.map(choices, & &1.difficulty) == [:easy, :medium, :hard]
+      texts = Enum.map(choices, & &1.text)
+
       refute Map.has_key?(slice, :seq)
       assert_receive {:broadcast_action, {:room, _}, :room_delta, delta, _}
-      refute_leaks(delta, choices)
+      refute_leaks(delta, texts)
+      refute dump(delta) =~ ~r/:easy|:medium|:hard/
       refute_received {:broadcast_action, {:room_player, _, ^player_id}, _, _, _}
 
       as_player = GamePage.command(:resync_room, %{room_id: room.id}, server_for(player))
       assert as_player.next_action.params.word_choices == []
-      refute_leaks(as_player, choices)
+      assert as_player.next_action.params.word_difficulty == nil
+      refute_leaks(as_player, texts)
+      refute dump(as_player.next_action) =~ ~r/:easy|:medium|:hard/
     end
 
     test "a spectator joining mid-round gets no word, doesn't crash and keeps the strokes",
@@ -318,12 +326,13 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
       GamePage.command(:submit_guess, guess, server_for(ctx.guesser))
       assert room_state!(ctx.room.id).phase == :round_end
 
-      for {_who, server} <- non_drawers(ctx) do
+      for {who, server} <- non_drawers(ctx) do
         params =
           GamePage.command(:resync_room, %{room_id: ctx.room.id}, server).next_action.params
 
         assert params.revealed_word == @word
-        assert params.current_word == nil
+        # The guesser has had the word since their guess (play-feedback).
+        assert params.current_word == if(who == :guesser, do: @word)
         assert params.word_choices == []
       end
 

@@ -177,7 +177,7 @@ defmodule Scrawly.Games.RoomServerTest do
       assert choosing.current_drawer_id == ctx.player.id
 
       :sys.replace_state(ctx.pid, &%{&1 | stroke_op: {"e9", 9}})
-      [word | _] = choosing.word_choices
+      [%{text: word} | _] = choosing.word_choices
       assert {:ok, %{phase: :drawing}} = RoomServer.choose_word(ctx.room.id, ctx.player.id, word)
       assert :sys.get_state(ctx.pid).stroke_op == nil
 
@@ -375,7 +375,9 @@ defmodule Scrawly.Games.RoomServerTest do
       room = start_room(creator)
       {:ok, _} = RoomServer.join(room.id, %{id: player.id, username: player.username, score: 0})
 
-      {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: ["elephant"]})
+      {:ok, started} =
+        RoomServer.start_game(room.id, creator.id, %{word_choices: choices(["elephant"])})
+
       [{pid, _}] = Registry.lookup(Scrawly.RoomRegistry, room.id)
 
       %{room: room, creator: creator, game_id: started.game_id, pid: pid}

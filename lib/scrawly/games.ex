@@ -3,6 +3,10 @@ defmodule Scrawly.Games do
     otp_app: :scrawly,
     extensions: [AshAdmin.Domain]
 
+  require Ash.Query
+
+  alias Scrawly.Games.{Word, WordList}
+
   admin do
     show? true
   end
@@ -22,8 +26,12 @@ defmodule Scrawly.Games do
       define :set_room_post_game, action: :post_game
       define :return_room_to_lobby, action: :return_to_lobby
 
-      # AI word generation
-      define :generate_ai_words, action: :generate_ai_words, args: [:prompt, :word_count]
+      # The host's lobby settings (RoomServer.update_settings/3).
+      define :update_room_settings, action: :update_settings
+
+      # AI word generation (Scrawly.Games.AiWords): the reply is already
+      # filtered for the answer kind.
+      define :generate_ai_words, action: :generate_ai_words, args: [:prompt, :answer_kind]
     end
 
     resource Scrawly.Games.Game do
@@ -47,15 +55,22 @@ defmodule Scrawly.Games do
       define :get_all_words, action: :list_all
       define :get_words_by_difficulty, action: :list_by_difficulty, args: [:difficulty]
 
-      define :get_words_by_difficulty_and_word_count,
-        action: :list_by_difficulty_and_word_count,
-        args: [:difficulty, :word_count]
+      define :get_words_by_difficulty_and_kind,
+        action: :list_by_difficulty_and_kind,
+        args: [:difficulty, :kind]
     end
 
     resource Scrawly.Games.GameResult do
       define :create_game_result, action: :create
       define :get_game_results_for_player, action: :for_player, args: [:player_id]
       define :get_game_results_for_game, action: :for_game, args: [:game_id]
+    end
+
+    # Play stats of the curated words (Scrawly.Games.WordStats). A list of
+    # inputs records several entries in one upsert.
+    resource Scrawly.Games.WordStat do
+      define :record_word_stats, action: :record
+      define :list_word_stats, action: :read
     end
   end
 
@@ -104,29 +119,30 @@ defmodule Scrawly.Games do
   end
 
   @doc """
-  A random word for a round, with optional difficulty weighting, word_count
-  filter and exclusion.
+  A random word or phrase for a round, with optional difficulty weighting and
+  exclusion.
 
   Options:
+    * `:kind` - `:word` (one word, the default) or `:phrase` (two words or
+      more, see `Scrawly.Games.AnswerKind`). Phrases of every length are one
+      pool, so every difficulty has some.
     * `:difficulty` - `:easy`, `:medium` or `:hard` (default: weighted random)
-    * `:word_count` - 1, 2 or 3 (default: 1)
     * `:exclude` - words to avoid repeating; ignored when it would leave
       nothing to pick from
 
-  When the database has no words for that difficulty and word count (e.g. an
-  unseeded `words` table), it picks from the built-in list
-  (`Scrawly.Games.Word.builtin_words/2`) instead, so a supported word count
-  always yields a word.
+  When the database has none of that kind and difficulty (e.g. an unseeded
+  `words` table), it picks from the built-in list
+  (`Scrawly.Games.Word.builtin_words/2`) instead, so it always yields one.
   """
   def get_random_word(opts \\ []) do
     difficulty = Keyword.get(opts, :difficulty) || weighted_random_difficulty()
     exclude = Keyword.get(opts, :exclude, [])
-    word_count = Keyword.get(opts, :word_count, 1)
+    kind = Keyword.get(opts, :kind, :word)
 
-    with {:ok, words} <- get_words_by_difficulty_and_word_count(difficulty, word_count) do
+    with {:ok, words} <- get_words_by_difficulty_and_kind(difficulty, kind) do
       texts =
         case Enum.map(words, & &1.text) do
-          [] -> Scrawly.Games.Word.builtin_words(word_count, difficulty)
+          [] -> Word.builtin_words(kind, difficulty)
           texts -> texts
         end
 
@@ -134,13 +150,84 @@ defmodule Scrawly.Games do
       pool = if available == [], do: texts, else: available
 
       case pool do
-        [] ->
-          {:error, "No words available for word_count=#{word_count}, difficulty=#{difficulty}"}
-
-        _ ->
-          {:ok, Enum.random(pool)}
+        [] -> {:error, "No words available for kind=#{kind}, difficulty=#{difficulty}"}
+        _ -> {:ok, Enum.random(pool)}
       end
     end
+  end
+
+  @doc """
+  Makes the `words` table match `Scrawly.Games.WordList`
+  (priv/words/words.csv): inserts the entries it lacks, updates the
+  difficulty and theme of the ones that differ, and deletes the rows no
+  longer in the file. Entries match rows by text.
+
+  Runs in one transaction and raises on failure, leaving the table as it
+  was. A second run changes nothing. Called on every deploy
+  (`Scrawly.Release.sync_words/0` from `bin/migrate`) and by
+  priv/repo/seeds.exs.
+  """
+  @spec sync_words() :: %{
+          inserted: non_neg_integer,
+          updated: non_neg_integer,
+          deleted: non_neg_integer
+        }
+  def sync_words do
+    {:ok, counts} =
+      Ash.transaction(Word, fn ->
+        entries = Map.new(WordList.entries(), &{String.downcase(&1.text), &1})
+        rows = get_all_words!()
+        stored = MapSet.new(rows, & &1.text)
+
+        missing = Enum.reject(entries, fn {text, _entry} -> text in stored end)
+        {kept, gone} = Enum.split_with(rows, &Map.has_key?(entries, &1.text))
+
+        changed =
+          Enum.flat_map(kept, fn row ->
+            entry = entries[row.text]
+
+            if {row.difficulty, row.theme} == {entry.difficulty, entry.theme},
+              do: [],
+              else: [{row.id, Map.take(entry, [:difficulty, :theme])}]
+          end)
+
+        insert_words(Enum.map(missing, fn {_text, entry} -> entry end))
+        update_words(changed)
+        delete_words(Enum.map(gone, & &1.id))
+
+        %{inserted: length(missing), updated: length(changed), deleted: length(gone)}
+      end)
+
+    counts
+  end
+
+  defp insert_words([]), do: :ok
+
+  defp insert_words(entries) do
+    Ash.bulk_create!(entries, Word, :create,
+      return_errors?: true,
+      stop_on_error?: true,
+      return_records?: false
+    )
+  end
+
+  # One UPDATE per distinct {difficulty, theme}.
+  defp update_words(changed) do
+    changed
+    |> Enum.group_by(fn {_id, values} -> values end, fn {id, _values} -> id end)
+    |> Enum.each(fn {values, ids} ->
+      Word
+      |> Ash.Query.filter(id in ^ids)
+      |> Ash.bulk_update!(:update, values, strategy: :atomic, return_errors?: true)
+    end)
+  end
+
+  defp delete_words([]), do: :ok
+
+  defp delete_words(ids) do
+    Word
+    |> Ash.Query.filter(id in ^ids)
+    |> Ash.bulk_destroy!(:destroy, %{}, strategy: :atomic, return_errors?: true)
   end
 
   def get_word_count do

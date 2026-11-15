@@ -21,7 +21,15 @@ defmodule ScrawlyWeb.CommandTotalityTest do
   alias Hologram.Server
   alias Scrawly.Accounts
   alias ScrawlyWeb.Layouts.AppLayout
-  alias ScrawlyWeb.Pages.{GamePage, GameScorePage, HomePage, PastGamesPage, ProfilePage}
+
+  alias ScrawlyWeb.Pages.{
+    GamePage,
+    GameScorePage,
+    HomePage,
+    PastGamesPage,
+    ProfilePage,
+    RoomLinkPage
+  }
 
   alias ScrawlyWeb.Components.{
     Avatar,
@@ -31,6 +39,7 @@ defmodule ScrawlyWeb.CommandTotalityTest do
     GameDemo,
     RecoveryCodePanel,
     RoomList,
+    RoomSettingsForm,
     ScoreBoard
   }
 
@@ -41,6 +50,7 @@ defmodule ScrawlyWeb.CommandTotalityTest do
     GameScorePage,
     ProfilePage,
     PastGamesPage,
+    RoomLinkPage,
     Avatar,
     AvatarDefs,
     ChatBox,
@@ -48,13 +58,15 @@ defmodule ScrawlyWeb.CommandTotalityTest do
     GameDemo,
     RecoveryCodePanel,
     RoomList,
+    RoomSettingsForm,
     ScoreBoard
   ]
 
   @param_keys ~w(room_id email password password_confirmation current_password recovery_code
                  username avatar_id avatar_color dark_mode accent resync resubscribe word text
                  stroke_id path color width op_epoch op_seq gen message name max_players
-                 word_count word_source prompt round_duration round_multiplier ai_tone)a
+                 answer_kind word_source prompt round_duration round_multiplier ai_tone
+                 code settings themes)a
 
   @wrong_values [123, [1], %{a: 1}, nil, :atom, -1.5, {1, 2}, String.duplicate("é", 3000)]
 
@@ -95,6 +107,16 @@ defmodule ScrawlyWeb.CommandTotalityTest do
   setup do
     creator = create_user()
     room = start_room(creator)
+
+    # :create_room with no values creates a room (an empty name is the
+    # user's room), so the walk starts rooms too: stop them all (no other
+    # test runs alongside this one).
+    on_exit(fn ->
+      for {_, pid, _, _} <- DynamicSupervisor.which_children(Scrawly.RoomSupervisor),
+          is_pid(pid),
+          do: DynamicSupervisor.terminate_child(Scrawly.RoomSupervisor, pid)
+    end)
+
     {_email, user} = register!()
     guest = Accounts.register_as_guest!()
 
@@ -117,7 +139,10 @@ defmodule ScrawlyWeb.CommandTotalityTest do
     assert :login in command_names(AppLayout)
     assert :sign_out in command_names(AppLayout)
     assert :create_room in command_names(HomePage)
+    assert :join_by_code in command_names(HomePage)
+    assert command_names(RoomLinkPage) == []
     assert :complete_stroke in command_names(GamePage)
+    assert :update_room_settings in command_names(GamePage)
     assert :refresh_socket_token in command_names(GamePage)
     assert :leave_room in command_names(GameScorePage)
     assert :save_password in command_names(ProfilePage)
@@ -164,6 +189,8 @@ defmodule ScrawlyWeb.CommandTotalityTest do
           {GamePage, :definitely_not_a_command, %{}},
           {GamePage, :join_room, %{}},
           {GamePage, :choose_word, %{room_id: ctx.room.id}},
+          {GamePage, :update_room_settings, %{room_id: ctx.room.id}},
+          {GamePage, :update_room_settings, %{room_id: ctx.room.id, settings: "phrases"}},
           {GameScorePage, :leave_room, %{room_id: "not-a-uuid"}},
           {AppLayout, :save_accent, %{accent: "chartreuse"}},
           {AppLayout, :save_theme, %{dark_mode: "yes"}},

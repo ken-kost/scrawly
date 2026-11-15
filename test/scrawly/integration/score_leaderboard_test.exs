@@ -6,9 +6,7 @@ defmodule Scrawly.Integration.ScoreLeaderboardTest do
 
   describe "score persistence and leaderboard accuracy" do
     setup do
-      {:ok, existing} = Games.get_all_words()
-      Enum.each(existing, fn w -> Ash.destroy!(w) end)
-      Scrawly.Games.Word.seed_words()
+      Games.sync_words()
 
       players =
         for i <- 1..4 do

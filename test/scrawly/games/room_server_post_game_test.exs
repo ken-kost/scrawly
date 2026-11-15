@@ -28,7 +28,9 @@ defmodule Scrawly.Games.RoomServerPostGameTest do
   end
 
   defp start_game!(room, creator) do
-    {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: ["zzyzx"]})
+    {:ok, started} =
+      RoomServer.start_game(room.id, creator.id, %{word_choices: choices(["zzyzx"])})
+
     started
   end
 

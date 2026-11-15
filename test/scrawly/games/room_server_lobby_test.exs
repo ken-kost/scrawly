@@ -14,14 +14,17 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
   @moduletag :capture_log
 
   @summary_keys [
+    :answer_kind,
     :code,
     :max_players,
     :name,
     :players,
+    :prompt,
     :room_id,
     :round_duration,
     :round_multiplier,
     :status,
+    :themes,
     :word_source
   ]
 
@@ -73,8 +76,9 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
         status: :lobby,
         creator_id: "secret-creator",
         max_players: 6,
+        answer_kind: :phrases,
         word_source: :ai,
-        prompt: "TEST secret prompt",
+        prompt: "TEST ocean animals",
         round_duration: 120,
         round_multiplier: 2,
         players: [
@@ -95,7 +99,13 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
                code: "ABCD",
                status: :lobby,
                max_players: 6,
+               answer_kind: :phrases,
+               # A room that plays its own theme plays none of the built-in
+               # list's themes.
+               themes: [],
                word_source: :ai,
+               # The room list shows a themed room's theme.
+               prompt: "TEST ocean animals",
                round_duration: 120,
                round_multiplier: 2,
                players: [
@@ -105,6 +115,12 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
              }
 
       assert struct_free?(summary)
+
+      # A room on the built-in list keeps no theme, even a leftover one,
+      # and shows its themes; an AI room shows none, even leftover ones.
+      local = RoomServer.lobby_summary(%{state | word_source: :local, themes: [:animals]})
+      assert {local.prompt, local.themes} == {nil, [:animals]}
+      assert RoomServer.lobby_summary(%{state | themes: [:animals]}).themes == []
     end
   end
 
@@ -115,7 +131,7 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
       join!(playing, create_user())
 
       {:ok, _started} =
-        RoomServer.start_game(playing.id, ctx.player.id, %{word_choices: ["zzyzx"]})
+        RoomServer.start_game(playing.id, ctx.player.id, %{word_choices: choices(["zzyzx"])})
 
       rooms = RoomServer.list_lobby_rooms()
       ids = Enum.map(rooms, & &1.room_id)
@@ -161,7 +177,9 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
       join!(room, ctx.player)
       subscribe_lobby()
 
-      {:ok, _started} = RoomServer.start_game(room.id, ctx.creator.id, %{word_choices: ["zzyzx"]})
+      {:ok, _started} =
+        RoomServer.start_game(room.id, ctx.creator.id, %{word_choices: choices(["zzyzx"])})
+
       assert lobby_events(room.id) == [:removed]
 
       {:ok, _} = RoomServer.end_game(room.id)

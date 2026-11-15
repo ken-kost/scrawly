@@ -262,7 +262,7 @@ defmodule ScrawlyWeb.GameIntegrationTest do
   describe "drawing_stroke_chunk outside :drawing" do
     test "the drawer's chunk is not relayed while choosing; the denial is cached for 2 s", ctx do
       {:ok, _started} =
-        RoomServer.start_game(ctx.room.id, ctx.creator.id, %{word_choices: ["zz"]})
+        RoomServer.start_game(ctx.room.id, ctx.creator.id, %{word_choices: choices(["zz"])})
 
       socket = join!(ctx.creator, ctx.room)
       refute_relayed(socket, chunk())
@@ -277,7 +277,7 @@ defmodule ScrawlyWeb.GameIntegrationTest do
 
     test "a denial from :choosing is lifted as soon as the word is committed", ctx do
       {:ok, _started} =
-        RoomServer.start_game(ctx.room.id, ctx.creator.id, %{word_choices: ["zz"]})
+        RoomServer.start_game(ctx.room.id, ctx.creator.id, %{word_choices: choices(["zz"])})
 
       socket = join!(ctx.creator, ctx.room)
       refute_relayed(socket, chunk())

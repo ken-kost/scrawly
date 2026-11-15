@@ -31,8 +31,28 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   """
 
   alias Scrawly.Games
-  alias Scrawly.Games.{StrokeRules, Word, WordHints}
+
+  alias Scrawly.Games.{
+    AiWords,
+    AnswerKind,
+    Guess,
+    StrokeRules,
+    Word,
+    WordHints,
+    WordList,
+    WordStats
+  }
+
   alias Scrawly.Games.RoomServer.Broadcasts
+
+  @typedoc "A word's difficulty (`Scrawly.Games.WordList.difficulties/0`)."
+  @type difficulty :: :easy | :medium | :hard
+
+  @typedoc """
+  One of the drawer's choices: the answer, and its difficulty (`nil` for an
+  AI answer, which has none). Plain data: it reaches the drawer's page.
+  """
+  @type choice :: %{text: String.t(), difficulty: difficulty | nil}
 
   @ai_refill_threshold 6
   @max_chat_history 50
@@ -73,8 +93,10 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
 
   The drawer is the first player of `turn_queue` (the turn order built at
   game start, from which a leaver's turns are removed), so nobody is skipped
-  or draws twice when someone leaves. Picks 3 candidate words (AI pool
-  first, then the local words, which fall back to the built-in list), sets
+  or draws twice when someone leaves. Picks 3 choices of the room's answer
+  kind and themes, one easy, one medium and one hard (`pick_word_choices/5`:
+  AI pool first, then the local words, which fall back to the built-in
+  list), sets
   `phase: :choosing`, and schedules the `choice_duration/0` timeout via
   `schedule_timeout_fn.(game_id, round)` (which returns the timer ref).
   `notify_fn` runs last, on the new state (the room's `:room_delta`, then the
@@ -91,7 +113,9 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
          {:ok, _} <- Games.complete_round(state.game_id),
          {:ok, _} <- Games.next_round(state.game_id),
          {[_ | _] = choices, remaining_ai, used_from_ai} <-
-           pick_word_choices(state.ai_words, state.used_words, state.word_count, 3) do
+           pick_word_choices(state.ai_words, state.used_words, state.answer_kind, 3,
+             themes: choice_themes(state)
+           ) do
       round = state.current_round + 1
       drawer_name = get_player_name(state.players, drawer_id)
 
@@ -102,11 +126,13 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
             current_drawer_id: drawer_id,
             turn_queue: queue,
             current_word: nil,
+            current_difficulty: nil,
             ai_words: remaining_ai,
             round_deadline: nil,
             hint_stage: 0,
             round_active: false,
             correct_guessers: [],
+            guess_times: %{},
             drawing_strokes: [],
             stroke_op: nil,
             round_guesser_points: [],
@@ -121,10 +147,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
 
       if state.word_source == :ai and used_from_ai > 0 and
            length(remaining_ai) <= @ai_refill_threshold do
-        send(
-          self(),
-          {:refill_ai_words, state.room_id, state.word_count, state.total_rounds, state.ai_tone}
-        )
+        send(self(), {:refill_ai_words, state.room_id, state.total_rounds, state.ai_tone})
       end
 
       {:ok, new_state}
@@ -148,32 +171,39 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   @doc """
   Set `phase: :choosing`, populate `word_choices`, set `choice_deadline`, and
   schedule the `choice_duration/0` timeout (`schedule_timeout_fn` returns its
-  ref, which joins the turn's timers).
+  ref, which joins the turn's timers). The choices count as offered in the
+  word stats (`WordStats.offered/1`).
   """
   def enter_word_choice(state, choices, schedule_timeout_fn) when is_list(choices) do
     deadline = System.monotonic_time(:millisecond) + choice_duration_ms()
     ref = schedule_timeout_fn.(state.game_id, state.current_round)
 
-    %{state | phase: :choosing, word_choices: choices, choice_deadline: deadline}
-    |> track_timer(ref)
+    state =
+      %{state | phase: :choosing, word_choices: choices, choice_deadline: deadline}
+      |> track_timer(ref)
+
+    WordStats.offered(state)
+    state
   end
 
   @doc """
-  Commit the chosen word: persist it to the Game and transition to
-  `:drawing`. Returns `{:ok, state}` or `{:error, reason}`.
+  Commit the chosen word, one of the room's own `word_choices` (a
+  `t:choice/0`): persist it to the Game and transition to `:drawing`, with
+  the choice's difficulty as the round's `current_difficulty` (what its
+  guesses score, `Scoring.multiplier/1`). Returns `{:ok, state}` or
+  `{:error, reason}`.
 
   Runs inside the room process: cancels the choice timeout, sets
   `round_deadline` (monotonic ms) and `hint_stage: 0`, and schedules to
   `self()` the round's expiry, `{:round_ended, %{game_id, round, reason:
   :time_up}}` after `round_duration` seconds, and one `{:hint_reveal,
   game_id, round, stage}` per stage of `WordHints.reveal_offsets_ms/2`.
+  A committed choice counts as picked in the word stats
+  (`WordStats.picked/2`).
   """
-  def commit_word_choice(state, word) when is_binary(word) do
-    start_round_opts = %{
-      word_count: state.word_count,
-      used_words: state.used_words,
-      override_word: word
-    }
+  def commit_word_choice(state, %{text: word, difficulty: difficulty} = choice)
+      when is_binary(word) do
+    start_round_opts = %{used_words: state.used_words, override_word: word}
 
     case Games.start_round(state.game_id, state.current_drawer_id, start_round_opts) do
       {:ok, _updated_game} ->
@@ -192,6 +222,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
           %{
             state
             | current_word: word,
+              current_difficulty: difficulty,
               word_choices: [],
               choice_deadline: nil,
               phase: :drawing,
@@ -200,6 +231,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
               hint_stage: 0,
               used_words: Enum.uniq([word | state.used_words]),
               correct_guessers: [],
+              guess_times: %{},
               drawing_strokes: [],
               stroke_op: nil,
               round_guesser_points: []
@@ -209,6 +241,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
           |> schedule_hint_reveals()
           |> add_sys_msg("Round #{state.current_round} — #{drawer_name} is drawing")
 
+        WordStats.picked(new_state, choice)
         {:ok, new_state}
 
       {:error, reason} ->
@@ -256,6 +289,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
         current_round: 0,
         current_drawer_id: nil,
         current_word: nil,
+        current_difficulty: nil,
         round_deadline: nil,
         hint_stage: 0,
         round_active: false,
@@ -264,6 +298,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
         choice_deadline: nil,
         round_guesser_points: [],
         correct_guessers: [],
+        guess_times: %{},
         drawing_strokes: [],
         stroke_op: nil,
         round_results: [],
@@ -286,7 +321,8 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   The drawing is kept as its replay (`StrokeRules.replay/1`: the first
   strokes up to the stroke and byte caps, without ids), with
   `drawing_truncated` telling whether strokes were left out: the results are
-  saved in one JSONB update and the score page renders every round.
+  saved in one JSONB update and the score page renders every round. The
+  word's `difficulty` is kept too (`nil` for an AI word).
   """
   def capture_round_result(state, drawer_points, drawer_name \\ nil) do
     {replay, truncated?} = StrokeRules.replay(state.drawing_strokes)
@@ -310,6 +346,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
       drawer_id: state.current_drawer_id,
       drawer_name: drawer_name || get_player_name(state.players, state.current_drawer_id),
       word: state.current_word,
+      difficulty: state.current_difficulty,
       drawer_points: drawer_points,
       player_scores: player_scores,
       drawing_strokes: replay,
@@ -375,59 +412,192 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   end
 
   @doc """
-  Pick `count` candidate words for the drawer, preferring the AI pool, then
-  local words (`Games.get_random_word/1`, which falls back to the built-in
-  list when the DB has none), then the built-in list directly, so the
-  choices are never empty for a supported word count.
+  Pick `count` choices for the drawer of a room of kind `answer_kind`
+  (`Scrawly.Games.AnswerKind`): only words for `:words`, only phrases for
+  `:phrases`, and exactly one phrase among words, at a random position, for
+  `:mixed`.
+
+  Each choice is a `t:choice/0`. The slots ask for one easy, one medium and
+  one hard entry, shown in that order (`slot_difficulties/1`); in a `:mixed`
+  set the phrase takes the difficulty of its random slot.
+
+  Every choice comes from the AI pool when it holds one of the slot's kind
+  (shown without a difficulty), else from the local words of the slot's kind
+  (the `words` table, then the built-in list, `Word.builtin_words/3`). A
+  local slot widens step by step until it finds an unused entry:
+
+    1. the slot's difficulty, within the room's themes;
+    2. the nearest other difficulty, within the themes;
+    3. the slot's difficulty, then the nearest other one, in any theme.
+
+  Only when every entry of the kind has been played does it take a used one,
+  in the same order. Never an entry of the wrong kind. A choice always
+  carries the difficulty its entry really has, so the set is shown easy to
+  hard even then.
+
+  Options:
+
+    * `:themes` - the room's themes (`Scrawly.Games.WordList.themes/0`);
+      `[]`, the default, is every theme, and then steps 1 and 2 are the
+      whole search. AI choices ignore them (`choice_themes/1`).
+
+  The pool goes through `AiWords.filter/2` first, so whatever it holds,
+  nothing the room can't offer is ever picked or kept; words in `used_words`
+  (compared by `Guess.key/1`) are dropped from it too. A set never holds two
+  answers with one `Guess.key/1`.
 
   Returns `{choices, remaining_ai_pool, used_from_ai_count}`.
   """
-  def pick_word_choices(ai_pool, used_words, word_count, count) do
-    {from_ai, remaining_ai} = pop_n(ai_pool, count)
-    needed = count - length(from_ai)
+  @spec pick_word_choices(
+          [String.t()],
+          [String.t()],
+          AnswerKind.t(),
+          non_neg_integer,
+          keyword
+        ) :: {[choice], [String.t()], non_neg_integer}
+  def pick_word_choices(ai_pool, used_words, answer_kind, count, opts \\ []) do
+    themes = Keyword.get(opts, :themes, [])
+    used = MapSet.new(used_words, &Guess.key/1)
 
-    local =
-      if needed > 0 do
-        pick_local_words(used_words ++ from_ai, word_count, needed)
-      else
-        []
-      end
+    pool =
+      ai_pool
+      |> AiWords.filter(answer_kind)
+      |> Enum.reject(&MapSet.member?(used, Guess.key(&1)))
 
-    choices = from_ai ++ local
-    {Enum.uniq(choices), remaining_ai, length(from_ai)}
-  end
+    slots = Enum.zip(AnswerKind.slots(answer_kind, count), slot_difficulties(count))
 
-  defp pop_n(list, n) when n > 0 do
-    {taken, rest} = Enum.split(list, n)
-    {taken, rest}
-  end
-
-  defp pop_n(list, _), do: {[], list}
-
-  # Distinct words not in `exclude` (unless nothing else is left), at most
-  # `count` * 4 lookups, topped up from the built-in list.
-  defp pick_local_words(exclude, word_count, count) do
-    picked =
-      Enum.reduce_while(1..(count * 4), [], fn _attempt, acc ->
-        if length(acc) >= count do
-          {:halt, acc}
-        else
-          case Games.get_random_word(exclude: exclude ++ acc, word_count: word_count) do
-            {:ok, word} -> {:cont, if(word in acc, do: acc, else: [word | acc])}
-            _error -> {:cont, acc}
-          end
+    # One AI entry of the slot's kind per slot; `{:local, slot}` where the
+    # pool has none left.
+    {picked, remaining_ai} =
+      Enum.map_reduce(slots, pool, fn {kind, _difficulty} = slot, pool ->
+        case Enum.split_while(pool, &(AnswerKind.of(&1) != kind)) do
+          {skipped, [word | rest]} -> {ai_choice(word), skipped ++ rest}
+          {_all, []} -> {{:local, slot}, pool}
         end
       end)
-      |> Enum.reverse()
 
-    picked ++ builtin_top_up(exclude, picked, word_count, count - length(picked))
+    from_ai = for %{text: text} <- picked, do: text
+
+    {choices, _taken} =
+      Enum.map_reduce(picked, MapSet.new(from_ai, &Guess.key/1), fn
+        {:local, {kind, difficulty}}, taken ->
+          case pick_local(kind, difficulty, themes, used, taken) do
+            nil -> {nil, taken}
+            choice -> {choice, MapSet.put(taken, Guess.key(choice.text))}
+          end
+
+        choice, taken ->
+          {choice, taken}
+      end)
+
+    choices = choices |> Enum.reject(&is_nil/1) |> in_difficulty_order()
+
+    {choices, remaining_ai, length(from_ai)}
   end
 
-  defp builtin_top_up(_exclude, _picked, _word_count, missing) when missing <= 0, do: []
+  @doc """
+  The difficulty of each of `count` choice slots, easiest first: one easy,
+  one medium and one hard for three.
 
-  defp builtin_top_up(exclude, picked, word_count, missing) do
-    candidates = Word.builtin_words(word_count) -- picked
-    fresh = candidates -- exclude
-    Enum.take(Enum.shuffle(fresh) ++ Enum.shuffle(candidates -- fresh), missing)
+      iex> Scrawly.Games.RoomServer.GameFlow.slot_difficulties(3)
+      [:easy, :medium, :hard]
+  """
+  @spec slot_difficulties(non_neg_integer) :: [difficulty]
+  def slot_difficulties(count) do
+    WordList.difficulties()
+    |> Stream.cycle()
+    |> Enum.take(count)
+    |> Enum.sort_by(&difficulty_rank/1)
   end
+
+  @doc """
+  The themes a room's choices come from (`pick_word_choices/5`'s `:themes`):
+  its `themes`, or `[]` (every theme) for a room that plays its own theme,
+  which ignores them.
+  """
+  @spec choice_themes(map) :: [WordList.theme()]
+  def choice_themes(%{word_source: :ai}), do: []
+  def choice_themes(%{themes: themes}) when is_list(themes), do: themes
+  def choice_themes(_room), do: []
+
+  @doc """
+  The choice in `choices` whose text is `text`, or `nil`. The room looks a
+  choice up by its text alone: its difficulty always comes from the room's
+  own choices, never from the caller.
+  """
+  @spec find_choice([choice], term) :: choice | nil
+  def find_choice(choices, text) when is_binary(text),
+    do: Enum.find(choices, &(&1.text == text))
+
+  def find_choice(_choices, _text), do: nil
+
+  defp ai_choice(text), do: %{text: text, difficulty: nil}
+
+  # A local entry of `kind` for a slot of `difficulty`, sharing no
+  # `Guess.key/1` with the set so far (`taken`): an unused one within
+  # `themes` of the slot's difficulty, else of the nearest other one, then
+  # the same in any theme, else a used one in the same order. Each step looks
+  # in the words table, then in the built-in list (for a table that has none
+  # of them, or too few).
+  defp pick_local(kind, difficulty, themes, used, taken) do
+    sources =
+      for scope <- theme_scopes(themes),
+          d <- fallback_order(difficulty),
+          source <- [:table, :builtin],
+          do: {source, scope, d}
+
+    Enum.find_value([MapSet.union(used, taken), taken], fn avoid ->
+      Enum.find_value(sources, fn {source, scope, d} ->
+        if text = random_text(local_texts(source, kind, d, scope), avoid),
+          do: %{text: text, difficulty: d}
+      end)
+    end)
+  end
+
+  # The room's themes, then every theme ([] is every theme).
+  defp theme_scopes([]), do: [[]]
+  defp theme_scopes(themes), do: [themes, []]
+
+  defp fallback_order(:easy), do: [:easy, :medium, :hard]
+  defp fallback_order(:medium), do: [:medium, :easy, :hard]
+  defp fallback_order(:hard), do: [:hard, :medium, :easy]
+
+  defp local_texts(:table, kind, difficulty, themes) do
+    case Games.get_words_by_difficulty_and_kind(difficulty, kind) do
+      {:ok, words} -> for word <- words, themes == [] or word.theme in themes, do: word.text
+      {:error, _} -> []
+    end
+  end
+
+  defp local_texts(:builtin, kind, difficulty, themes),
+    do: Word.builtin_words(kind, difficulty, themes)
+
+  # A random one of `texts` whose key isn't in `avoid` (keys are computed
+  # only until one fits).
+  defp random_text(texts, avoid) do
+    texts
+    |> Enum.shuffle()
+    |> Enum.find(&(not MapSet.member?(avoid, Guess.key(&1))))
+  end
+
+  # The local choices sorted easy to hard among their own positions (a
+  # fallback may have put a harder entry before an easier one); AI choices
+  # keep theirs.
+  defp in_difficulty_order(choices) do
+    sorted =
+      choices
+      |> Enum.filter(& &1.difficulty)
+      |> Enum.sort_by(&difficulty_rank(&1.difficulty))
+
+    {ordered, []} =
+      Enum.map_reduce(choices, sorted, fn
+        %{difficulty: nil} = ai, rest -> {ai, rest}
+        _local, [next | rest] -> {next, rest}
+      end)
+
+    ordered
+  end
+
+  defp difficulty_rank(difficulty),
+    do: Enum.find_index(WordList.difficulties(), &(&1 == difficulty))
 end

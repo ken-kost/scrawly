@@ -21,29 +21,34 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   import Hologram.Component, only: [put_action: 2, put_action: 3, put_subscription: 2]
 
   alias Scrawly.{Accounts, Games}
-  alias Scrawly.Games.{RoomServer, StrokeRules}
+  alias Scrawly.Games.{AnswerKind, RoomServer, StrokeRules}
   alias Scrawly.Games.RoomServer.{Broadcasts, GameFlow}
-  alias ScrawlyWeb.{Auth, CommandParams, RoomSubscriptions, SocketToken}
+  alias ScrawlyWeb.{Auth, CommandParams, RoomSettings, RoomSubscriptions, SocketToken}
 
   @doc """
   The shape check in front of every room command (GamePage.command/3; the
   score page's `leave_room` / `dissolve_room` too): params must be a map with
-  a UUID `room_id`, plus a string `word` for `:choose_word` and a string
-  `text` for `:submit_guess`. The other fields stay optional and are
-  validated where they are used (`StrokeRules`, the room process).
+  a UUID `room_id`, plus a string `word` for `:choose_word`, a string `text`
+  for `:submit_guess` and a map `settings` for `:update_room_settings`. The
+  other fields stay optional and are validated where they are used
+  (`StrokeRules`, `RoomSettings.to_attrs/2`, the room process).
   `:error` means deny (`CommandParams.deny_invalid/2`).
   """
   @spec valid_params(atom, term) :: {:ok, map} | :error
   def valid_params(command, params) do
     with {:ok, room_id} <- CommandParams.uuid(params, :room_id),
-         :ok <- required_string(command, params) do
+         :ok <- required_field(command, params) do
       {:ok, Map.put(params, :room_id, room_id)}
     end
   end
 
-  defp required_string(:choose_word, params), do: present(CommandParams.string(params, :word))
-  defp required_string(:submit_guess, params), do: present(CommandParams.string(params, :text))
-  defp required_string(_command, _params), do: :ok
+  defp required_field(:choose_word, params), do: present(CommandParams.string(params, :word))
+  defp required_field(:submit_guess, params), do: present(CommandParams.string(params, :text))
+
+  defp required_field(:update_room_settings, params),
+    do: if(is_map(Map.get(params, :settings)), do: :ok, else: :error)
+
+  defp required_field(_command, _params), do: :ok
 
   defp present(nil), do: :error
   defp present(_string), do: :ok
@@ -179,10 +184,12 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
          {:ok, state} <- RoomServer.get_state(room_id),
          :ok <- RoomServer.authorize(state, uid, :start_game) do
       # Only reached by an authorized creator: this may make an AI call.
-      {word_count, ai_words, ai_status} = fetch_room_game_settings(state)
+      {answer_kind, ai_words, ai_status} = fetch_room_game_settings(state)
 
       {choices, remaining_ai, _used_from_ai} =
-        GameFlow.pick_word_choices(ai_words, [], word_count, 3)
+        GameFlow.pick_word_choices(ai_words, [], answer_kind, 3,
+          themes: GameFlow.choice_themes(state)
+        )
 
       case RoomServer.start_game(room_id, uid, %{word_choices: choices, ai_words: remaining_ai}) do
         {:ok, _state} ->
@@ -198,9 +205,53 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   end
 
   @doc """
+  Changes the room's settings as the session user, from the lobby's settings
+  form: `settings` holds the form's values, parsed exactly as room creation
+  parses them (`RoomSettings.to_attrs/2`, a blank name becoming the host's
+  default name). The room process checks that the user is its creator and
+  that it is in its lobby, and the Room validates the values
+  (`RoomServer.update_settings/3`). Nothing else is read from params.
+
+  Replies `:room_settings_saved` (the change itself reaches every page as a
+  `:room_delta`), `:room_settings_failed` with a `field` (`:name`,
+  `:prompt`, `:max_players`, or nil for the line above the form's buttons)
+  and a `message` for values the room refuses, or `:command_denied` for
+  anyone but the host, outside the lobby and for rooms that no longer exist.
+  """
+  def update_room_settings(%{room_id: room_id, settings: settings}, server) do
+    case Auth.current_user(server) do
+      {:ok, user} ->
+        attrs = RoomSettings.to_attrs(settings, user.username)
+
+        case RoomServer.update_settings(room_id, user.id, attrs) do
+          {:ok, _state} ->
+            put_action(server, :room_settings_saved)
+
+          {:error, {:max_players_below, count}} ->
+            put_action(server, :room_settings_failed,
+              field: :max_players,
+              message: RoomSettings.players_floor(count)
+            )
+
+          {:error, reason} when is_atom(reason) ->
+            Auth.deny(server, :update_room_settings, reason)
+
+          {:error, error} ->
+            {field, message} = RoomSettings.failure(error, attrs, :update)
+            put_action(server, :room_settings_failed, field: field, message: message)
+        end
+
+      {:error, reason} ->
+        Auth.deny(server, :update_room_settings, reason)
+    end
+  end
+
+  @doc """
   Commits `word` for the session user, who must be the current drawer while
-  the room is `:choosing` and `word` one of their choices (checked by the room
-  process). Replies `:private_state` with the drawer's slice (no seq), so the
+  the room is `:choosing` and `word` the text of one of their choices
+  (checked by the room process). Only the text is read: the round's
+  difficulty is the room's own for that choice, whatever else the params
+  hold. Replies `:private_state` with the drawer's slice (no seq), so the
   word shows at once, or `:command_denied`.
   """
   def choose_word(%{room_id: room_id, word: word}, server) do
@@ -268,7 +319,8 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   client. The room process checks the guess (`RoomServer.submit_message/3`);
   on a correct guess the session user's stored score is raised atomically.
 
-  Replies `:guess_result` with `outcome` (`:correct` also carries `points`), or
+  Replies `:guess_result` with `outcome` (`:correct` also carries `points`,
+  `:close` the sender's own `text`; the word itself never comes back here), or
   `:command_denied` for visitors without an account, non-members and rooms
   that no longer exist.
   """
@@ -282,6 +334,10 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
           {:ok, {:correct, points}} ->
             persist_guess_points(uid, points)
             put_action(server, :guess_result, outcome: :correct, points: points)
+
+          # The sender's own line, back to the sender alone.
+          {:ok, {:close, text}} ->
+            put_action(server, :guess_result, outcome: :close, text: text)
 
           {:ok, outcome} ->
             put_action(server, :guess_result, outcome: outcome)
@@ -484,9 +540,12 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   end
 
   # Word settings for a new game, from the room state snapshot the caller already
-  # authorized against. Makes the AI call for AI rooms.
+  # authorized against. Makes the AI call for AI rooms; its reply comes back
+  # filtered for the answer kind (Scrawly.Games.AiWords). The status is the
+  # one chat line players see about it, in plain words (ai_status/2); why a
+  # call failed goes to the log only.
   defp fetch_room_game_settings(rs) do
-    wc = rs.word_count || 1
+    kind = AnswerKind.parse(rs.answer_kind)
     p = rs.prompt
     tone = rs.ai_tone || :fun
     total_rounds = RoomServer.total_rounds(length(rs.players), rs.round_multiplier || 1)
@@ -494,21 +553,51 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
     {generated, status} =
       if rs.word_source == :ai and p != nil and p != "" do
-        case Games.generate_ai_words(p, wc, %{num_words: ai_num_words, tone: to_string(tone)}) do
-          {:ok, words} when is_list(words) ->
-            unique_words = Enum.uniq(words)
-            {unique_words, "AI generated #{length(unique_words)}/#{ai_num_words} words"}
+        case generate_ai_words(p, kind, ai_num_words, tone) do
+          {:ok, [_ | _] = words} ->
+            {words, ai_status(kind, length(words))}
 
-          {:error, reason} ->
-            {[], "AI failed: #{inspect(reason)} — falling back to local words"}
+          other ->
+            Logger.warning(
+              "themed words unavailable for room #{Map.get(rs, :room_id)}: #{failure_tag(other)}"
+            )
 
-          _ ->
-            {[], "AI returned unexpected response — falling back to local words"}
+            {[], ai_status(kind, 0)}
         end
       else
         {[], nil}
       end
 
-    {wc, generated, status}
+    {kind, generated, status}
   end
+
+  # The model call can raise rather than return an error (a missing API key
+  # raises inside Req): the game then starts with the built-in list instead
+  # of failing the start command.
+  defp generate_ai_words(prompt, kind, count, tone) do
+    Games.generate_ai_words(prompt, kind, %{num_words: count, tone: to_string(tone)})
+  rescue
+    error -> {:raised, error}
+  end
+
+  # What went wrong, for the log: a reason atom or an error module, never the
+  # error itself (Ash wraps the model request, prompt and credentials).
+  defp failure_tag({:error, reason}) when is_atom(reason), do: inspect(reason)
+  defp failure_tag({:error, %{__struct__: module}}), do: inspect(module)
+  defp failure_tag({:raised, %{__struct__: module}}), do: "raised " <> inspect(module)
+  defp failure_tag({:ok, []}), do: "no usable answers"
+  defp failure_tag(_other), do: "unexpected reply"
+
+  @doc """
+  The chat line about a themed room's words, given how many the AI call
+  brought: "words ready: 18 from your theme", or "couldn't get themed words,
+  using the built-in list" when it brought none. "phrases" for a phrases
+  room.
+  """
+  @spec ai_status(AnswerKind.t(), non_neg_integer) :: String.t()
+  def ai_status(kind, 0), do: "couldn't get themed #{ai_noun(kind)}, using the built-in list"
+  def ai_status(kind, count), do: "#{ai_noun(kind)} ready: #{count} from your theme"
+
+  defp ai_noun(:phrases), do: "phrases"
+  defp ai_noun(_kind), do: "words"
 end

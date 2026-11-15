@@ -21,9 +21,7 @@ defmodule Scrawly.Integration.MaxCapacityTest do
 
   describe "performance with maximum player capacity" do
     setup do
-      {:ok, existing} = Games.get_all_words()
-      Enum.each(existing, fn w -> Ash.destroy!(w) end)
-      Scrawly.Games.Word.seed_words()
+      Games.sync_words()
 
       {:ok, creator} =
         Ash.create(User, %{email: "cap-creator-#{System.unique_integer([:positive])}@test.com"},

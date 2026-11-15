@@ -122,12 +122,17 @@ defmodule Scrawly.Games.RoomServerAuthzTest do
       room: room,
       creator: creator
     } do
-      assert {:ok, state} = RoomServer.start_game(room.id, creator.id, %{word_choices: ["a"]})
+      assert {:ok, state} =
+               RoomServer.start_game(room.id, creator.id, %{word_choices: choices([{"a", :easy}])})
+
       assert state.current_drawer_id == creator.id
       assert state.total_rounds == 2
       # the reply is the public view: the choices only reach the drawer's view
       refute Map.has_key?(state, :word_choices)
-      assert {:ok, %{word_choices: ["a"]}} = RoomServer.get_view(room.id, creator.id)
+
+      assert {:ok, %{word_choices: [%{text: "a", difficulty: :easy}]}} =
+               RoomServer.get_view(room.id, creator.id)
+
       assert [_game] = games_for_room(room)
 
       assert RoomServer.start_game(room.id, creator.id, %{}) == {:error, :wrong_state}

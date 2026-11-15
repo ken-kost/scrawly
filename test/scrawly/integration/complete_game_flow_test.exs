@@ -7,10 +7,7 @@ defmodule Scrawly.Integration.CompleteGameFlowTest do
 
   describe "complete game flow from room creation to game end" do
     setup do
-      # Seed words
-      {:ok, existing} = Games.get_all_words()
-      Enum.each(existing, fn w -> Ash.destroy!(w) end)
-      Scrawly.Games.Word.seed_words()
+      Games.sync_words()
 
       # Create players with unique emails
       players =

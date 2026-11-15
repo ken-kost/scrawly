@@ -1,0 +1,1423 @@
+text,difficulty,theme
+airplane,easy,transport
+alien,easy,fantasy
+ambulance,easy,transport
+angel,easy,fantasy
+angry,easy,people
+ant,easy,animals
+apple,easy,food
+arm,easy,people
+arrow,easy,objects
+axe,easy,objects
+baby,easy,people
+bacon,easy,food
+bald,easy,people
+ball,easy,objects
+balloon,easy,objects
+bamboo,easy,nature
+banana,easy,food
+bank,easy,places
+baseball,easy,sports
+basket,easy,objects
+basketball,easy,sports
+bat,easy,animals
+bathroom,easy,places
+bathtub,easy,objects
+beak,easy,animals
+bear,easy,animals
+beard,easy,people
+bed,easy,objects
+bedroom,easy,places
+bee,easy,animals
+bell,easy,objects
+belt,easy,objects
+bench,easy,objects
+bicycle,easy,transport
+bird,easy,animals
+boat,easy,transport
+bomb,easy,objects
+bone,easy,people
+book,easy,objects
+bottle,easy,objects
+bowl,easy,objects
+box,easy,objects
+bracelet,easy,objects
+brain,easy,people
+bread,easy,food
+broom,easy,objects
+bull,easy,animals
+bus,easy,transport
+butterfly,easy,animals
+cactus,easy,nature
+cake,easy,food
+calculator,easy,objects
+calendar,easy,objects
+camel,easy,animals
+camera,easy,objects
+candle,easy,objects
+candy,easy,food
+car,easy,transport
+carrot,easy,food
+cat,easy,animals
+chain,easy,objects
+chair,easy,objects
+cheese,easy,food
+chef,easy,people
+cherry,easy,food
+chess,easy,sports
+chicken,easy,animals
+church,easy,places
+circle,easy,objects
+climb,easy,actions
+clock,easy,objects
+cloud,easy,nature
+clown,easy,people
+coat,easy,objects
+coffee,easy,food
+coin,easy,objects
+cold,easy,people
+compass,easy,objects
+computer,easy,objects
+cook,easy,actions
+cookie,easy,food
+corn,easy,food
+cow,easy,animals
+crab,easy,animals
+crocodile,easy,animals
+crown,easy,objects
+cry,easy,actions
+cube,easy,objects
+cup,easy,objects
+cupcake,easy,food
+deer,easy,animals
+desert,easy,nature
+devil,easy,fantasy
+dice,easy,objects
+dig,easy,actions
+dinosaur,easy,animals
+doctor,easy,people
+dog,easy,animals
+dolphin,easy,animals
+donkey,easy,animals
+donut,easy,food
+door,easy,objects
+dragon,easy,fantasy
+dream,easy,actions
+drink,easy,actions
+drive,easy,actions
+drum,easy,objects
+duck,easy,animals
+ear,easy,people
+earth,easy,nature
+egg,easy,food
+eggplant,easy,food
+elbow,easy,people
+elephant,easy,animals
+envelope,easy,objects
+eye,easy,people
+eyebrow,easy,people
+face,easy,people
+fall,easy,actions
+family,easy,people
+fan,easy,objects
+farm,easy,places
+fence,easy,objects
+finger,easy,people
+fire,easy,nature
+fish,easy,animals
+flag,easy,objects
+flamingo,easy,animals
+flower,easy,nature
+flute,easy,objects
+fly,easy,animals
+foot,easy,people
+football,easy,sports
+fork,easy,objects
+fox,easy,animals
+frog,easy,animals
+ghost,easy,fantasy
+gift,easy,objects
+giraffe,easy,animals
+glasses,easy,objects
+globe,easy,objects
+glue,easy,objects
+goal,easy,sports
+goat,easy,animals
+goldfish,easy,animals
+golf,easy,sports
+grapes,easy,food
+grass,easy,nature
+graveyard,easy,places
+guitar,easy,objects
+hair,easy,people
+hamburger,easy,food
+hammer,easy,objects
+hand,easy,people
+happy,easy,people
+hat,easy,objects
+heart,easy,people
+helicopter,easy,transport
+hill,easy,nature
+hockey,easy,sports
+hook,easy,objects
+horse,easy,animals
+hot,easy,people
+hourglass,easy,objects
+house,easy,places
+island,easy,nature
+jail,easy,places
+jar,easy,objects
+jellyfish,easy,animals
+jump,easy,actions
+key,easy,objects
+kick,easy,actions
+king,easy,fantasy
+kiss,easy,actions
+kite,easy,objects
+knee,easy,people
+knife,easy,objects
+koala,easy,animals
+ladder,easy,objects
+ladybug,easy,animals
+lamp,easy,objects
+laptop,easy,objects
+laugh,easy,actions
+leaf,easy,nature
+leg,easy,people
+lemon,easy,food
+lightning,easy,nature
+lion,easy,animals
+lips,easy,people
+lipstick,easy,objects
+lock,easy,objects
+love,easy,people
+magnet,easy,objects
+map,easy,transport
+mask,easy,objects
+maze,easy,places
+mermaid,easy,fantasy
+microwave,easy,objects
+milk,easy,food
+money,easy,objects
+monkey,easy,animals
+moon,easy,nature
+mop,easy,objects
+mosquito,easy,animals
+mountain,easy,nature
+mouse,easy,animals
+mouth,easy,people
+mushroom,easy,nature
+nail,easy,objects
+neck,easy,people
+necklace,easy,objects
+nest,easy,animals
+newspaper,easy,objects
+ninja,easy,people
+nose,easy,people
+nurse,easy,people
+ocean,easy,nature
+octopus,easy,animals
+orange,easy,food
+owl,easy,animals
+panda,easy,animals
+pants,easy,objects
+parrot,easy,animals
+pear,easy,food
+peas,easy,food
+pen,easy,objects
+pencil,easy,objects
+penguin,easy,animals
+phone,easy,objects
+piano,easy,objects
+pickle,easy,food
+pie,easy,food
+pig,easy,animals
+pineapple,easy,food
+pirate,easy,fantasy
+pizza,easy,food
+plug,easy,objects
+police,easy,people
+pond,easy,nature
+popcorn,easy,food
+potato,easy,food
+pray,easy,actions
+princess,easy,fantasy
+pumpkin,easy,food
+puzzle,easy,objects
+pyramid,easy,places
+queen,easy,fantasy
+rabbit,easy,animals
+race,easy,sports
+radio,easy,objects
+rain,easy,nature
+rainbow,easy,nature
+rich,easy,people
+ring,easy,objects
+river,easy,nature
+road,easy,places
+robot,easy,fantasy
+rock,easy,nature
+rocket,easy,transport
+rope,easy,objects
+ruler,easy,objects
+run,easy,actions
+sad,easy,people
+salad,easy,food
+school,easy,places
+scientist,easy,people
+seal,easy,animals
+shark,easy,animals
+sheep,easy,animals
+shirt,easy,objects
+shoe,easy,objects
+shoulder,easy,people
+shower,easy,actions
+sick,easy,people
+sing,easy,actions
+sink,easy,objects
+skateboard,easy,sports
+skirt,easy,objects
+skull,easy,people
+sleep,easy,actions
+smile,easy,actions
+snail,easy,animals
+snake,easy,animals
+snow,easy,nature
+snowman,easy,nature
+soap,easy,objects
+sock,easy,objects
+soda,easy,food
+soup,easy,food
+spider,easy,animals
+spin,easy,actions
+spoon,easy,objects
+square,easy,objects
+star,easy,nature
+starfish,easy,animals
+strawberry,easy,food
+submarine,easy,transport
+sun,easy,nature
+sunflower,easy,nature
+sunglasses,easy,objects
+sushi,easy,food
+swan,easy,animals
+swim,easy,actions
+sword,easy,objects
+table,easy,objects
+tail,easy,animals
+tank,easy,transport
+tape,easy,objects
+taxi,easy,transport
+tea,easy,food
+teacher,easy,people
+telescope,easy,objects
+television,easy,objects
+tennis,easy,sports
+tent,easy,objects
+think,easy,actions
+thumb,easy,people
+tie,easy,objects
+tiger,easy,animals
+toaster,easy,objects
+toe,easy,people
+toilet,easy,objects
+tomato,easy,food
+tooth,easy,people
+toothbrush,easy,objects
+tornado,easy,nature
+tower,easy,places
+train,easy,transport
+tree,easy,nature
+treehouse,easy,places
+triangle,easy,objects
+trophy,easy,sports
+truck,easy,transport
+turtle,easy,animals
+ufo,easy,fantasy
+umbrella,easy,objects
+unicorn,easy,fantasy
+vacuum,easy,actions
+vampire,easy,fantasy
+vase,easy,objects
+violin,easy,objects
+volcano,easy,nature
+volleyball,easy,sports
+walk,easy,actions
+watch,easy,objects
+waterfall,easy,nature
+watermelon,easy,food
+wave,easy,nature
+web,easy,animals
+whale,easy,animals
+wheel,easy,transport
+wheelchair,easy,objects
+windmill,easy,places
+window,easy,objects
+wing,easy,animals
+wink,easy,actions
+witch,easy,fantasy
+wolf,easy,animals
+worm,easy,animals
+yo-yo,easy,objects
+yoga,easy,sports
+zebra,easy,animals
+zigzag,easy,objects
+acorn,medium,nature
+anchor,medium,transport
+anthill,medium,animals
+antlers,medium,animals
+anvil,medium,objects
+aquarium,medium,places
+archery,medium,sports
+armchair,medium,objects
+artist,medium,people
+astronaut,medium,people
+avocado,medium,food
+backpack,medium,objects
+badminton,medium,sports
+bake,medium,actions
+bakery,medium,places
+balance,medium,actions
+bandage,medium,objects
+barber,medium,people
+barn,medium,places
+battery,medium,objects
+beach,medium,places
+beaver,medium,animals
+beehive,medium,animals
+beetle,medium,animals
+birdhouse,medium,places
+bite,medium,actions
+blackboard,medium,objects
+blow,medium,actions
+boot,medium,objects
+bounce,medium,actions
+bow,medium,objects
+bowling,medium,sports
+bowtie,medium,objects
+boxing,medium,sports
+break,medium,actions
+breakfast,medium,food
+bride,medium,people
+bridge,medium,transport
+broccoli,medium,food
+bubble,medium,objects
+bucket,medium,objects
+bush,medium,nature
+butter,medium,food
+button,medium,objects
+cafe,medium,places
+cage,medium,objects
+campfire,medium,nature
+camping,medium,sports
+cannon,medium,objects
+canoe,medium,transport
+cape,medium,fantasy
+carnival,medium,places
+carpet,medium,objects
+carriage,medium,transport
+carry,medium,actions
+castle,medium,places
+catch,medium,actions
+caterpillar,medium,animals
+cave,medium,places
+caveman,medium,people
+cereal,medium,food
+chameleon,medium,animals
+champion,medium,sports
+chariot,medium,transport
+chase,medium,actions
+cheerleader,medium,sports
+cheeseburger,medium,food
+chick,medium,animals
+chimney,medium,places
+chocolate,medium,food
+chop,medium,actions
+chopsticks,medium,objects
+circus,medium,places
+city,medium,places
+clap,medium,actions
+claw,medium,animals
+cliff,medium,nature
+closet,medium,places
+clover,medium,nature
+clownfish,medium,animals
+coconut,medium,food
+coffin,medium,fantasy
+comb,medium,objects
+comet,medium,nature
+cone,medium,objects
+couch,medium,objects
+cowboy,medium,people
+crawl,medium,actions
+crayon,medium,objects
+crutches,medium,objects
+cupid,medium,fantasy
+curtain,medium,objects
+dance,medium,actions
+dandelion,medium,nature
+darts,medium,sports
+daydream,medium,actions
+dentist,medium,people
+desk,medium,objects
+diamond,medium,objects
+dirty,medium,people
+dishwasher,medium,objects
+dive,medium,actions
+dizzy,medium,people
+dock,medium,places
+doghouse,medium,places
+doll,medium,objects
+domino,medium,objects
+doorbell,medium,objects
+dough,medium,food
+dragonfly,medium,animals
+draw,medium,actions
+dress,medium,objects
+drill,medium,objects
+drummer,medium,people
+drumstick,medium,food
+dumbbell,medium,sports
+dungeon,medium,fantasy
+dynamite,medium,objects
+eagle,medium,animals
+earring,medium,objects
+earthquake,medium,nature
+eat,medium,actions
+eclipse,medium,nature
+elevator,medium,places
+elf,medium,fantasy
+eraser,medium,objects
+excited,medium,people
+explode,medium,actions
+eyeball,medium,people
+fairy,medium,fantasy
+feather,medium,animals
+fencing,medium,sports
+fin,medium,animals
+fingerprint,medium,people
+fishbowl,medium,animals
+fishing,medium,sports
+fist,medium,people
+flashlight,medium,objects
+flour,medium,food
+fold,medium,actions
+footprint,medium,people
+forest,medium,nature
+forklift,medium,transport
+fountain,medium,places
+freckles,medium,people
+fridge,medium,objects
+galaxy,medium,nature
+garage,medium,places
+garden,medium,places
+gardener,medium,people
+garlic,medium,food
+geyser,medium,nature
+gingerbread,medium,food
+glove,medium,objects
+go-kart,medium,transport
+goalkeeper,medium,sports
+gorilla,medium,animals
+grandma,medium,people
+grandpa,medium,people
+grasshopper,medium,animals
+gum,medium,food
+gym,medium,places
+hail,medium,nature
+hamster,medium,animals
+hanger,medium,objects
+harp,medium,objects
+headphones,medium,objects
+hedgehog,medium,animals
+helmet,medium,objects
+hexagon,medium,objects
+hide,medium,actions
+hiking,medium,sports
+hippo,medium,animals
+honey,medium,food
+hoodie,medium,objects
+hopscotch,medium,sports
+horn,medium,animals
+hospital,medium,places
+hotel,medium,places
+hug,medium,actions
+hungry,medium,people
+hunter,medium,people
+hurdles,medium,sports
+hurt,medium,people
+hut,medium,places
+iceberg,medium,nature
+icicle,medium,nature
+igloo,medium,places
+iron,medium,objects
+jack-o'-lantern,medium,fantasy
+jam,medium,food
+jersey,medium,sports
+jetpack,medium,transport
+joystick,medium,objects
+judge,medium,people
+jug,medium,objects
+juggle,medium,actions
+juice,medium,food
+jungle,medium,nature
+kangaroo,medium,animals
+karate,medium,sports
+ketchup,medium,food
+keyboard,medium,objects
+kitchen,medium,places
+kiwi,medium,food
+knight,medium,fantasy
+knit,medium,actions
+knock,medium,actions
+knot,medium,objects
+lab,medium,places
+lantern,medium,objects
+laser,medium,fantasy
+lava,medium,nature
+lemonade,medium,food
+lick,medium,actions
+lifeguard,medium,people
+lighthouse,medium,places
+listen,medium,actions
+lizard,medium,animals
+llama,medium,animals
+lobster,medium,animals
+log,medium,nature
+lollipop,medium,food
+lunchbox,medium,objects
+magic,medium,fantasy
+magician,medium,people
+mailbox,medium,objects
+mammoth,medium,animals
+mango,medium,food
+maracas,medium,objects
+marbles,medium,objects
+market,medium,places
+mascot,medium,sports
+matches,medium,objects
+meatball,medium,food
+medal,medium,sports
+megaphone,medium,objects
+melt,medium,actions
+microphone,medium,objects
+microscope,medium,objects
+milkshake,medium,food
+miner,medium,people
+mirror,medium,objects
+monster,medium,fantasy
+moose,medium,animals
+mud,medium,nature
+mummy,medium,fantasy
+muscle,medium,people
+museum,medium,places
+mustache,medium,people
+mustard,medium,food
+nachos,medium,food
+net,medium,objects
+night,medium,nature
+oar,medium,transport
+office,medium,places
+olive,medium,food
+onion,medium,food
+ostrich,medium,animals
+otter,medium,animals
+oven,medium,objects
+padlock,medium,objects
+paint,medium,actions
+paintbrush,medium,objects
+pan,medium,objects
+pancake,medium,food
+parachute,medium,transport
+park,medium,places
+passport,medium,transport
+paw,medium,animals
+peach,medium,food
+peacock,medium,animals
+peanut,medium,food
+pharmacy,medium,places
+picnic,medium,food
+pill,medium,objects
+pillow,medium,objects
+pilot,medium,people
+planet,medium,nature
+plant,medium,nature
+platypus,medium,animals
+playground,medium,places
+plumber,medium,people
+plunger,medium,objects
+pocket,medium,objects
+podium,medium,sports
+point,medium,actions
+ponytail,medium,people
+pool,medium,places
+pop,medium,actions
+pot,medium,objects
+potion,medium,fantasy
+pour,medium,actions
+prince,medium,fantasy
+printer,medium,objects
+prisoner,medium,people
+puck,medium,sports
+puddle,medium,nature
+pufferfish,medium,animals
+pull,medium,actions
+punch,medium,actions
+purse,medium,objects
+push,medium,actions
+racetrack,medium,places
+racket,medium,sports
+raft,medium,transport
+raindrop,medium,nature
+rake,medium,objects
+read,medium,actions
+remote,medium,objects
+rhino,medium,animals
+roll,medium,actions
+rooster,medium,animals
+root,medium,nature
+rose,medium,nature
+runway,medium,transport
+saddle,medium,objects
+safe,medium,objects
+sailboat,medium,transport
+sailor,medium,people
+salt,medium,food
+sandcastle,medium,places
+sandwich,medium,food
+saw,medium,objects
+saxophone,medium,objects
+scar,medium,people
+scarecrow,medium,fantasy
+scared,medium,people
+scarf,medium,objects
+scissors,medium,objects
+scooter,medium,transport
+screw,medium,objects
+screwdriver,medium,objects
+seahorse,medium,animals
+search,medium,actions
+seatbelt,medium,transport
+seaweed,medium,nature
+seed,medium,nature
+selfie,medium,actions
+sew,medium,actions
+shadow,medium,nature
+shave,medium,actions
+shell,medium,nature
+shield,medium,objects
+ship,medium,transport
+shop,medium,actions
+shorts,medium,objects
+shovel,medium,objects
+shrimp,medium,food
+shy,medium,people
+silly,medium,people
+sit,medium,actions
+skating,medium,sports
+skeleton,medium,fantasy
+skiing,medium,sports
+skunk,medium,animals
+sky,medium,nature
+skydiving,medium,sports
+slingshot,medium,objects
+slip,medium,actions
+sloth,medium,animals
+smell,medium,actions
+smoke,medium,nature
+sneeze,medium,actions
+snore,medium,actions
+snowboard,medium,sports
+snowflake,medium,nature
+space,medium,nature
+spaceship,medium,transport
+spaghetti,medium,food
+spark,medium,nature
+spatula,medium,objects
+speedboat,medium,transport
+spiral,medium,objects
+sponge,medium,objects
+sprinkles,medium,food
+squirrel,medium,animals
+stairs,medium,places
+stamp,medium,objects
+stapler,medium,objects
+statue,medium,places
+steak,medium,food
+stick,medium,nature
+stomach,medium,people
+stork,medium,animals
+straw,medium,objects
+stretch,medium,actions
+stump,medium,nature
+sugar,medium,food
+suitcase,medium,transport
+summer,medium,nature
+sunburn,medium,people
+sunset,medium,nature
+superhero,medium,fantasy
+surfing,medium,sports
+surprised,medium,people
+swamp,medium,nature
+sweater,medium,objects
+sweep,medium,actions
+swimsuit,medium,objects
+syringe,medium,objects
+taco,medium,food
+tadpole,medium,animals
+tattoo,medium,people
+team,medium,sports
+teapot,medium,objects
+temple,medium,places
+thermometer,medium,objects
+thief,medium,people
+thirsty,medium,people
+throne,medium,fantasy
+throw,medium,actions
+thunderstorm,medium,nature
+ticket,medium,transport
+tired,medium,people
+toast,medium,food
+tongue,medium,people
+toolbox,medium,objects
+toothpaste,medium,objects
+tractor,medium,transport
+traffic,medium,transport
+tram,medium,transport
+trampoline,medium,sports
+treadmill,medium,sports
+tricycle,medium,transport
+troll,medium,fantasy
+trumpet,medium,objects
+tug-of-war,medium,sports
+turkey,medium,animals
+tusk,medium,animals
+twins,medium,people
+underwear,medium,objects
+unicycle,medium,transport
+van,medium,transport
+vet,medium,people
+viking,medium,people
+village,medium,places
+vine,medium,nature
+vote,medium,actions
+wagon,medium,transport
+waiter,medium,people
+wallet,medium,objects
+wand,medium,fantasy
+wash,medium,actions
+werewolf,medium,fantasy
+wheat,medium,nature
+whiskers,medium,animals
+whistle,medium,sports
+wig,medium,objects
+wind,medium,nature
+winter,medium,nature
+wizard,medium,fantasy
+wrench,medium,objects
+write,medium,actions
+x-ray,medium,objects
+xylophone,medium,objects
+yawn,medium,actions
+yeti,medium,fantasy
+yolk,medium,food
+zipper,medium,objects
+zombie,medium,fantasy
+zoo,medium,places
+acrobat,hard,people
+airport,hard,transport
+anteater,hard,animals
+apartment,hard,places
+apron,hard,objects
+arcade,hard,places
+architect,hard,people
+armadillo,hard,animals
+athlete,hard,sports
+autumn,hard,nature
+babysitter,hard,people
+badge,hard,objects
+bagpipes,hard,objects
+balcony,hard,places
+ballet,hard,sports
+barbecue,hard,food
+basement,hard,places
+beanstalk,hard,fantasy
+beekeeper,hard,people
+billiards,hard,sports
+binoculars,hard,objects
+blanket,hard,objects
+blender,hard,objects
+bookshelf,hard,objects
+boomerang,hard,sports
+bored,hard,people
+brave,hard,people
+build,hard,actions
+bulldozer,hard,transport
+burp,hard,actions
+burrito,hard,food
+butcher,hard,people
+canyon,hard,nature
+cashier,hard,people
+catapult,hard,fantasy
+cauldron,hard,fantasy
+celebrate,hard,actions
+centipede,hard,animals
+chandelier,hard,objects
+cheetah,hard,animals
+chew,hard,actions
+classroom,hard,places
+clumsy,hard,people
+coach,hard,sports
+cobra,hard,animals
+cocoon,hard,animals
+confused,hard,people
+convertible,hard,transport
+coral,hard,nature
+cough,hard,actions
+count,hard,actions
+courtroom,hard,places
+crater,hard,nature
+crowd,hard,people
+curious,hard,people
+cyclops,hard,fantasy
+dessert,hard,food
+detective,hard,people
+disgusted,hard,people
+dodgeball,hard,sports
+drawbridge,hard,fantasy
+dunk,hard,sports
+engine,hard,transport
+escape,hard,actions
+explorer,hard,people
+factory,hard,places
+faint,hard,actions
+famous,hard,people
+feast,hard,food
+feed,hard,actions
+firefighter,hard,people
+fireplace,hard,objects
+fix,hard,actions
+flip,hard,actions
+flood,hard,nature
+fossil,hard,nature
+freeze,hard,actions
+gargoyle,hard,fantasy
+genie,hard,fantasy
+giant,hard,fantasy
+glacier,hard,nature
+glider,hard,transport
+gnome,hard,fantasy
+goblin,hard,fantasy
+goosebumps,hard,people
+grumpy,hard,people
+gymnastics,hard,sports
+harmonica,hard,objects
+hiccup,hard,actions
+hitchhike,hard,actions
+hummingbird,hard,animals
+hurricane,hard,nature
+invisible,hard,people
+janitor,hard,people
+javelin,hard,sports
+jealous,hard,people
+jester,hard,fantasy
+kneel,hard,actions
+lazy,hard,people
+library,hard,places
+limbo,hard,sports
+limousine,hard,transport
+lonely,hard,people
+lost,hard,people
+lungs,hard,people
+mansion,hard,places
+marathon,hard,sports
+march,hard,actions
+measure,hard,actions
+mechanic,hard,people
+meditate,hard,actions
+mime,hard,people
+mole,hard,animals
+motorcycle,hard,transport
+napkin,hard,objects
+narwhal,hard,animals
+nervous,hard,people
+oasis,hard,nature
+peek,hard,actions
+pegasus,hard,fantasy
+pelican,hard,animals
+penalty,hard,sports
+phoenix,hard,fantasy
+photographer,hard,people
+pinball,hard,sports
+piranha,hard,animals
+plate,hard,objects
+portal,hard,fantasy
+pretzel,hard,food
+proud,hard,people
+puppet,hard,objects
+quicksand,hard,nature
+raccoon,hard,animals
+relaxed,hard,people
+rescue,hard,actions
+restaurant,hard,places
+ride,hard,actions
+row,hard,actions
+salute,hard,actions
+samurai,hard,people
+sausage,hard,food
+scoreboard,hard,sports
+scorpion,hard,animals
+scream,hard,actions
+scroll,hard,objects
+shake,hard,actions
+skyscraper,hard,places
+sled,hard,transport
+sleepwalk,hard,actions
+sneak,hard,actions
+snorkel,hard,objects
+snowmobile,hard,transport
+soldier,hard,people
+spear,hard,objects
+spy,hard,people
+stadium,hard,places
+steam,hard,nature
+stethoscope,hard,objects
+stingray,hard,animals
+stir,hard,actions
+student,hard,people
+sumo,hard,sports
+sunbathe,hard,actions
+supermarket,hard,places
+surgeon,hard,people
+surrender,hard,actions
+swordfish,hard,animals
+tombstone,hard,fantasy
+touchdown,hard,sports
+towel,hard,objects
+treasure,hard,fantasy
+tsunami,hard,nature
+tuba,hard,objects
+tunnel,hard,transport
+type,hard,actions
+university,hard,places
+valley,hard,nature
+villain,hard,fantasy
+vulture,hard,animals
+waffle,hard,food
+wait,hard,actions
+walrus,hard,animals
+wet,hard,people
+wheelbarrow,hard,transport
+whisk,hard,objects
+whisper,hard,actions
+woodpecker,hard,animals
+wrestling,hard,sports
+zookeeper,hard,people
+alarm clock,easy,objects
+apple pie,easy,food
+apple tree,easy,nature
+bake a cake,easy,actions
+banana peel,easy,food
+baseball cap,easy,sports
+beach ball,easy,sports
+belly button,easy,people
+bird's nest,easy,animals
+birthday cake,easy,food
+black cat,easy,fantasy
+blow bubbles,easy,actions
+bow and arrow,easy,objects
+bowling ball,easy,sports
+boxing gloves,easy,sports
+bride and groom,easy,people
+broken heart,easy,people
+brush your teeth,easy,actions
+bubble gum,easy,food
+build a snowman,easy,actions
+bunk bed,easy,objects
+bus driver,easy,people
+bus stop,easy,transport
+candy cane,easy,food
+car wash,easy,places
+carrot cake,easy,food
+chocolate bar,easy,food
+christmas tree,easy,nature
+climb a tree,easy,actions
+coffee shop,easy,places
+cotton candy,easy,food
+cup of tea,easy,food
+disco ball,easy,objects
+drive a car,easy,actions
+easter egg,easy,food
+eye patch,easy,fantasy
+ferris wheel,easy,places
+fire truck,easy,transport
+fly a kite,easy,actions
+flying saucer,easy,fantasy
+forest fire,easy,nature
+french fries,easy,food
+gingerbread man,easy,food
+gold medal,easy,sports
+golden egg,easy,fantasy
+gummy bear,easy,food
+hair dryer,easy,objects
+high five,easy,actions
+hold hands,easy,actions
+hot dog,easy,food
+hot sauce,easy,food
+ice cream,easy,food
+ice cream cone,easy,food
+jet ski,easy,transport
+jump rope,easy,sports
+king and queen,easy,fantasy
+knife and fork,easy,objects
+lava lamp,easy,objects
+light bulb,easy,objects
+lightning bolt,easy,nature
+magic wand,easy,fantasy
+milk and cookies,easy,food
+moon and stars,easy,nature
+north pole,easy,places
+nose ring,easy,people
+open a present,easy,actions
+orange juice,easy,food
+palm tree,easy,nature
+paper plane,easy,objects
+party hat,easy,objects
+paw print,easy,animals
+pet shop,easy,places
+piggy bank,easy,objects
+pillow fight,easy,actions
+pine tree,easy,nature
+pirate ship,easy,fantasy
+polar bear,easy,animals
+police car,easy,transport
+race car,easy,transport
+read a book,easy,actions
+ride a bike,easy,actions
+ride a horse,easy,actions
+rock paper scissors,easy,sports
+rubber duck,easy,objects
+santa claus,easy,fantasy
+school bus,easy,transport
+sea lion,easy,animals
+sea turtle,easy,animals
+shake hands,easy,actions
+shark fin,easy,animals
+shooting star,easy,nature
+shopping cart,easy,objects
+six pack,easy,people
+smiley face,easy,people
+snow globe,easy,objects
+soccer ball,easy,sports
+solar system,easy,nature
+spider web,easy,animals
+stop sign,easy,transport
+swimming pool,easy,places
+take a bath,easy,actions
+taxi driver,easy,people
+tea bag,easy,food
+teddy bear,easy,objects
+thumbs up,easy,actions
+toilet paper,easy,objects
+tooth fairy,easy,fantasy
+tow truck,easy,transport
+traffic cone,easy,transport
+traffic light,easy,transport
+trash can,easy,objects
+treasure chest,easy,fantasy
+treasure map,easy,fantasy
+trick or treat,easy,fantasy
+walk the dog,easy,actions
+washing machine,easy,objects
+watch tv,easy,actions
+water gun,easy,objects
+water slide,easy,places
+wave goodbye,easy,actions
+witch's hat,easy,fantasy
+alien invasion,medium,fantasy
+ant farm,medium,animals
+arm wrestling,medium,sports
+art gallery,medium,places
+bad hair day,medium,people
+bald eagle,medium,animals
+ball of yarn,medium,objects
+banana split,medium,food
+bank robber,medium,people
+baseball bat,medium,sports
+bear hug,medium,actions
+belly flop,medium,actions
+big bad wolf,medium,fantasy
+black belt,medium,sports
+black eye,medium,people
+black hole,medium,nature
+black sheep,medium,animals
+blow a kiss,medium,actions
+blow out the candles,medium,actions
+blue whale,medium,animals
+board game,medium,sports
+brain freeze,medium,people
+breakfast in bed,medium,food
+broken leg,medium,people
+bullet train,medium,transport
+bumper cars,medium,places
+cap and gown,medium,people
+car crash,medium,transport
+carve a pumpkin,medium,actions
+cat and mouse,medium,animals
+catch a fish,medium,actions
+ceiling fan,medium,objects
+cherry on top,medium,food
+chicken coop,medium,animals
+chicken crossing the road,medium,animals
+cookie jar,medium,food
+coral reef,medium,nature
+corn dog,medium,food
+corn on the cob,medium,food
+couch potato,medium,people
+count sheep,medium,actions
+crescent moon,medium,nature
+cruise ship,medium,transport
+dance floor,medium,places
+dance in the rain,medium,actions
+deck of cards,medium,sports
+desert island,medium,nature
+diving board,medium,sports
+dog sled,medium,transport
+double chin,medium,people
+double rainbow,medium,nature
+double-decker bus,medium,transport
+dump truck,medium,transport
+easter bunny,medium,fantasy
+electric guitar,medium,objects
+elephant in the room,medium,animals
+face paint,medium,people
+feed the ducks,medium,actions
+finish line,medium,sports
+fire extinguisher,medium,objects
+fire station,medium,places
+fishing rod,medium,sports
+flip a pancake,medium,actions
+flying pig,medium,fantasy
+food fight,medium,actions
+fortune cookie,medium,food
+four-leaf clover,medium,nature
+fried chicken,medium,food
+fried egg,medium,food
+frog prince,medium,fantasy
+full moon,medium,nature
+garbage truck,medium,transport
+garden hose,medium,objects
+gas station,medium,transport
+ghost town,medium,places
+gingerbread house,medium,fantasy
+glass slipper,medium,fantasy
+golf club,medium,sports
+group hug,medium,actions
+hamster wheel,medium,animals
+haunted house,medium,fantasy
+hermit crab,medium,animals
+hide and seek,medium,sports
+high heels,medium,objects
+hockey stick,medium,sports
+horse and carriage,medium,transport
+hot air balloon,medium,transport
+hot chocolate,medium,food
+hot tub,medium,objects
+house of cards,medium,objects
+hula hoop,medium,sports
+ice cream truck,medium,transport
+jack in the box,medium,objects
+jump on the bed,medium,actions
+jumping jacks,medium,actions
+jungle gym,medium,places
+killer whale,medium,animals
+king of the jungle,medium,animals
+knight in shining armor,medium,fantasy
+knock on the door,medium,actions
+lemonade stand,medium,places
+lily pad,medium,nature
+litter box,medium,animals
+living room,medium,places
+log cabin,medium,places
+mad scientist,medium,people
+magic carpet,medium,fantasy
+magic lamp,medium,fantasy
+make the bed,medium,actions
+maple leaf,medium,nature
+message in a bottle,medium,objects
+milk a cow,medium,actions
+missing tooth,medium,people
+monster truck,medium,transport
+monster under the bed,medium,fantasy
+mountain range,medium,nature
+movie star,medium,people
+mow the lawn,medium,actions
+music box,medium,objects
+needle and thread,medium,objects
+night owl,medium,animals
+paper boat,medium,transport
+paper clip,medium,objects
+parking lot,medium,places
+peanut butter,medium,food
+peanut butter and jelly,medium,food
+peg leg,medium,fantasy
+phone booth,medium,places
+picture frame,medium,objects
+pie in the face,medium,actions
+piece of cake,medium,food
+piggyback ride,medium,actions
+pine cone,medium,nature
+pitch a tent,medium,actions
+play fetch,medium,actions
+poison apple,medium,fantasy
+police station,medium,places
+price tag,medium,objects
+punching bag,medium,sports
+rabbit hole,medium,animals
+raining cats and dogs,medium,nature
+rainy day,medium,nature
+rake leaves,medium,actions
+red card,medium,sports
+red carpet,medium,places
+red panda,medium,animals
+roast marshmallows,medium,actions
+rock star,medium,people
+rocking chair,medium,objects
+roller coaster,medium,places
+roller skates,medium,sports
+rubber band,medium,objects
+runny nose,medium,people
+sack race,medium,sports
+salt and pepper,medium,food
+school of fish,medium,animals
+scuba diving,medium,sports
+sea monster,medium,fantasy
+sing in the shower,medium,actions
+ski jump,medium,sports
+skull and crossbones,medium,fantasy
+sleeping bag,medium,objects
+snakes and ladders,medium,sports
+snow angel,medium,actions
+space shuttle,medium,transport
+sports car,medium,transport
+steam train,medium,transport
+swarm of bees,medium,animals
+swing set,medium,places
+swiss cheese,medium,food
+table tennis,medium,sports
+take a selfie,medium,actions
+take out the trash,medium,actions
+tea party,medium,food
+tennis racket,medium,sports
+theme park,medium,places
+thumb war,medium,actions
+thumbs down,medium,actions
+thunder and lightning,medium,nature
+tie your shoes,medium,actions
+time machine,medium,fantasy
+top hat,medium,objects
+traffic jam,medium,transport
+train tracks,medium,transport
+vacuum cleaner,medium,objects
+vampire bat,medium,animals
+vending machine,medium,objects
+video game,medium,sports
+wake up,medium,actions
+wash the dishes,medium,actions
+wash your hands,medium,actions
+water skiing,medium,sports
+water the plants,medium,actions
+wrecking ball,medium,objects
+ants in your pants,hard,people
+apple core,hard,food
+bed head,hard,people
+bowling alley,hard,places
+break the ice,hard,actions
+bubble wrap,hard,objects
+bungee jumping,hard,sports
+butterflies in the stomach,hard,people
+cement mixer,hard,transport
+cherry blossom,hard,nature
+chimney sweep,hard,people
+class clown,hard,people
+cold feet,hard,people
+cops and robbers,hard,sports
+crocodile tears,hard,animals
+cry over spilled milk,hard,actions
+crystal ball,hard,fantasy
+cupid's arrow,hard,fantasy
+damsel in distress,hard,fantasy
+dead end,hard,transport
+deer in the headlights,hard,animals
+domino effect,hard,objects
+early bird,hard,animals
+egg and spoon race,hard,sports
+eye of the storm,hard,nature
+fairy godmother,hard,fantasy
+family tree,hard,people
+figure skating,hard,sports
+fire escape,hard,places
+fish and chips,hard,food
+fish out of water,hard,animals
+fly in the soup,hard,food
+fly on the wall,hard,animals
+fly swatter,hard,objects
+fork in the road,hard,transport
+green thumb,hard,people
+grim reaper,hard,fantasy
+guide dog,hard,animals
+guinea pig,hard,animals
+head in the clouds,hard,people
+heat wave,hard,nature
+hold your breath,hard,actions
+hole in one,hard,sports
+home run,hard,sports
+hot water bottle,hard,objects
+lost and found,hard,places
+magic mirror,hard,fantasy
+man overboard,hard,transport
+meteor shower,hard,nature
+miss the bus,hard,actions
+monkey bars,hard,places
+musical chairs,hard,sports
+needle in a haystack,hard,objects
+northern lights,hard,nature
+one-man band,hard,people
+opera singer,hard,people
+outer space,hard,nature
+party animal,hard,people
+pencil sharpener,hard,objects
+pickup truck,hard,transport
+pigs in a blanket,hard,food
+pogo stick,hard,sports
+pole vault,hard,sports
+post office,hard,places
+pot of gold,hard,fantasy
+prince charming,hard,fantasy
+puppy dog eyes,hard,people
+rotten egg,hard,food
+rush hour,hard,transport
+sand dune,hard,nature
+ship in a bottle,hard,objects
+shopping mall,hard,places
+skeleton in the closet,hard,fantasy
+skip stones,hard,actions
+snowball fight,hard,actions
+sore throat,hard,people
+space station,hard,transport
+speed bump,hard,transport
+spill the beans,hard,actions
+spiral staircase,hard,places
+staring contest,hard,actions
+stuck in traffic,hard,transport
+sweet tooth,hard,people
+tape measure,hard,objects
+teacher's pet,hard,people
+three-legged race,hard,sports
+tip of the iceberg,hard,nature
+train station,hard,transport
+walk a tightrope,hard,actions
+walk on eggshells,hard,actions
+walk the plank,hard,fantasy
+wishing well,hard,fantasy
+x marks the spot,hard,fantasy
