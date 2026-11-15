@@ -47,25 +47,24 @@ defmodule Scrawly.RoomTestHelpers do
   @doc """
   Starts a game in `room` as `creator` (the room needs a second player) with
   `word` as the only choice, and commits it: the room is then in `:drawing`
-  with `creator` as the drawer. Stops the round timer on exit. Returns the
-  public state.
+  with `creator` as the drawer. Returns the public state. (The room's own
+  turn timers die with it when the test stops it.)
   """
   def start_drawing!(room, creator, word \\ "zzyzx") do
-    {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: [word]})
-    on_exit(fn -> Games.stop_round_timer(started.game_id) end)
+    {:ok, _started} = RoomServer.start_game(room.id, creator.id, %{word_choices: [word]})
     {:ok, %{phase: :drawing} = state} = RoomServer.choose_word(room.id, creator.id, word)
     state
   end
 
   @doc """
-  Ends the room's current round the way RoundTimer's expiry does: stops the
-  real timer, then sends `{:round_ended, %{game_id, round, reason: :time_up}}`
-  for the room's current game and round. Returns the public state after it.
+  Ends the room's current round now, the way its own round expiry does:
+  sends `{:round_ended, %{game_id, round, reason: :time_up}}` for the room's
+  current game and round (the real expiry, still pending, is cancelled when
+  the round ends). Returns the public state after it.
   """
   def expire_round!(room) do
     [{pid, _}] = Registry.lookup(Scrawly.RoomRegistry, room.id)
     %{game_id: game_id, current_round: round} = :sys.get_state(pid)
-    Games.stop_round_timer(game_id)
     send(pid, {:round_ended, %{game_id: game_id, round: round, reason: :time_up}})
     room_state!(room.id)
   end

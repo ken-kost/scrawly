@@ -16,7 +16,6 @@ defmodule Scrawly.Games.RoomServerTest do
 
   import Scrawly.RoomTestHelpers
 
-  alias Scrawly.Games
   alias Scrawly.Games.{RoomServer, Scoring, WordHints}
 
   @moduletag :capture_log
@@ -378,7 +377,6 @@ defmodule Scrawly.Games.RoomServerTest do
       {:ok, _} = RoomServer.join(room.id, %{id: player.id, username: player.username, score: 0})
 
       {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: ["elephant"]})
-      on_exit(fn -> Games.stop_round_timer(started.game_id) end)
       [{pid, _}] = Registry.lookup(Scrawly.RoomRegistry, room.id)
 
       %{room: room, creator: creator, game_id: started.game_id, pid: pid}

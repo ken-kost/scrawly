@@ -142,4 +142,38 @@ defmodule Scrawly.Games.WordTest do
       assert is_binary(word)
     end
   end
+
+  describe "seeding (QA env note)" do
+    test "seed_words/0 is idempotent" do
+      expected =
+        Scrawly.Games.Word.word_list()
+        |> Enum.flat_map(fn {{word_count, _difficulty}, words} ->
+          Enum.map(words, &{&1, word_count})
+        end)
+        |> Enum.uniq()
+
+      assert Games.get_word_count() == length(expected)
+
+      Scrawly.Games.Word.seed_words()
+      Scrawly.Games.Word.seed_words()
+
+      assert Games.get_word_count() == length(expected)
+    end
+
+    test "priv/repo/seeds.exs seeds the words, and running it again adds none" do
+      {:ok, existing} = Games.get_all_words()
+      Enum.each(existing, &Ash.destroy!/1)
+
+      ExUnit.CaptureIO.capture_io(fn -> Code.eval_file("priv/repo/seeds.exs") end)
+
+      count = Games.get_word_count()
+      # The curated list: 300 each of 1-, 2- and 3-word entries.
+      assert count >= 850
+
+      second = ExUnit.CaptureIO.capture_io(fn -> Code.eval_file("priv/repo/seeds.exs") end)
+      refute second =~ ~r/: [1-9]\d*\/\d+ created/
+
+      assert Games.get_word_count() == count
+    end
+  end
 end

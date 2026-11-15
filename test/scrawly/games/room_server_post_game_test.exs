@@ -29,7 +29,6 @@ defmodule Scrawly.Games.RoomServerPostGameTest do
 
   defp start_game!(room, creator) do
     {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: ["zzyzx"]})
-    on_exit(fn -> Games.stop_round_timer(started.game_id) end)
     started
   end
 

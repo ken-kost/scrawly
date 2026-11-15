@@ -222,6 +222,71 @@ defmodule Scrawly.Games.RoomServerGuessTest do
     end
   end
 
+  # ── Lines that contain the word (QA G5) ───────────────────────────────────
+
+  describe "Guess.contains_word?/2" do
+    test "finds the word as a whole word, whatever the case, accents, punctuation or spacing" do
+      for text <- ["Zzyzx!", "lol it is zzyzx", "it's ZZYZX.", "  zzyzx\t?? ", "(zzyzx)"] do
+        assert Guess.contains_word?(text, @word), text
+      end
+
+      assert Guess.contains_word?("CAFE au lait", "café")
+      assert Guess.contains_word?("un café !", "cafe")
+      assert Guess.contains_word?("a HOT-dog please", "hot dog")
+      assert Guess.contains_word?("hot   dog", "hot dog")
+    end
+
+    test "a word inside another word, or a near miss, is not the word" do
+      refute Guess.contains_word?("what is that", "hat")
+      refute Guess.contains_word?("zzyzxx", @word)
+      refute Guess.contains_word?("zzy zx", @word)
+      refute Guess.contains_word?("hotdog", "hot dog")
+      refute Guess.contains_word?("zzyzx", nil)
+      refute Guess.contains_word?(nil, @word)
+      refute Guess.contains_word?("anything", "  ")
+    end
+  end
+
+  describe "a line containing the word while :drawing" do
+    test "from a player who hasn't guessed is suppressed, not scored and not stored" do
+      for text <- ["lol it is zzyzx", "Zzyzx!", "is it zzyzx?"] do
+        state = drawing_state()
+        subscribe(state.room_id)
+
+        {reply, new_state} = submit(state, @p1, text)
+
+        assert reply == {:ok, :suppressed}, text
+        assert visible(new_state) == visible(state)
+        refute_received {:broadcast_action, _, _, _, _}
+      end
+    end
+
+    test "from a player who already guessed or a watcher is suppressed" do
+      {{:ok, {:correct, _}}, state} = submit(drawing_state(), @p1, @word)
+      subscribe(state.room_id)
+
+      for {uid, text} <- [{@p1, "yes, ZZYZX!!"}, {@watcher, "it's zzyzx."}] do
+        {reply, new_state} = submit(state, uid, text)
+
+        assert reply == {:ok, :suppressed}
+        assert visible(new_state) == visible(state)
+      end
+
+      refute_received {:broadcast_action, _, _, _, _}
+    end
+
+    test "with accents and punctuation normalised" do
+      state = drawing_state(current_word: "café")
+      assert {{:ok, :suppressed}, _} = submit(state, @p1, "CAFE?")
+      assert {{:ok, {:correct, _}}, _} = submit(state, @p1, " CAFÉ ")
+    end
+
+    test "text that only contains the word's letters inside another word is chat" do
+      state = drawing_state(current_word: "hat")
+      assert {{:ok, :chat}, _} = submit(state, @p1, "what is that?")
+    end
+  end
+
   describe "rejections leave the state unchanged" do
     test "empty, blank or non-string text" do
       state = drawing_state()
@@ -391,8 +456,7 @@ defmodule Scrawly.Games.RoomServerGuessTest do
                :room_resynced
     end
 
-    {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: [@word, "TEST"]})
-    on_exit(fn -> Scrawly.Games.stop_round_timer(started.game_id) end)
+    {:ok, _started} = RoomServer.start_game(room.id, creator.id, %{word_choices: [@word, "TEST"]})
     {:ok, drawing} = RoomServer.choose_word(room.id, creator.id, @word)
     assert drawing.phase == :drawing
     assert drawing.current_drawer_id == creator.id

@@ -10,7 +10,6 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
 
   import Scrawly.RoomTestHelpers
 
-  alias Scrawly.Games
   alias Scrawly.Games.{RoomServer, WordHints}
   alias ScrawlyWeb.Pages.GamePage
 
@@ -30,7 +29,6 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
              :room_resynced
 
     {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: @choices})
-    on_exit(fn -> Games.stop_round_timer(started.game_id) end)
 
     assert GamePage.command(:join_as_watcher, %{room_id: room.id}, server_for(spectator)).next_action.name ==
              :room_resynced

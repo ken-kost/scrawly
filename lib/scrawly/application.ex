@@ -17,12 +17,12 @@ defmodule Scrawly.Application do
       # Registry and DynamicSupervisor for RoomServer processes
       {Registry, keys: :unique, name: Scrawly.RoomRegistry},
       {DynamicSupervisor, strategy: :one_for_one, name: Scrawly.RoomSupervisor},
+      # Slow work a room hands off so it keeps answering (AI word refills)
+      {Task.Supervisor, name: Scrawly.TaskSupervisor},
       # Sign-in, recovery-reset and guest-creation attempts (in memory)
       Scrawly.Accounts.Throttle,
       # Distinct visitors seen in the last 45 s (the header's "N online")
       ScrawlyWeb.OnlineTracker,
-      # Round timer for game flow management
-      Scrawly.Games.RoundTimer,
       # Shared canvas for the home-page demo board
       Scrawly.Games.DemoBoardServer,
       # Start to serve requests, typically the last entry

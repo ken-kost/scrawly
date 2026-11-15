@@ -9,7 +9,6 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
 
   import Scrawly.RoomTestHelpers
 
-  alias Scrawly.Games
   alias Scrawly.Games.RoomServer
 
   @moduletag :capture_log
@@ -115,10 +114,8 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
       playing = start_room(ctx.player, %{name: "TEST playing room"})
       join!(playing, create_user())
 
-      {:ok, started} =
+      {:ok, _started} =
         RoomServer.start_game(playing.id, ctx.player.id, %{word_choices: ["zzyzx"]})
-
-      on_exit(fn -> Games.stop_round_timer(started.game_id) end)
 
       rooms = RoomServer.list_lobby_rooms()
       ids = Enum.map(rooms, & &1.room_id)
@@ -164,15 +161,16 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
       join!(room, ctx.player)
       subscribe_lobby()
 
-      {:ok, started} = RoomServer.start_game(room.id, ctx.creator.id, %{word_choices: ["zzyzx"]})
-      on_exit(fn -> Games.stop_round_timer(started.game_id) end)
+      {:ok, _started} = RoomServer.start_game(room.id, ctx.creator.id, %{word_choices: ["zzyzx"]})
       assert lobby_events(room.id) == [:removed]
 
       {:ok, _} = RoomServer.end_game(room.id)
       assert lobby_events(room.id) == [:removed]
 
+      # The creator (a DB member) is still there; the RoomServer-only player
+      # (no DB membership) is not.
       send(pid_of(room), :return_to_lobby)
-      assert [{:changed, %{status: :lobby, players: []}}] = lobby_events(room.id)
+      assert [{:changed, %{status: :lobby, players: [_creator]}}] = lobby_events(room.id)
     end
 
     test "dissolving and the creator leaving remove the row", ctx do

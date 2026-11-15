@@ -88,13 +88,21 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
   end
 
+  @doc """
+  Joins `room_id` as a player for the session user: the room process first,
+  then the DB membership (`Accounts.join_room`, which also starts the
+  account's room score from 0, like the player's score in the room). Replies
+  `:room_resynced`; a full room switches the page to watching; any other
+  refusal (`:not_in_lobby`, `:creator_not_present`, `:not_found`) replies
+  `:command_denied` with that reason.
+  """
   def join_room(%{room_id: room_id}, server) do
     case Auth.current_user(server) do
       {:ok, user} ->
         player = %{
           id: user.id,
           username: user.username,
-          score: user.score || 0,
+          score: 0,
           avatar_id: user.avatar_id || "a-mushroom",
           avatar_color: user.avatar_color || "3"
         }
@@ -109,8 +117,8 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
           {:error, :room_full} ->
             put_action(server, :switch_to_watcher)
 
-          {:error, _} ->
-            server
+          {:error, reason} ->
+            Auth.deny(server, :join_room, reason)
         end
 
       {:error, reason} ->
@@ -195,16 +203,16 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   Leaves `room_id` as the session user, then puts `done_action` (`:go_home` on
   GamePage, `:left_room` on GameScorePage). Shared by both pages.
 
-  The creator leaving dissolves the room. Leaving is idempotent: a user who is
-  no longer in the RoomServer (e.g. after `:return_to_lobby` emptied `players`)
-  still gets their DB membership for this room cleared, without a denial.
-  Visitors without an account just navigate.
+  The creator leaving dissolves the room (the room process persists that
+  before it stops). Leaving is idempotent: a user who is no longer in the
+  RoomServer still gets their DB membership for this room cleared, without a
+  denial. Visitors without an account just navigate.
   """
   def leave_room(%{room_id: room_id}, server, done_action \\ :go_home) do
     with {:ok, user} <- Auth.current_user(server) do
       case RoomServer.leave(room_id, user.id) do
         {:ok, :dissolved} ->
-          Games.dissolve_room(room_id)
+          :ok
 
         {:ok, _state} ->
           Accounts.leave_room(user)
@@ -224,13 +232,13 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
   @doc """
   Dissolves `room_id` if the session user is its creator, then puts
-  `done_action`. Anyone else is denied and nothing changes. When the RoomServer
-  is already gone, the DB room is dissolved only if its `creator_id` matches.
+  `done_action`. Anyone else is denied and nothing changes. The room process
+  persists the dissolution before it stops; when the RoomServer is already
+  gone, the DB room is dissolved here, only if its `creator_id` matches.
   """
   def dissolve_room(%{room_id: room_id}, server, done_action) do
     with {:ok, uid} <- session_user_id(server),
          :ok <- dissolve_room_server(room_id, uid) do
-      Games.dissolve_room(room_id)
       put_action(server, done_action)
     else
       {:error, reason} -> Auth.deny(server, :dissolve_room, reason)
@@ -387,9 +395,15 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
       {:error, :not_found} ->
         case Games.get_room_by_id(room_id) do
-          {:ok, %{creator_id: ^uid}} -> :ok
-          {:ok, _room} -> {:error, :not_creator}
-          {:error, _} -> {:error, :not_found}
+          {:ok, %{creator_id: ^uid}} ->
+            Games.dissolve_room(room_id)
+            :ok
+
+          {:ok, _room} ->
+            {:error, :not_creator}
+
+          {:error, _} ->
+            {:error, :not_found}
         end
 
       {:error, reason} ->
@@ -446,7 +460,7 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     wc = rs.word_count || 1
     p = rs.prompt
     tone = rs.ai_tone || :fun
-    total_rounds = length(rs.players) * (rs.round_multiplier || 1)
+    total_rounds = RoomServer.total_rounds(length(rs.players), rs.round_multiplier || 1)
     ai_num_words = min(max(total_rounds * 3, 9), 60)
 
     {generated, status} =

@@ -7,7 +7,6 @@ defmodule ScrawlyWeb.GameIntegrationTest do
 
   import Scrawly.RoomTestHelpers
 
-  alias Scrawly.Games
   alias Scrawly.Games.RoomServer
   alias ScrawlyWeb.Pages.GamePage
 
@@ -188,14 +187,26 @@ defmodule ScrawlyWeb.GameIntegrationTest do
       assert Process.alive?(socket.channel_pid)
     end
 
-    test "an :allow is reused for the same stroke for 2 s; a new stroke is re-checked",
+    test "an :allow is cached for the stroke while the room doesn't change",
+         %{room: room, creator: creator} do
+      socket = join!(creator, room)
+      assert_relayed(socket, chunk())
+
+      assert {"s-1700000000000-1", :allow, _at} =
+               :sys.get_state(socket.channel_pid).assigns.chunk_verdict
+
+      assert_relayed(socket, chunk(%{"seq" => 2}))
+    end
+
+    test "the :allow doesn't outlive the drawing phase (QA G15)",
          %{room: room, creator: creator} do
       socket = join!(creator, room)
       assert_relayed(socket, chunk())
 
       end_round!(room)
 
-      assert_relayed(socket, chunk(%{"seq" => 2}))
+      # Same stroke, well within 2 s: the room's change dropped the verdict.
+      refute_relayed(socket, chunk(%{"seq" => 2}))
       refute_relayed(socket, chunk(%{"stroke_id" => "s-1700000000000-2"}))
     end
 
@@ -222,19 +233,30 @@ defmodule ScrawlyWeb.GameIntegrationTest do
   end
 
   describe "drawing_stroke_chunk outside :drawing" do
-    test "the drawer's chunk is not relayed while choosing; the denial holds for 2 s", ctx do
-      {:ok, started} = RoomServer.start_game(ctx.room.id, ctx.creator.id, %{word_choices: ["zz"]})
-      on_exit(fn -> Games.stop_round_timer(started.game_id) end)
+    test "the drawer's chunk is not relayed while choosing; the denial is cached for 2 s", ctx do
+      {:ok, _started} =
+        RoomServer.start_game(ctx.room.id, ctx.creator.id, %{word_choices: ["zz"]})
+
+      socket = join!(ctx.creator, ctx.room)
+      refute_relayed(socket, chunk())
+
+      # Denied recently and nothing changed: dropped without asking the room.
+      assert {_id, :deny, _at} = :sys.get_state(socket.channel_pid).assigns.chunk_verdict
+      refute_relayed(socket, chunk(%{"stroke_id" => "s-other"}))
+
+      age_verdict(socket)
+      refute_relayed(socket, chunk(%{"stroke_id" => "s-other"}))
+    end
+
+    test "a denial from :choosing is lifted as soon as the word is committed", ctx do
+      {:ok, _started} =
+        RoomServer.start_game(ctx.room.id, ctx.creator.id, %{word_choices: ["zz"]})
 
       socket = join!(ctx.creator, ctx.room)
       refute_relayed(socket, chunk())
 
       {:ok, %{phase: :drawing}} = RoomServer.choose_word(ctx.room.id, ctx.creator.id, "zz")
 
-      # Denied recently: dropped without asking the room, whatever the stroke id.
-      refute_relayed(socket, chunk(%{"stroke_id" => "s-other"}))
-
-      age_verdict(socket)
       assert_relayed(socket, chunk(%{"stroke_id" => "s-other"}))
     end
 

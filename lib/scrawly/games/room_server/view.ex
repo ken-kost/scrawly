@@ -69,7 +69,9 @@ defmodule Scrawly.Games.RoomServer.View do
   ]
 
   # The `:room_delta` broadcast to everyone in the room (its `seq` is put by
-  # Broadcasts.publish/3, one higher than the room's).
+  # Broadcasts.publish/3, one higher than the room's). `past_games` only
+  # changes when a game ends, and every page leaves for the score page then,
+  # so it goes in snapshots only.
   @delta_keys [
     :room_id,
     :status,
@@ -83,8 +85,7 @@ defmodule Scrawly.Games.RoomServer.View do
     :correct_guessers,
     :phase,
     :last_game_id,
-    :max_players,
-    :past_games
+    :max_players
   ]
 
   @doc """
@@ -114,15 +115,16 @@ defmodule Scrawly.Games.RoomServer.View do
   @doc """
   `public/1` plus the per-viewer keys the game page reads, always present:
 
-    * `is_drawer` - `viewer_id` is a binary equal to `current_drawer_id`
-      (never true for a `nil` viewer, even when there is no drawer);
+    * `is_drawer` - `viewer_id` is a binary equal to `current_drawer_id` and
+      still one of the room's players (never true for a `nil` viewer, even
+      when there is no drawer, nor for a drawer who left);
     * `drawer_name` - the drawer's username, or `"Unknown"`;
     * `current_word` - the word for the drawer, otherwise `nil`;
     * `word_choices` - the drawer's choices, otherwise `[]`.
   """
   @spec for_viewer(struct, term) :: map
   def for_viewer(state, viewer_id) do
-    is_drawer = is_binary(viewer_id) and viewer_id == state.current_drawer_id
+    is_drawer = drawer?(state, viewer_id)
 
     state
     |> public()
@@ -173,6 +175,17 @@ defmodule Scrawly.Games.RoomServer.View do
           %{avatar_id: Map.get(player, :avatar_id), avatar_color: Map.get(player, :avatar_color)}
         end)
     }
+  end
+
+  @doc """
+  Whether `user_id` is the room's current drawer: a binary equal to
+  `current_drawer_id` that is still one of the room's players. Only the
+  drawer may draw (`RoomServer.authorize/3` `:draw`) and see the word.
+  """
+  @spec drawer?(map, term) :: boolean
+  def drawer?(state, user_id) do
+    is_binary(user_id) and user_id == state.current_drawer_id and
+      Enum.any?(state.players || [], &(&1.id == user_id))
   end
 
   defp derived_fields(state) do

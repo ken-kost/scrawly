@@ -23,7 +23,11 @@ defmodule ScrawlyWeb.GameChannel do
   check (`RoomServer.drawing_allowed?/2`) is cached per stroke so the hot path
   makes about one room call per stroke: an `:allow` is reused for the same
   `stroke_id` for 2 s; after a `:deny`, every chunk is dropped for 2 s without
-  asking the room (stroke ids are chosen by the client). Chunks must carry a
+  asking the room (stroke ids are chosen by the client). The cache never
+  outlives what it was computed for: the room announces every phase, turn
+  and membership change on `Broadcasts.drawing_topic/1` (with each
+  `:room_delta`), and the channel drops its verdict then, so the drawer's
+  chunks stop at time-up and start right after the word is picked. Chunks must carry a
   stroke id of at most 64 bytes, an integer `seq`, a delta that passes
   `StrokeRules.valid_delta?/1`, and a valid colour and width when present.
 
@@ -38,6 +42,7 @@ defmodule ScrawlyWeb.GameChannel do
 
   alias Scrawly.{Accounts, Games}
   alias Scrawly.Games.{RoomServer, StrokeRules}
+  alias Scrawly.Games.RoomServer.Broadcasts
 
   @verdict_ttl_ms 2_000
   @max_open_strokes 8
@@ -47,6 +52,8 @@ defmodule ScrawlyWeb.GameChannel do
     with {:ok, room} <- find_room(room_code),
          {:ok, user_id} <- socket_user(socket),
          :ok <- check_member(room.id, user_id) do
+      Phoenix.PubSub.subscribe(Scrawly.PubSub, Broadcasts.drawing_topic(room.id))
+
       socket =
         socket
         |> assign(:room_code, room_code)
@@ -77,6 +84,14 @@ defmodule ScrawlyWeb.GameChannel do
   # Unknown events (e.g. the legacy pushes of an old client) are ignored
   # instead of crashing the channel.
   def handle_in(_event, _payload, socket), do: {:noreply, socket}
+
+  # Who may draw may have changed (phase, turn, membership): the next chunk
+  # asks the room again.
+  @impl true
+  def handle_info({:drawing_changed, _room_id}, socket),
+    do: {:noreply, assign(socket, :chunk_verdict, nil)}
+
+  def handle_info(_message, socket), do: {:noreply, socket}
 
   @impl true
   def terminate(_reason, socket) do

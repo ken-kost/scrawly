@@ -12,14 +12,25 @@ defmodule Scrawly.Games.RoomServer do
 
   Rounds run against monotonic deadlines (`round_deadline`, `choice_deadline`):
   the room broadcasts the remaining ms in its deltas and clients count down
-  locally, so nothing is pushed while a countdown runs. It subscribes to the
-  game's RoundTimer topic for the one-shot `{:round_ended, ...}` expiry and
-  reveals hint stages from its own `{:hint_reveal, ...}` messages. Auto-advances
-  rounds when the timer expires or all players guess correctly.
+  locally, so nothing is pushed while a countdown runs. The room times its
+  turns itself (`GameFlow`: the round's `{:round_ended, ...}` expiry, the
+  `{:hint_reveal, ...}` stages, the choice timeout and the advance after a
+  round, all `Process.send_after/3` to itself and cancelled when the turn or
+  the game ends). Auto-advances rounds when time is up, all players guessed
+  or the drawer left; a transition that can't happen ends the game instead
+  of leaving the room stuck.
+
+  The drawer order is the room's `turn_queue`, built when the game starts
+  (`total_rounds/2` turns, every player the same number of times); a player
+  who leaves mid-game loses their remaining turns, the turn ends at once if
+  they were drawing or choosing, and the game ends when fewer than 2 players
+  remain.
   """
   use GenServer
 
-  alias Scrawly.Games
+  require Logger
+
+  alias Scrawly.{Accounts, Games}
 
   alias Scrawly.Games.{
     Guess,
@@ -40,6 +51,9 @@ defmodule Scrawly.Games.RoomServer do
   # How long a finished game's score page shows before the room returns to the
   # lobby (`:return_to_lobby`).
   @post_game_ms 30_000
+  # How long a finished round shows its word before the next one starts.
+  @round_end_ms 3_000
+  @no_word_text "No word could be picked, so the game ended."
 
   defstruct [
     :room_id,
@@ -91,7 +105,15 @@ defmodule Scrawly.Games.RoomServer do
     drawing_strokes: [],
     stroke_op: nil,
     chat_rate_limits: %{},
-    past_games: []
+    past_games: [],
+    # Drawer ids of the game's remaining turns, in order (the current
+    # drawer's turn excluded). Built by begin_game; a leaver's turns are
+    # removed.
+    turn_queue: [],
+    # Process.send_after refs of the current turn (GameFlow.track_timer/2).
+    turn_timers: [],
+    # `{task_ref, game_id}` while an AI word refill runs in a task.
+    ai_refill: nil
   ]
 
   @doc """
@@ -125,6 +147,23 @@ defmodule Scrawly.Games.RoomServer do
 
   def child_spec(room_id) do
     %{id: {__MODULE__, room_id}, start: {__MODULE__, :start_link, [room_id]}, restart: :temporary}
+  end
+
+  @doc """
+  The number of rounds of a game with `player_count` players and the room's
+  rounds-per-player `multiplier`: whole rotations (every player draws the
+  same number of times), as many as the multiplier asks for but never more
+  than `Scrawly.Games.Game.max_total_rounds/0` rounds in total. So every
+  setting the home page offers can start (12 players at 5x get 2 turns
+  each, 24 rounds).
+  """
+  @spec total_rounds(non_neg_integer, pos_integer) :: non_neg_integer
+  def total_rounds(player_count, _multiplier) when player_count < 1, do: 0
+
+  def total_rounds(player_count, multiplier) do
+    cap = Games.Game.max_total_rounds()
+    turns = multiplier |> max(1) |> min(max(1, div(cap, player_count)))
+    min(player_count * turns, cap)
   end
 
   @doc """
@@ -218,11 +257,14 @@ defmodule Scrawly.Games.RoomServer do
 
   Replies:
 
-    * `{:ok, {:correct, points}}` - a non-drawer player guessed the word while
-      `:drawing` (first time this round). The text is not stored; a
-      `:correct_guess` line is posted instead.
-    * `{:ok, :suppressed}` - the word, typed by a player who already guessed or
-      by a watcher. Nothing is stored or broadcast.
+    * `{:ok, {:correct, points}}` - a non-drawer player who hasn't guessed yet
+      typed the word itself (`Guess.matches?/2`) while `:drawing`. The text is
+      not stored; a `:correct_guess` line is posted instead.
+    * `{:ok, :suppressed}` - any other line that contains the word
+      (`Guess.contains_word?/2`: case, accents, punctuation and spacing
+      ignored) while `:drawing`: a near miss like "Zzyzx!" or "it is zzyzx",
+      or the word from a player who already guessed or from a watcher.
+      Nothing is stored or broadcast; only the sender is told.
     * `{:ok, :chat}` - anything else, stored and broadcast as `:chat`.
     * `{:error, :empty | :not_in_room | :rate_limited | :drawer_cannot_chat |
       :not_found}` - nothing changes.
@@ -276,8 +318,9 @@ defmodule Scrawly.Games.RoomServer do
       game, and there are at least 2 players.
     * `:dissolve` - the actor is the creator.
     * `:leave` - the actor is a player or the creator.
-    * `:draw` - the actor is the current drawer (`:not_drawer`) and the room
-      is in `:drawing` (`:wrong_phase`). Covers strokes, clear and undo.
+    * `:draw` - the actor is the current drawer and still one of the
+      players (`:not_drawer`, see `View.drawer?/2`) and the room is in
+      `:drawing` (`:wrong_phase`). Covers strokes, clear and undo.
   """
   @spec authorize(map, term, :start_game | :dissolve | :leave | :draw) :: :ok | {:error, atom}
   def authorize(state, actor_id, :start_game) do
@@ -301,7 +344,7 @@ defmodule Scrawly.Games.RoomServer do
 
   def authorize(state, actor_id, :draw) do
     cond do
-      not (is_binary(actor_id) and actor_id == state.current_drawer_id) -> {:error, :not_drawer}
+      not View.drawer?(state, actor_id) -> {:error, :not_drawer}
       state.phase != :drawing -> {:error, :wrong_phase}
       true -> :ok
     end
@@ -437,25 +480,15 @@ defmodule Scrawly.Games.RoomServer do
 
   @doc """
   The home page's room list: `lobby_summary/1` of every running room that is
-  in the lobby. Each room replies with its summary only (no state copy); a
-  room that stops meanwhile is skipped.
+  listed (`Broadcasts.listed?/1`: in the lobby, creator present). Each room
+  keeps its own summary as its Registry value (updated with every lobby
+  change, see `notify_lobby/1`), so this reads the Registry and calls no
+  room: a busy room can't slow the home page down, and a stopped room's
+  entry is gone with its process.
   """
   @spec list_lobby_rooms() :: [map]
   def list_lobby_rooms do
-    @registry
-    |> Registry.select([{{:_, :"$1", :_}, [], [:"$1"]}])
-    |> Enum.flat_map(fn pid ->
-      case lobby_summary_of(pid) do
-        %{} = summary -> [summary]
-        nil -> []
-      end
-    end)
-  end
-
-  defp lobby_summary_of(pid) do
-    GenServer.call(pid, :lobby_summary)
-  catch
-    :exit, _ -> nil
+    Registry.select(@registry, [{{:_, :_, :"$1"}, [{:is_map, :"$1"}], [:"$1"]}])
   end
 
   @doc "What the home page's room list shows of a room (`View.lobby_summary/1`)."
@@ -464,7 +497,9 @@ defmodule Scrawly.Games.RoomServer do
 
   # A dissolved room (`:ended` in the DB) is never started again: visiting its
   # URL must not resurrect a process nothing would stop. `{:stop, _}` (not
-  # `:ignore`) so ensure_started/1 returns `{:error, :room_ended}`.
+  # `:ignore`) so ensure_started/1 returns `{:error, :room_ended}`. A room
+  # whose DB status is still :playing lost its game with its previous process
+  # (crash, deploy): it comes back in the lobby (recover_interrupted_game/1).
   @impl true
   def init(room_id) do
     case Games.get_room_by_id(room_id) do
@@ -496,7 +531,7 @@ defmodule Scrawly.Games.RoomServer do
           seq: System.system_time(:microsecond)
         }
 
-        {:ok, state |> resume_post_game() |> notify_lobby()}
+        {:ok, state |> recover_interrupted_game() |> resume_post_game() |> notify_lobby()}
 
       {:error, _} ->
         {:stop, :room_not_found}
@@ -509,7 +544,7 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   def handle_call(:lobby_summary, _from, state) do
-    {:reply, if(state.status == :lobby, do: View.lobby_summary(state)), state}
+    {:reply, if(Broadcasts.listed?(state), do: View.lobby_summary(state)), state}
   end
 
   def handle_call({:get_view, viewer_id}, _from, state) do
@@ -517,7 +552,7 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   def handle_call({:get_private_slice, viewer_id}, _from, state) do
-    if is_binary(viewer_id) and viewer_id == state.current_drawer_id,
+    if View.drawer?(state, viewer_id),
       do: {:reply, {:ok, View.private_slice(state)}, state},
       else: {:reply, {:error, :not_drawer}, state}
   end
@@ -558,14 +593,7 @@ defmodule Scrawly.Games.RoomServer do
         {:stop, :normal, {:ok, :dissolved}, end_room(state)}
 
       true ->
-        player_name = get_player_name(state.players, player_id)
-
-        new_state =
-          %{state | players: Enum.reject(state.players, &(&1.id == player_id))}
-          |> add_sys_msg("#{player_name} left the room")
-          |> notify_waiters()
-          |> notify_lobby()
-
+        new_state = player_left(state, player_id)
         {:reply, {:ok, to_public(new_state)}, new_state}
     end
   end
@@ -619,7 +647,7 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   def handle_call({:start_game, actor_id, opts}, _from, state) do
-    total_rounds = length(state.players) * (state.round_multiplier || 1)
+    total_rounds = total_rounds(length(state.players), state.round_multiplier || 1)
 
     with :ok <- authorize(state, actor_id, :start_game),
          {:ok, game} <- persist_game_start(state.room_id, total_rounds) do
@@ -676,45 +704,10 @@ defmodule Scrawly.Games.RoomServer do
     {:reply, :ok, add_sys_msg(state, text)}
   end
 
+  # Ends the game now, the way the last round's end does (results saved, Game
+  # :completed, turn timers cancelled, post-game window).
   def handle_call(:end_game, _from, state) do
-    if state.game_id do
-      Games.save_game_results(state.game_id, state.room_id, state.players, state.round_results)
-      Games.set_room_post_game(state.room_id)
-      Phoenix.PubSub.unsubscribe(Scrawly.PubSub, "game:#{state.game_id}")
-    end
-
-    game_entry = GameFlow.build_past_game_entry(state)
-
-    new_state =
-      %{
-        state
-        | status: :post_game,
-          last_game_id: state.game_id,
-          game_id: nil,
-          current_round: 0,
-          current_drawer_id: nil,
-          current_word: nil,
-          round_deadline: nil,
-          hint_stage: 0,
-          round_active: false,
-          phase: :idle,
-          word_choices: [],
-          choice_deadline: nil,
-          round_guesser_points: [],
-          correct_guessers: [],
-          drawing_strokes: [],
-          stroke_op: nil,
-          round_results: [],
-          used_words: [],
-          ai_words: [],
-          chat_messages: [],
-          past_games: [game_entry | state.past_games],
-          post_game_deadline: schedule_return_to_lobby()
-      }
-      |> add_sys_msg("Game over! Final scores are in.")
-      |> notify_waiters()
-      |> notify_lobby()
-
+    new_state = auto_end_game(state)
     {:reply, {:ok, to_public(new_state)}, new_state}
   end
 
@@ -795,14 +788,11 @@ defmodule Scrawly.Games.RoomServer do
     {:reply, authorize(state, user_id, :draw) == :ok, state}
   end
 
-  # The commit delta already carries the round: nothing to send.
+  # Time-up, scheduled by GameFlow.commit_word_choice/2, only for this game's
+  # current round while it is still being drawn: an expiry that fired anyway
+  # after everyone guessed (or one for an earlier round) must not score the
+  # drawer, capture the round or schedule an advance a second time.
   @impl true
-  def handle_info({:timer_started, _info}, state), do: {:noreply, state}
-
-  # Time-up from RoundTimer, only for this game's current round while it is
-  # still being drawn: an expiry already queued when everyone guessed (or one
-  # for an earlier round) must not score the drawer, capture the round or
-  # schedule an advance a second time.
   def handle_info({:round_ended, %{reason: :time_up} = info}, state) do
     if state.game_id != nil and Map.get(info, :game_id) == state.game_id and
          Map.get(info, :round) == state.current_round and state.phase == :drawing,
@@ -828,14 +818,15 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   def handle_info(:auto_advance_round, state) do
-    if state.game_id && not state.round_active && state.phase != :choosing do
-      if state.current_round >= state.total_rounds do
+    cond do
+      state.game_id == nil or state.round_active or state.phase != :round_end ->
+        {:noreply, state}
+
+      state.current_round >= state.total_rounds or state.turn_queue == [] ->
         {:noreply, auto_end_game(state)}
-      else
+
+      true ->
         {:noreply, auto_next_round(state)}
-      end
-    else
-      {:noreply, state}
     end
   end
 
@@ -851,7 +842,7 @@ defmodule Scrawly.Games.RoomServer do
         {:noreply, state}
 
       state.word_choices == [] ->
-        {:noreply, state}
+        {:noreply, auto_end_game(state, @no_word_text)}
 
       true ->
         chosen = Enum.random(state.word_choices)
@@ -866,55 +857,91 @@ defmodule Scrawly.Games.RoomServer do
 
             {:noreply, new_state}
 
-          {:error, _} ->
-            {:noreply, state}
+          {:error, reason} ->
+            Logger.warning("room #{state.room_id}: auto-pick failed: #{inspect(reason)}")
+            {:noreply, auto_end_game(state, @no_word_text)}
         end
     end
   end
 
-  def handle_info(:return_to_lobby, state) do
-    if state.status == :post_game do
+  # The score page's countdown is over. The players who are still members
+  # of the room in the DB stay (they come back to its lobby with their final
+  # scores, see User :join_room); anyone who left or moved on to another
+  # room is dropped, and DB memberships that point here without a player in
+  # the room are cleared. Without its creator nobody could join, so such a
+  # room is dissolved instead.
+  def handle_info(:return_to_lobby, %{status: :post_game} = state) do
+    state =
+      case Games.get_room_by_id(state.room_id) do
+        {:ok, room} ->
+          member_ids = MapSet.new(room.players, & &1.id)
+          players = Enum.filter(state.players, &MapSet.member?(member_ids, &1.id))
+          kept = MapSet.new(players, & &1.id)
+
+          room.players
+          |> Enum.reject(&MapSet.member?(kept, &1.id))
+          |> Enum.each(&Accounts.leave_room/1)
+
+          %{state | players: players}
+
+        {:error, _} ->
+          state
+      end
+
+    if creator_present?(state) do
       Games.return_room_to_lobby(state.room_id)
 
       new_state =
-        %{state | status: :lobby, players: [], post_game_deadline: nil}
+        %{state | status: :lobby, post_game_deadline: nil}
         |> add_sys_msg("Room is back in the lobby. Start a new game!")
         |> notify_waiters()
         |> notify_lobby()
 
       {:noreply, new_state}
     else
-      {:noreply, state}
+      {:stop, :normal, end_room(%{state | post_game_deadline: nil})}
     end
   end
+
+  def handle_info(:return_to_lobby, state), do: {:noreply, state}
 
   def handle_info(:stop_self, state) do
     Broadcasts.lobby_room_removed(state.room_id)
     {:stop, :normal, state}
   end
 
+  # The AI pool runs low (GameFlow.start_word_choice/3). The AI call takes
+  # seconds, so it runs in a supervised task and its words come back as a
+  # message: the room keeps answering meanwhile. One refill at a time.
   def handle_info({:refill_ai_words, _room_id, word_count, total_rounds, ai_tone}, state) do
-    if state.prompt && state.prompt != "" && state.game_id do
-      tone_str = to_string(ai_tone || :fun)
-      num_words = min(max(total_rounds * 3, 9), 60)
-
-      case Games.generate_ai_words(state.prompt, word_count, %{
-             num_words: num_words,
-             tone: tone_str
-           }) do
-        {:ok, words} when is_list(words) and words != [] ->
-          new_words = Enum.uniq(words ++ state.ai_words)
-          {:noreply, %{state | ai_words: new_words}}
-
-        _ ->
-          {:noreply, state}
-      end
+    if state.prompt not in [nil, ""] and state.game_id != nil and state.ai_refill == nil do
+      {:noreply, start_ai_refill(state, word_count, total_rounds, ai_tone)}
     else
       {:noreply, state}
     end
   end
 
-  def handle_info({:timer_stopped, _}, state), do: {:noreply, state}
+  # The refill task's result (Task.Supervisor.async_nolink/2), kept only for
+  # the game it was asked for.
+  def handle_info({ref, result}, %{ai_refill: {ref, game_id}} = state) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    state = %{state | ai_refill: nil}
+
+    case result do
+      {:ok, [_ | _] = words} ->
+        if state.game_id == game_id,
+          do: {:noreply, %{state | ai_words: Enum.uniq(words ++ state.ai_words)}},
+          else: {:noreply, state}
+
+      _failed ->
+        {:noreply, state}
+    end
+  end
+
+  # The refill task died: the next low pool may ask again.
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{ai_refill: {ref, _}} = state),
+    do: {:noreply, %{state | ai_refill: nil}}
+
   def handle_info(_msg, state), do: {:noreply, state}
 
   # A crashed room (the child is :temporary) leaves the home pages' room list
@@ -978,13 +1005,18 @@ defmodule Scrawly.Games.RoomServer do
       else: :ok
   end
 
-  # The text of a correct or suppressed guess is never stored or broadcast.
+  # While the word is being drawn, a line that contains it is never stored or
+  # broadcast: only the exact word from a player who can still score counts
+  # as a guess; anything else that contains it is suppressed.
   defp deliver_message(state, sender, text) do
+    word = state.current_word
+    exact? = Guess.matches?(text, word)
+
     cond do
-      not (state.phase == :drawing and Guess.matches?(text, state.current_word)) ->
+      not (state.phase == :drawing and (exact? or Guess.contains_word?(text, word))) ->
         {:reply, {:ok, :chat}, append_chat(state, sender, text)}
 
-      can_score?(state, sender.id) ->
+      exact? and can_score?(state, sender.id) ->
         {new_state, points} = award_guess(state, sender.id)
         {:reply, {:ok, {:correct, points}}, new_state}
 
@@ -1012,76 +1044,57 @@ defmodule Scrawly.Games.RoomServer do
   defp award_guess(state, player_id) do
     order = length(state.correct_guessers) + 1
     guess_pts = Scoring.guesser_points(time_left(state), state.round_duration, order: order)
-    new_guessers = [player_id | state.correct_guessers]
-    new_round_points = state.round_guesser_points ++ [guess_pts]
+    player_name = get_player_name(state.players, player_id)
 
+    new_state =
+      %{
+        state
+        | correct_guessers: [player_id | state.correct_guessers],
+          round_guesser_points: state.round_guesser_points ++ [guess_pts]
+      }
+      |> add_points(player_id, guess_pts)
+      |> add_sys_msg("#{player_name} guessed the word! (+#{guess_pts} points)", :correct_guess)
+
+    new_state =
+      if all_guessed?(new_state), do: finish_all_guessed(new_state), else: new_state
+
+    {notify_waiters(new_state), guess_pts}
+  end
+
+  # Every player but the drawer has guessed (and there is at least one).
+  defp all_guessed?(state) do
     guesser_ids =
       state.players
       |> Enum.reject(&(&1.id == state.current_drawer_id))
       |> Enum.map(& &1.id)
 
-    all_guessed = length(guesser_ids) > 0 and Enum.all?(guesser_ids, &(&1 in new_guessers))
-
-    updated_players =
-      Enum.map(state.players, fn p ->
-        if p.id == player_id, do: %{p | score: (p.score || 0) + guess_pts}, else: p
-      end)
-
-    player_name = get_player_name(state.players, player_id)
-
-    intermediate =
-      %{
-        state
-        | players: updated_players,
-          correct_guessers: new_guessers,
-          round_guesser_points: new_round_points
-      }
-      |> add_sys_msg("#{player_name} guessed the word! (+#{guess_pts} points)", :correct_guess)
-
-    new_state =
-      if all_guessed do
-        Games.stop_round_timer(state.game_id)
-        Process.send_after(self(), :auto_advance_round, 3_000)
-
-        drawer_pts = Scoring.drawer_round_points(new_round_points)
-        drawer_name = get_player_name(state.players, state.current_drawer_id)
-
-        updated_players_with_drawer =
-          Enum.map(intermediate.players, fn p ->
-            if p.id == state.current_drawer_id,
-              do: %{p | score: (p.score || 0) + drawer_pts},
-              else: p
-          end)
-
-        %{
-          intermediate
-          | players: updated_players_with_drawer,
-            round_active: false,
-            phase: :round_end,
-            round_deadline: nil
-        }
-        |> capture_round_result(drawer_pts)
-        |> add_sys_msg("Everyone guessed! #{drawer_name} earns #{drawer_pts} pts!")
-      else
-        intermediate
-      end
-      |> notify_waiters()
-
-    {new_state, guess_pts}
+    guesser_ids != [] and Enum.all?(guesser_ids, &(&1 in state.correct_guessers))
   end
 
-  # The round timed out: score the drawer, reveal the word, advance in 3 s.
+  # Everyone guessed: score the drawer (in the room and on their account),
+  # end the round early, advance in @round_end_ms. No :room_delta here.
+  defp finish_all_guessed(state) do
+    drawer_id = state.current_drawer_id
+    drawer_pts = Scoring.drawer_round_points(state.round_guesser_points)
+    drawer_name = get_player_name(state.players, drawer_id)
+    persist_points(drawer_id, drawer_pts)
+
+    %{state | round_active: false, phase: :round_end, round_deadline: nil}
+    |> GameFlow.cancel_turn_timers()
+    |> add_points(drawer_id, drawer_pts)
+    |> capture_round_result(drawer_pts)
+    |> add_sys_msg("Everyone guessed! #{drawer_name} earns #{drawer_pts} pts!")
+    |> schedule_auto_advance()
+  end
+
+  # The round timed out: score the drawer (in the room and on their account),
+  # reveal the word, advance in @round_end_ms.
   defp time_up(state) do
     correct_count = length(state.correct_guessers)
+    drawer_id = state.current_drawer_id
     drawer_pts = Scoring.drawer_round_points(state.round_guesser_points)
-    drawer_name = get_player_name(state.players, state.current_drawer_id)
-
-    updated_players =
-      Enum.map(state.players, fn p ->
-        if p.id == state.current_drawer_id,
-          do: %{p | score: (p.score || 0) + drawer_pts},
-          else: p
-      end)
+    drawer_name = get_player_name(state.players, drawer_id)
+    persist_points(drawer_id, drawer_pts)
 
     msg =
       if correct_count > 0 do
@@ -1090,29 +1103,145 @@ defmodule Scrawly.Games.RoomServer do
         "Time's up! The word was: #{state.current_word}. Nobody guessed."
       end
 
-    new_state =
-      %{
-        state
-        | players: updated_players,
-          round_deadline: nil,
-          round_active: false,
-          phase: :round_end
-      }
-      |> capture_round_result(drawer_pts)
-      |> add_sys_msg(msg)
-      |> notify_waiters()
-
-    Process.send_after(self(), :auto_advance_round, 3_000)
-    new_state
+    %{state | round_deadline: nil, round_active: false, phase: :round_end}
+    |> GameFlow.cancel_turn_timers()
+    |> add_points(drawer_id, drawer_pts)
+    |> capture_round_result(drawer_pts)
+    |> add_sys_msg(msg)
+    |> notify_waiters()
+    |> schedule_auto_advance()
   end
 
+  defp add_points(state, player_id, points) do
+    players =
+      Enum.map(state.players, fn p ->
+        if p.id == player_id, do: %{p | score: (p.score || 0) + points}, else: p
+      end)
+
+    %{state | players: players}
+  end
+
+  defp schedule_auto_advance(state),
+    do:
+      GameFlow.track_timer(state, Process.send_after(self(), :auto_advance_round, @round_end_ms))
+
+  # Drawer points go to the account like guess points do (Commands persists
+  # those after the room call), so User.score always equals the room score.
+  # Runs in the room process: one atomic UPDATE. Ids that aren't UUIDs
+  # (hand-built test states) are skipped.
+  defp persist_points(user_id, points) when is_integer(points) and points > 0 do
+    with {:ok, _uuid} <- Ecto.UUID.cast(user_id),
+         {:error, error} <- Accounts.add_score(user_id, points) do
+      Logger.error(
+        "could not add #{points} drawer points to #{inspect(user_id)}: #{inspect(error)}"
+      )
+    end
+
+    :ok
+  end
+
+  defp persist_points(_user_id, _points), do: :ok
+
+  # A non-creator player leaves. Mid-game: their remaining turns go, the turn
+  # ends at once if they were drawing or choosing (word revealed, nobody
+  # scores it), the round ends if everyone left has guessed, and the game
+  # ends the normal way once fewer than 2 players remain.
+  defp player_left(state, player_id) do
+    name = get_player_name(state.players, player_id)
+
+    was_drawing? =
+      state.game_id != nil and player_id == state.current_drawer_id and
+        state.phase in [:choosing, :drawing]
+
+    state =
+      %{
+        state
+        | players: Enum.reject(state.players, &(&1.id == player_id)),
+          turn_queue: Enum.reject(state.turn_queue, &(&1 == player_id))
+      }
+      |> add_sys_msg("#{name} left the room")
+
+    cond do
+      state.game_id == nil ->
+        state |> notify_waiters() |> notify_lobby()
+
+      length(state.players) < 2 ->
+        auto_end_game(state, "Not enough players left, so the game ended.")
+
+      was_drawing? ->
+        state |> recount_rounds() |> drawer_left(name) |> notify_waiters()
+
+      state.phase == :drawing and all_guessed?(state) ->
+        state |> recount_rounds() |> finish_all_guessed() |> notify_waiters()
+
+      true ->
+        state |> recount_rounds() |> notify_waiters()
+    end
+  end
+
+  # The rounds left are the drawers left in the queue.
+  defp recount_rounds(state),
+    do: %{state | total_rounds: state.current_round + length(state.turn_queue)}
+
+  # The drawer left mid-turn: end it now, without drawer points (a word
+  # being drawn is revealed and the round recorded), and advance.
+  defp drawer_left(state, name) do
+    {state, msg} =
+      if state.phase == :drawing do
+        {capture_round_result(state, 0, name),
+         "#{name} left while drawing. The word was: #{state.current_word}."}
+      else
+        {state, "#{name} left while choosing a word, so the turn is skipped."}
+      end
+
+    %{
+      state
+      | phase: :round_end,
+        round_active: false,
+        round_deadline: nil,
+        word_choices: [],
+        choice_deadline: nil
+    }
+    |> GameFlow.cancel_turn_timers()
+    |> add_sys_msg(msg)
+    |> schedule_auto_advance()
+  end
+
+  # The room is dissolved (creator left, dissolve_room, creator gone after a
+  # game). Everything is persisted here, before the process stops: its turn
+  # timers are cancelled, a running Game is cancelled, and the DB room is
+  # :ended with every membership cleared (Games.dissolve_room/1), so nothing
+  # can restart it from a stale :lobby status in the meantime.
   defp end_room(state) do
-    if state.game_id, do: Phoenix.PubSub.unsubscribe(Scrawly.PubSub, "game:#{state.game_id}")
+    state = GameFlow.cancel_turn_timers(state)
+
+    if state.game_id, do: log_failure(Games.cancel_game(state.game_id), "cancel its game")
+    log_failure(Games.dissolve_room(state.room_id), "persist :ended")
 
     %{state | players: [], status: :ended}
     |> notify_waiters()
     |> notify_lobby()
   end
+
+  defp log_failure({:error, error}, what),
+    do: Logger.error("room could not #{what}: #{inspect(error)}")
+
+  defp log_failure(_ok, _what), do: :ok
+
+  # The DB says :playing, but no game survived the previous process (crash
+  # or deploy mid-game): cancel the stale Game, put the room back in the
+  # lobby and tell whoever is there.
+  defp recover_interrupted_game(%{status: :playing} = state) do
+    Games.cancel_interrupted_games(state.room_id)
+    log_failure(Games.return_room_to_lobby(state.room_id), "return to the lobby")
+
+    add_sys_msg(
+      %{state | status: :lobby},
+      "The last game was interrupted, so the room is back in the lobby."
+    )
+  end
+
+  defp recover_interrupted_game(state), do: state
 
   # Marks the room as playing and creates its Game row. If the Game row can't be
   # created, the room is put back in the lobby so no half-started game remains.
@@ -1131,11 +1260,33 @@ defmodule Scrawly.Games.RoomServer do
     end
   end
 
+  # The turn order: the players in room order, cycled `total_rounds` times
+  # (total_rounds/2 is whole rotations). Every player's room score, and their
+  # account score (see User :join_room), starts again from 0. The first
+  # round's choices come from the caller, or are picked here when it gave none.
   defp begin_game(state, game_id, total_rounds, opts) do
-    Phoenix.PubSub.subscribe(Scrawly.PubSub, "game:#{game_id}")
-    drawer_id = hd(state.players).id
+    player_ids = Enum.map(state.players, & &1.id)
+    [drawer_id | turn_queue] = player_ids |> Stream.cycle() |> Enum.take(total_rounds)
     drawer_name = get_player_name(state.players, drawer_id)
     reset_players = Enum.map(state.players, fn p -> %{p | score: 0} end)
+    reset_account_scores(player_ids)
+
+    {choices, ai_words} =
+      case Map.get(opts, :word_choices) do
+        [_ | _] = choices ->
+          {choices, Map.get(opts, :ai_words, state.ai_words)}
+
+        _none ->
+          {choices, remaining, _used} =
+            GameFlow.pick_word_choices(
+              Map.get(opts, :ai_words, state.ai_words),
+              [],
+              state.word_count,
+              3
+            )
+
+          {choices, remaining}
+      end
 
     %{
       state
@@ -1146,6 +1297,7 @@ defmodule Scrawly.Games.RoomServer do
         current_round: 1,
         total_rounds: total_rounds,
         current_drawer_id: drawer_id,
+        turn_queue: turn_queue,
         current_word: nil,
         round_deadline: nil,
         hint_stage: 0,
@@ -1156,39 +1308,63 @@ defmodule Scrawly.Games.RoomServer do
         chat_messages: [],
         round_results: [],
         used_words: [],
-        ai_words: Map.get(opts, :ai_words, state.ai_words),
+        ai_words: ai_words,
         round_guesser_points: [],
         round_start_scores:
           Enum.reduce(reset_players, %{}, fn p, acc -> Map.put(acc, p.id, 0) end)
     }
+    |> GameFlow.cancel_turn_timers()
     |> add_sys_msg("Game started! #{drawer_name} is choosing a word \u2026")
-    |> GameFlow.enter_word_choice(
-      Map.get(opts, :word_choices) || [],
-      &schedule_word_choice_timeout/2
-    )
+    |> GameFlow.enter_word_choice(choices, &schedule_word_choice_timeout/2)
     |> notify_waiters()
     |> Broadcasts.push_private_slice()
   end
 
-  # The drawer's choices go out after the round's :room_delta (see
-  # Broadcasts.push_private_slice/1).
-  defp auto_next_round(state) do
-    GameFlow.start_word_choice(
-      state,
-      &(&1 |> notify_waiters() |> Broadcasts.push_private_slice()),
-      &schedule_word_choice_timeout/2
-    )
+  defp reset_account_scores(player_ids) do
+    player_ids
+    |> Enum.filter(&match?({:ok, _}, Ecto.UUID.cast(&1)))
+    |> Accounts.reset_scores()
+    |> log_failure("reset its players' scores")
   end
 
-  # GameFlow.auto_end_game/2 keeps this field (it updates with %{state | ...}),
+  # The drawer's choices go out after the round's :room_delta (see
+  # Broadcasts.push_private_slice/1). A round that can't start ends the game.
+  defp auto_next_round(state) do
+    case GameFlow.start_word_choice(
+           state,
+           &(&1 |> notify_waiters() |> Broadcasts.push_private_slice()),
+           &schedule_word_choice_timeout/2
+         ) do
+      {:ok, new_state} ->
+        new_state
+
+      {:error, reason} ->
+        Logger.warning("room #{state.room_id}: next round failed: #{inspect(reason)}")
+        auto_end_game(state, "The next round couldn't start, so the game ended.")
+    end
+  end
+
+  # GameFlow.auto_end_game/3 keeps this field (it updates with %{state | ...}),
   # so the deadline is set before its :room_delta goes out and a page reacting
-  # to it reads the time left from get_state/1.
-  defp auto_end_game(state) do
+  # to it reads the time left from get_state/1. `reason` explains an early end.
+  defp auto_end_game(state, reason \\ nil) do
     state = %{state | post_game_deadline: schedule_return_to_lobby()}
 
     state
-    |> GameFlow.auto_end_game(&notify_waiters/1)
+    |> GameFlow.auto_end_game(&notify_waiters/1, reason)
     |> notify_lobby()
+  end
+
+  defp start_ai_refill(state, word_count, total_rounds, ai_tone) do
+    prompt = state.prompt
+    opts = %{num_words: min(max(total_rounds * 3, 9), 60), tone: to_string(ai_tone || :fun)}
+
+    task =
+      Task.Supervisor.async_nolink(Scrawly.TaskSupervisor, fn ->
+        Games.generate_ai_words(prompt, word_count, opts)
+      end)
+
+    %{state | ai_refill: {task.ref, state.game_id}}
   end
 
   # Schedules :return_to_lobby and returns the matching monotonic deadline.
@@ -1242,12 +1418,23 @@ defmodule Scrawly.Games.RoomServer do
   defp creator_present?(state), do: Enum.any?(state.players, &(&1.id == state.creator_id))
 
   # The home pages' room list (`:lobby` channel): this room's summary while
-  # it is in the lobby, its removal otherwise.
-  defp notify_lobby(state), do: Broadcasts.notify_lobby(state)
+  # it is listed, its removal otherwise. The summary is also this process's
+  # Registry value (nil when not listed), which list_lobby_rooms/0 reads.
+  defp notify_lobby(state) do
+    summary = if Broadcasts.listed?(state), do: View.lobby_summary(state)
+    Registry.update_value(@registry, state.room_id, fn _old -> summary end)
+    Broadcasts.notify_lobby(state)
+  end
 
   # The room's public state (View.delta/1: no chat, no strokes, no secrets) to
-  # everyone on {:room, room_id}, sequenced.
-  defp notify_waiters(state), do: Broadcasts.publish(state, :room_delta, View.delta(state))
+  # everyone on {:room, room_id}, sequenced. Every phase, turn or membership
+  # change goes out this way, so it also tells the members' GameChannels to
+  # drop their cached drawing verdict (Broadcasts.drawing_changed/1).
+  defp notify_waiters(state) do
+    state = Broadcasts.publish(state, :room_delta, View.delta(state))
+    Broadcasts.drawing_changed(state.room_id)
+    state
+  end
 
   defp to_public(state), do: View.public(state)
 
@@ -1261,8 +1448,8 @@ defmodule Scrawly.Games.RoomServer do
     }
   end
 
-  defp capture_round_result(state, drawer_points),
-    do: GameFlow.capture_round_result(state, drawer_points)
+  defp capture_round_result(state, drawer_points, drawer_name \\ nil),
+    do: GameFlow.capture_round_result(state, drawer_points, drawer_name)
 
   defp get_player_name(players, player_id), do: GameFlow.get_player_name(players, player_id)
   defp add_sys_msg(state, text, type \\ :system), do: GameFlow.add_sys_msg(state, text, type)

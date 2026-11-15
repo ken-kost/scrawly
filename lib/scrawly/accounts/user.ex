@@ -320,10 +320,17 @@ defmodule Scrawly.Accounts.User do
     end
 
     # Player-specific actions
+    #
+    # `score` is the player's score in their current room: 0 on joining,
+    # reset to 0 for every player when a game starts (:reset_score), raised
+    # by guess and drawer points during the game (:add_score), so after a
+    # game it holds that game's final score until the next start; 0 again on
+    # leaving.
     update :join_room do
       accept [:current_room_id, :username]
       validate NotReservedUsername
       change set_attribute(:player_state, :connected)
+      change set_attribute(:score, 0)
     end
 
     update :leave_room do
@@ -335,6 +342,12 @@ defmodule Scrawly.Accounts.User do
 
     update :update_score do
       accept [:score]
+    end
+
+    # A game starts: every player's room score goes back to 0 (see :join_room).
+    update :reset_score do
+      accept []
+      change set_attribute(:score, 0)
     end
 
     # Adds a server-computed guess award in one UPDATE, so concurrent awards

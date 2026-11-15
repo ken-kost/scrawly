@@ -338,7 +338,6 @@ defmodule ScrawlyWeb.Components.ChatSystemTest do
       for params <- [
             %{outcome: :correct, points: 300},
             %{outcome: :chat},
-            %{outcome: :suppressed},
             %{outcome: :drawer_cannot_chat},
             %{outcome: :empty}
           ] do

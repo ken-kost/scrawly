@@ -13,6 +13,9 @@ defmodule ScrawlyWeb.Components.ChatBox do
   prop :disabled, :boolean, default: false
   prop :is_drawer, :boolean, default: false
   prop :rate_limited, :boolean, default: false
+  # A private hint for this user only (e.g. their line wasn't sent because it
+  # contained the word).
+  prop :notice, :string, default: nil
 
   def template do
     ~HOLO"""
@@ -41,6 +44,9 @@ defmodule ScrawlyWeb.Components.ChatBox do
       </div>
       {%if @rate_limited}
         <div style="padding: 4px 14px; font-size: 11px; color: var(--danger);">slow down</div>
+      {/if}
+      {%if @notice}
+        <div style="padding: 4px 14px; font-size: 11px; color: var(--muted);">{@notice}</div>
       {/if}
       <form class="chat-input" $submit="send_message">
         <input type="text" name="message" maxlength="240"

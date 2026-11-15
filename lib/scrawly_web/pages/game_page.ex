@@ -107,6 +107,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:current_user_username, (user && user.username) || "")
               |> put_state(:new_message, "")
               |> put_state(:rate_limited, false)
+              # Private hints: a chat line of yours that was not sent (it
+              # contained the word), and why a join was refused.
+              |> put_state(:chat_notice, nil)
+              |> put_state(:chat_notice_gen, 0)
+              |> put_state(:join_notice, nil)
               |> put_state(:message_timestamps, [])
               |> put_state(:game_id, rs.game_id || "")
               |> put_state(:game_started, game_active)
@@ -572,11 +577,19 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   # A command was rejected server-side (see ScrawlyWeb.Auth.deny/3): nothing
   # changed, but the page may be out of date, so it resyncs. A denied stroke
-  # op leaves the drawer's op queue so the next one can go.
+  # op leaves the drawer's op queue so the next one can go; a refused join
+  # says why in the lobby.
   def action(:command_denied, params, component) do
-    if Map.get(params, :command) in [:complete_stroke, :undo_drawing_cmd, :clear_drawing_cmd] do
+    command = Map.get(params, :command)
+
+    if command in [:complete_stroke, :undo_drawing_cmd, :clear_drawing_cmd] do
       JS.call(:rejectStrokeOp, [Map.get(params, :op_seq)])
     end
+
+    component =
+      if command == :join_room,
+        do: put_state(component, :join_notice, join_denied_text(Map.get(params, :reason))),
+        else: component
 
     component
     |> put_state(:leaving?, false)
@@ -625,14 +638,31 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   # Reply to :submit_guess. Scores, guessers and chat lines arrive through
-  # :room_delta / :chat_appended; only the server-side rate limit needs a hint.
+  # :room_delta / :chat_appended; only the server-side rate limit and a
+  # suppressed line (it contained the word, so nobody saw it) need a hint,
+  # shown to the sender alone.
   def action(:guess_result, %{outcome: :rate_limited}, component) do
     component
     |> put_state(:rate_limited, true)
     |> put_action(name: :clear_rate_limit, delay: 3_000)
   end
 
+  def action(:guess_result, %{outcome: :suppressed}, component) do
+    gen = Map.get(component.state, :chat_notice_gen, 0) + 1
+
+    component
+    |> put_state(:chat_notice, "not sent: your message contains the word")
+    |> put_state(:chat_notice_gen, gen)
+    |> put_action(name: :clear_chat_notice, params: %{gen: gen}, delay: 4_000)
+  end
+
   def action(:guess_result, _params, component), do: component
+
+  def action(:clear_chat_notice, %{gen: gen}, component) do
+    if gen == Map.get(component.state, :chat_notice_gen),
+      do: put_state(component, :chat_notice, nil),
+      else: component
+  end
 
   def action(:clear_rate_limit, _params, component),
     do: put_state(component, :rate_limited, false)
@@ -859,6 +889,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # request still unanswered after @resync_guard_ms may be sent again (a
   # timestamp from another document's clock, restored by Back/Forward, counts
   # as expired).
+  # What the lobby says when the room refused a join (:command_denied).
+  defp join_denied_text(:creator_not_present),
+    do: "can't join: the host isn't in the room right now"
+
+  defp join_denied_text(:not_in_lobby), do: "can't join: a game is in progress"
+  defp join_denied_text(_reason), do: "can't join this room right now"
+
   defp request_resync(component) do
     state = component.state
     now = System.monotonic_time(:millisecond)
@@ -1121,9 +1158,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
     new_turn = new_game or (active and round != state.round)
     game_over = state.game_started and not active
 
+    joined? = is_binary(uid) and Enum.any?(players, &(&1.id == uid))
+
     component =
       component
       |> put_state(:players, players)
+      |> put_state(:join_notice, if(joined?, do: nil, else: Map.get(state, :join_notice)))
       |> put_state(:max_players, Map.get(view, :max_players) || state.max_players)
       |> put_state(:watchers, view.watchers || [])
       |> put_state(:room_status, view.status)
@@ -1445,6 +1485,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
             {/if}
             <button class="app-btn app-btn-lg" $click={:leave_room}>leave</button>
           </div>
+          {%if @join_notice}
+            <div class="mono" style="font-size: 12px; color: var(--danger); margin-top: 10px; text-align: center;">{@join_notice}</div>
+          {/if}
           <div class="mono" style="font-size: 11px; color: var(--muted); margin-top: 10px; text-align: center;">
             share the code to invite friends
           </div>
@@ -1662,7 +1705,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
           </div>
           <ChatBox messages={@chat_messages} current_message={@new_message}
             current_user_id={@current_user_id} is_drawer={@is_drawer}
-            rate_limited={@rate_limited} disabled={!@game_started or @is_drawer} />
+            rate_limited={@rate_limited} notice={@chat_notice}
+            disabled={!@game_started or @is_drawer} />
         </div>
       </div>
     </div>

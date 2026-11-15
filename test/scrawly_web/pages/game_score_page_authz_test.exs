@@ -130,17 +130,19 @@ defmodule ScrawlyWeb.Pages.GameScorePageAuthzTest do
       assert reload_room!(room).status == :ended
     end
 
-    test "after :return_to_lobby emptied the players, leaving still succeeds", ctx do
+    test "after :return_to_lobby the players are still in the room, and leaving works", ctx do
       %{room: room, creator: creator, player: player} = ctx
       {:ok, _} = RoomServer.end_game(room.id)
       [{pid, _}] = Registry.lookup(Scrawly.RoomRegistry, room.id)
       send(pid, :return_to_lobby)
-      assert room_state!(room.id).players == []
+
+      assert Enum.map(room_state!(room.id).players, & &1.id) == [creator.id, player.id]
 
       result = GameScorePage.command(:leave_room, %{room_id: room.id}, server_for(player))
 
       assert result.next_action.name == :left_room
       assert RoomServer.room_exists?(room.id)
+      assert Enum.map(room_state!(room.id).players, & &1.id) == [creator.id]
       assert reload_user!(player).current_room_id == nil
       assert reload_user!(creator).current_room_id == room.id
     end

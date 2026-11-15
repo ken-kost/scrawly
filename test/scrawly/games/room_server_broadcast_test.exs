@@ -14,7 +14,6 @@ defmodule Scrawly.Games.RoomServerBroadcastTest do
 
   import Scrawly.RoomTestHelpers
 
-  alias Scrawly.Games
   alias Scrawly.Games.RoomServer
 
   @moduletag :capture_log
@@ -63,7 +62,6 @@ defmodule Scrawly.Games.RoomServerBroadcastTest do
 
   defp start!(room, creator, choices \\ @choices) do
     {:ok, started} = RoomServer.start_game(room.id, creator.id, %{word_choices: choices})
-    on_exit(fn -> Games.stop_round_timer(started.game_id) end)
     started
   end
 
@@ -189,7 +187,6 @@ defmodule Scrawly.Games.RoomServerBroadcastTest do
         assert Enum.count(messages, &match?({_, :private_state, _, _}, &1)) == 1
 
         # Back to the lobby for the next pass.
-        Games.stop_round_timer(started.game_id)
 
         Phoenix.PubSub.unsubscribe(
           Hologram.PubSub,

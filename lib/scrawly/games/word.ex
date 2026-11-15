@@ -409,18 +409,40 @@ defmodule Scrawly.Games.Word do
     |> List.flatten()
   end
 
+  @doc """
+  The built-in words for `word_count` (and `difficulty`, when given): what
+  `Scrawly.Games.get_random_word/1` falls back to when the `words` table has
+  none, so word choices never run out.
+  """
+  @spec builtin_words(pos_integer, atom | nil) :: [String.t()]
+  def builtin_words(word_count, difficulty \\ nil)
+
+  def builtin_words(word_count, nil) do
+    for {{^word_count, _difficulty}, words} <- @word_list, word <- words, uniq: true, do: word
+  end
+
+  def builtin_words(word_count, difficulty), do: Map.get(@word_list, {word_count, difficulty}, [])
+
+  @doc """
+  Inserts the built-in list (`word_list/0`) into the `words` table, skipping
+  every word already there with the same word count, so running it again
+  (e.g. `mix run priv/repo/seeds.exs`) adds nothing. Returns how many words it
+  created.
+  """
+  @spec seed_words() :: non_neg_integer
   def seed_words do
-    Enum.each(@word_list, fn {{word_count, difficulty}, words} ->
-      Enum.each(words, fn word_text ->
-        case Ash.create(Scrawly.Games.Word, %{
-               text: word_text,
-               difficulty: difficulty,
-               word_count: word_count
-             }) do
-          {:ok, _word} -> :ok
-          {:error, _} -> :ok
-        end
-      end)
+    existing =
+      case Scrawly.Games.get_all_words() do
+        {:ok, words} -> MapSet.new(words, &{&1.text, &1.word_count})
+        {:error, _} -> MapSet.new()
+      end
+
+    @word_list
+    |> Enum.flat_map(fn {{word_count, difficulty}, words} ->
+      Enum.map(words, &%{text: &1, difficulty: difficulty, word_count: word_count})
     end)
+    |> Enum.uniq_by(&{&1.text, &1.word_count})
+    |> Enum.reject(&MapSet.member?(existing, {&1.text, &1.word_count}))
+    |> Enum.count(&match?({:ok, _}, Scrawly.Games.create_word(&1)))
   end
 end

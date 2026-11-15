@@ -12,7 +12,6 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
 
   import Scrawly.RoomTestHelpers
 
-  alias Scrawly.Games
   alias Scrawly.Games.{RoomServer, StrokeRules}
   alias ScrawlyWeb.Pages.GamePage
 
@@ -293,8 +292,9 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
 
   describe "the drawer outside :drawing" do
     test "is denied while choosing a word", ctx do
-      {:ok, started} = RoomServer.start_game(ctx.room.id, ctx.creator.id, %{word_choices: ["zz"]})
-      on_exit(fn -> Games.stop_round_timer(started.game_id) end)
+      {:ok, _started} =
+        RoomServer.start_game(ctx.room.id, ctx.creator.id, %{word_choices: ["zz"]})
+
       assert room_state!(ctx.room.id).phase == :choosing
 
       for command <- [:complete_stroke, :clear_drawing_cmd, :undo_drawing_cmd] do

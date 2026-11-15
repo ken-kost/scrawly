@@ -65,39 +65,68 @@ defmodule Scrawly.Games.RoomServer.Broadcasts do
   `:room_delta` of the same transition: the page applies a slice only once it
   knows the slice's round (an earlier one is ignored, a later one held until
   the delta for that round arrives). Returns the state unchanged; does
-  nothing when there is no drawer.
+  nothing when there is no drawer or the drawer is no longer a player.
   """
   @spec push_private_slice(map) :: map
-  def push_private_slice(%{current_drawer_id: drawer_id} = state) when is_binary(drawer_id) do
-    Hologram.Realtime.broadcast_action(
-      player_channel(state.room_id, drawer_id),
-      :private_state,
-      View.private_slice(state)
-    )
+  def push_private_slice(%{current_drawer_id: drawer_id} = state) do
+    if View.drawer?(state, drawer_id) do
+      Hologram.Realtime.broadcast_action(
+        player_channel(state.room_id, drawer_id),
+        :private_state,
+        View.private_slice(state)
+      )
+    end
 
     state
   end
-
-  def push_private_slice(state), do: state
 
   @doc """
   Tells the home pages about the room's current lobby status:
   `:lobby_room_changed` (`%{room: View.lobby_summary(state)}`) while it is
-  `:lobby`, otherwise `:lobby_room_removed` (`%{room_id: id}`). Returns the
-  state unchanged.
+  listed (`listed?/1`), otherwise `:lobby_room_removed` (`%{room_id: id}`).
+  Returns the state unchanged.
   """
   @spec notify_lobby(map) :: map
-  def notify_lobby(%{status: :lobby} = state) do
-    Hologram.Realtime.broadcast_action(lobby_channel(), :lobby_room_changed, %{
-      room: View.lobby_summary(state)
-    })
+  def notify_lobby(state) do
+    if listed?(state) do
+      Hologram.Realtime.broadcast_action(lobby_channel(), :lobby_room_changed, %{
+        room: View.lobby_summary(state)
+      })
+    else
+      lobby_room_removed(state.room_id)
+    end
 
     state
   end
 
-  def notify_lobby(state) do
-    lobby_room_removed(state.room_id)
-    state
+  @doc """
+  Whether the home pages list the room: it is in the lobby and its creator
+  is one of its players (nobody else may join a room whose creator is
+  absent).
+  """
+  @spec listed?(map) :: boolean
+  def listed?(%{status: :lobby} = state),
+    do: Enum.any?(state.players, &(&1.id == state.creator_id))
+
+  def listed?(_state), do: false
+
+  @doc """
+  Scrawly.PubSub topic on which the room says that who may draw may have
+  changed (`drawing_changed/1`). The GameChannel of each member subscribes,
+  so its cached stroke-chunk verdict never outlives a phase, a turn or a
+  membership.
+  """
+  @spec drawing_topic(term) :: String.t()
+  def drawing_topic(room_id), do: "room_drawing:#{room_id}"
+
+  @doc """
+  Sends `{:drawing_changed, room_id}` on `drawing_topic/1`. The room calls
+  it with every `:room_delta`: each phase, turn or membership change goes
+  out as one.
+  """
+  @spec drawing_changed(term) :: :ok
+  def drawing_changed(room_id) do
+    Phoenix.PubSub.broadcast(Scrawly.PubSub, drawing_topic(room_id), {:drawing_changed, room_id})
   end
 
   @doc "Takes `room_id` off the home pages' room list (`:lobby_room_removed`)."

@@ -739,9 +739,20 @@ defmodule Scrawly.SeedData do
 
   # ── Private ────────────────────────────────────────────────────────────
 
+  # Idempotent: words already in the table (same text and word count) are
+  # skipped, so running the seeds twice adds nothing.
   defp seed_batch(words, word_count, difficulty) do
+    existing =
+      case Scrawly.Games.get_all_words() do
+        {:ok, rows} -> MapSet.new(rows, &{&1.text, &1.word_count})
+        {:error, _} -> MapSet.new()
+      end
+
     created =
-      Enum.reduce(words, 0, fn text, acc ->
+      words
+      |> Enum.uniq()
+      |> Enum.reject(&MapSet.member?(existing, {&1, word_count}))
+      |> Enum.reduce(0, fn text, acc ->
         case Ash.create(Scrawly.Games.Word, %{
                text: text,
                difficulty: difficulty,
