@@ -76,7 +76,7 @@ defmodule ScrawlyWeb.Pages.HomePageLobbyTest do
 
       summary = Enum.find(component.state.rooms, &(&1.room_id == room.id))
       assert summary == RoomServer.lobby_summary(:sys.get_state(pid_of(room)))
-      assert Enum.all?(component.state.rooms, &(map_size(&1) == 9))
+      assert Enum.all?(component.state.rooms, &(map_size(&1) == 10))
       assert component.state.lobby_chat_messages == [line]
       assert component.state.page_shown? == false
       assert struct_free?(component.state)

@@ -9,7 +9,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
   import Scrawly.RoomTestHelpers
 
   alias Scrawly.{Accounts, Games}
-  alias Scrawly.Games.{Game, RoomServer, Scoring, WordList}
+  alias Scrawly.Games.{AnswerKind, Game, RoomServer, Scoring, WordList}
   alias Scrawly.Games.RoomServer.{GameFlow, View}
   alias ScrawlyWeb.Pages.{GamePage, GameScorePage}
 
@@ -70,8 +70,8 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
     end
   end
 
-  defp builtin_words(word_count) do
-    for %{text: text} <- WordList.entries(), length(String.split(text)) == word_count, do: text
+  defp builtin_words(kind) do
+    for %{text: text} <- WordList.entries(), AnswerKind.of(text) == kind, do: text
   end
 
   # ── G1 ────────────────────────────────────────────────────────────────────
@@ -167,16 +167,18 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
     test "with no words in the DB the built-in list fills the choices" do
       assert Games.get_word_count() == 0
 
-      for word_count <- 1..3 do
-        builtin = builtin_words(word_count)
-        {choices, [], 0} = GameFlow.pick_word_choices([], [], word_count, 3)
+      for answer_kind <- AnswerKind.all() do
+        {choices, [], 0} = GameFlow.pick_word_choices([], [], answer_kind, 3)
 
         assert length(choices) == 3
         assert Enum.uniq(choices) == choices
-        assert Enum.all?(choices, &(&1 in builtin))
+        assert Enum.all?(choices, &(&1 in (builtin_words(:word) ++ builtin_words(:phrase))))
+        assert Enum.all?(choices, &AnswerKind.allows?(answer_kind, &1))
+      end
 
-        assert {:ok, word} = Games.get_random_word(word_count: word_count)
-        assert word in builtin
+      for kind <- [:word, :phrase] do
+        assert {:ok, word} = Games.get_random_word(kind: kind)
+        assert word in builtin_words(kind)
       end
     end
 
@@ -251,7 +253,7 @@ defmodule Scrawly.Games.RoomServerRobustnessTest do
 
       on_exit(fn -> :telemetry.detach(handler) end)
 
-      send(room_pid, {:refill_ai_words, room.id, 1, 2, :fun})
+      send(room_pid, {:refill_ai_words, room.id, 2, :fun})
       assert_receive {:ai_call_in, worker}, 1_000
       refute worker == room_pid
 

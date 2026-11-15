@@ -14,6 +14,7 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
   @moduletag :capture_log
 
   @summary_keys [
+    :answer_kind,
     :code,
     :max_players,
     :name,
@@ -73,6 +74,7 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
         status: :lobby,
         creator_id: "secret-creator",
         max_players: 6,
+        answer_kind: :phrases,
         word_source: :ai,
         prompt: "TEST secret prompt",
         round_duration: 120,
@@ -95,6 +97,7 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
                code: "ABCD",
                status: :lobby,
                max_players: 6,
+               answer_kind: :phrases,
                word_source: :ai,
                round_duration: 120,
                round_multiplier: 2,

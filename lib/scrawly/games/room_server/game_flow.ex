@@ -31,7 +31,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   """
 
   alias Scrawly.Games
-  alias Scrawly.Games.{StrokeRules, Word, WordHints}
+  alias Scrawly.Games.{AiWords, AnswerKind, Guess, StrokeRules, Word, WordHints}
   alias Scrawly.Games.RoomServer.Broadcasts
 
   @ai_refill_threshold 6
@@ -73,8 +73,9 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
 
   The drawer is the first player of `turn_queue` (the turn order built at
   game start, from which a leaver's turns are removed), so nobody is skipped
-  or draws twice when someone leaves. Picks 3 candidate words (AI pool
-  first, then the local words, which fall back to the built-in list), sets
+  or draws twice when someone leaves. Picks 3 candidate words of the room's
+  answer kind (`pick_word_choices/4`: AI pool first, then the local words,
+  which fall back to the built-in list), sets
   `phase: :choosing`, and schedules the `choice_duration/0` timeout via
   `schedule_timeout_fn.(game_id, round)` (which returns the timer ref).
   `notify_fn` runs last, on the new state (the room's `:room_delta`, then the
@@ -91,7 +92,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
          {:ok, _} <- Games.complete_round(state.game_id),
          {:ok, _} <- Games.next_round(state.game_id),
          {[_ | _] = choices, remaining_ai, used_from_ai} <-
-           pick_word_choices(state.ai_words, state.used_words, state.word_count, 3) do
+           pick_word_choices(state.ai_words, state.used_words, state.answer_kind, 3) do
       round = state.current_round + 1
       drawer_name = get_player_name(state.players, drawer_id)
 
@@ -121,10 +122,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
 
       if state.word_source == :ai and used_from_ai > 0 and
            length(remaining_ai) <= @ai_refill_threshold do
-        send(
-          self(),
-          {:refill_ai_words, state.room_id, state.word_count, state.total_rounds, state.ai_tone}
-        )
+        send(self(), {:refill_ai_words, state.room_id, state.total_rounds, state.ai_tone})
       end
 
       {:ok, new_state}
@@ -169,11 +167,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   game_id, round, stage}` per stage of `WordHints.reveal_offsets_ms/2`.
   """
   def commit_word_choice(state, word) when is_binary(word) do
-    start_round_opts = %{
-      word_count: state.word_count,
-      used_words: state.used_words,
-      override_word: word
-    }
+    start_round_opts = %{used_words: state.used_words, override_word: word}
 
     case Games.start_round(state.game_id, state.current_drawer_id, start_round_opts) do
       {:ok, _updated_game} ->
@@ -375,59 +369,103 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   end
 
   @doc """
-  Pick `count` candidate words for the drawer, preferring the AI pool, then
-  local words (`Games.get_random_word/1`, which falls back to the built-in
-  list when the DB has none), then the built-in list directly, so the
-  choices are never empty for a supported word count.
+  Pick `count` candidate words for the drawer of a room of kind
+  `answer_kind` (`Scrawly.Games.AnswerKind`): only words for `:words`, only
+  phrases for `:phrases`, and exactly one phrase among words, at a random
+  position, for `:mixed`.
+
+  Every choice comes from the AI pool when it holds one of the right kind,
+  then from the local words of that kind (`Games.get_random_word/1`, which
+  falls back to the built-in list when the DB has none), then from the
+  built-in list directly, so the choices are never empty. The pool goes
+  through `AiWords.filter/2` first, so whatever it holds, nothing the room
+  can't offer is ever picked or kept; words in `used_words` (compared by
+  `Guess.key/1`) are dropped from it too.
 
   Returns `{choices, remaining_ai_pool, used_from_ai_count}`.
   """
-  def pick_word_choices(ai_pool, used_words, word_count, count) do
-    {from_ai, remaining_ai} = pop_n(ai_pool, count)
-    needed = count - length(from_ai)
+  def pick_word_choices(ai_pool, used_words, answer_kind, count) do
+    used = MapSet.new(used_words, &Guess.key/1)
 
-    local =
-      if needed > 0 do
-        pick_local_words(used_words ++ from_ai, word_count, needed)
-      else
-        []
-      end
+    pool =
+      ai_pool
+      |> AiWords.filter(answer_kind)
+      |> Enum.reject(&MapSet.member?(used, Guess.key(&1)))
 
-    choices = from_ai ++ local
-    {Enum.uniq(choices), remaining_ai, length(from_ai)}
+    # One AI entry of the slot's kind per slot; `{:local, kind}` where the
+    # pool has none left.
+    {slots, remaining_ai} =
+      answer_kind
+      |> AnswerKind.slots(count)
+      |> Enum.map_reduce(pool, fn kind, pool ->
+        case Enum.split_while(pool, &(AnswerKind.of(&1) != kind)) do
+          {skipped, [word | rest]} -> {word, skipped ++ rest}
+          {_all, []} -> {{:local, kind}, pool}
+        end
+      end)
+
+    from_ai = Enum.filter(slots, &is_binary/1)
+    local_words = pick_local_words(:word, count_local(slots, :word), used_words, from_ai)
+
+    local_phrases =
+      pick_local_words(:phrase, count_local(slots, :phrase), used_words, from_ai ++ local_words)
+
+    {choices, _left} =
+      Enum.map_reduce(slots, {local_words, local_phrases}, fn
+        {:local, :word}, {[word | words], phrases} -> {word, {words, phrases}}
+        {:local, :phrase}, {words, [phrase | phrases]} -> {phrase, {words, phrases}}
+        {:local, _kind}, left -> {nil, left}
+        word, left -> {word, left}
+      end)
+
+    {choices |> Enum.reject(&is_nil/1) |> Enum.uniq_by(&Guess.key/1), remaining_ai,
+     length(from_ai)}
   end
 
-  defp pop_n(list, n) when n > 0 do
-    {taken, rest} = Enum.split(list, n)
-    {taken, rest}
-  end
+  defp count_local(slots, kind), do: Enum.count(slots, &(&1 == {:local, kind}))
 
-  defp pop_n(list, _), do: {[], list}
+  # `count` words of `kind` that share no `Guess.key/1` with the set's
+  # other choices (`set`) or each other, avoiding `used` ones unless nothing
+  # else is left: at most `count` * 4 lookups, topped up from the built-in
+  # list.
+  defp pick_local_words(_kind, 0, _used, _set), do: []
 
-  # Distinct words not in `exclude` (unless nothing else is left), at most
-  # `count` * 4 lookups, topped up from the built-in list.
-  defp pick_local_words(exclude, word_count, count) do
+  defp pick_local_words(kind, count, used, set) do
     picked =
       Enum.reduce_while(1..(count * 4), [], fn _attempt, acc ->
         if length(acc) >= count do
           {:halt, acc}
         else
-          case Games.get_random_word(exclude: exclude ++ acc, word_count: word_count) do
-            {:ok, word} -> {:cont, if(word in acc, do: acc, else: [word | acc])}
+          case Games.get_random_word(exclude: used ++ set ++ acc, kind: kind) do
+            {:ok, word} -> {:cont, if(clashes?(word, set ++ acc), do: acc, else: [word | acc])}
             _error -> {:cont, acc}
           end
         end
       end)
       |> Enum.reverse()
 
-    picked ++ builtin_top_up(exclude, picked, word_count, count - length(picked))
+    picked ++ builtin_top_up(kind, count - length(picked), used, set ++ picked)
   end
 
-  defp builtin_top_up(_exclude, _picked, _word_count, missing) when missing <= 0, do: []
+  defp builtin_top_up(_kind, missing, _used, _set) when missing <= 0, do: []
 
-  defp builtin_top_up(exclude, picked, word_count, missing) do
-    candidates = Word.builtin_words(word_count) -- picked
-    fresh = candidates -- exclude
-    Enum.take(Enum.shuffle(fresh) ++ Enum.shuffle(candidates -- fresh), missing)
+  defp builtin_top_up(kind, missing, used, set) do
+    {used, set} = {MapSet.new(used, &Guess.key/1), MapSet.new(set, &Guess.key/1)}
+
+    {fresh, stale} =
+      kind
+      |> Word.builtin_words()
+      |> Enum.map(&{&1, Guess.key(&1)})
+      |> Enum.reject(fn {_word, key} -> MapSet.member?(set, key) end)
+      |> Enum.split_with(fn {_word, key} -> not MapSet.member?(used, key) end)
+
+    (Enum.shuffle(fresh) ++ Enum.shuffle(stale))
+    |> Enum.take(missing)
+    |> Enum.map(fn {word, _key} -> word end)
+  end
+
+  defp clashes?(word, words) do
+    key = Guess.key(word)
+    Enum.any?(words, &(Guess.key(&1) == key))
   end
 end

@@ -16,7 +16,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   route "/"
 
-  alias Scrawly.Games.{LobbyChatServer, RoomServer}
+  alias Scrawly.Games.{AnswerKind, LobbyChatServer, RoomServer}
   alias Scrawly.Games.RoomServer.Broadcasts
   alias ScrawlyWeb.{CommandParams, RoomSubscriptions}
   alias ScrawlyWeb.Components.RoomList
@@ -25,6 +25,9 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   # The lobby chat keeps this many lines (newest first in state).
   @chat_lines 100
+
+  # The answer kind the create form starts on.
+  @default_answer_kind Atom.to_string(AnswerKind.default())
 
   # The room list and the lobby chat are pushed on the `:lobby` Realtime
   # channel (see "Lobby broadcasts" below); init loads the current ones and
@@ -48,7 +51,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
       |> put_state(:show_create_room, false)
       |> put_state(:new_room_name, "")
       |> put_state(:new_max_players, "8")
-      |> put_state(:new_word_count, "1")
+      |> put_state(:new_answer_kind, @default_answer_kind)
       |> put_state(:new_word_source, "local")
       |> put_state(:new_prompt, "")
       |> put_state(:new_round_duration, "60")
@@ -204,10 +207,10 @@ defmodule ScrawlyWeb.Pages.HomePage do
                   <input class="app-input mono" type="number" min="2" max="12" name="max_players" value={@new_max_players} $change={:update_max_players} />
                 </div>
                 <div>
-                  <label class="field-label">words / round</label>
+                  <label class="field-label">answers</label>
                   <div class="seg">
-                    {%for wc <- ["1", "2", "3"]}
-                      <button type="button" class={if(@new_word_count == wc, do: "active", else: "")} $click={:set_word_count, value: wc}>{wc}</button>
+                    {%for kind <- ["words", "phrases", "mixed"]}
+                      <button type="button" class={if(@new_answer_kind == kind, do: "active", else: "")} $click={:set_answer_kind, value: kind}>{kind}</button>
                     {/for}
                   </div>
                 </div>
@@ -426,7 +429,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
     component
     |> put_state(:show_create_room, false)
     |> put_state(:new_max_players, "8")
-    |> put_state(:new_word_count, "1")
+    |> put_state(:new_answer_kind, @default_answer_kind)
     |> put_state(:new_word_source, "local")
     |> put_state(:new_prompt, "")
     |> put_state(:new_round_duration, "60")
@@ -570,8 +573,8 @@ defmodule ScrawlyWeb.Pages.HomePage do
     put_state(component, :new_max_players, val)
   end
 
-  def action(:set_word_count, %{value: val}, component) do
-    put_state(component, :new_word_count, val)
+  def action(:set_answer_kind, %{value: val}, component) do
+    put_state(component, :new_answer_kind, val)
   end
 
   def action(:set_word_source, %{value: val}, component) do
@@ -600,7 +603,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
     params = %{
       name: component.state.new_room_name,
       max_players: component.state.new_max_players,
-      word_count: component.state.new_word_count,
+      answer_kind: component.state.new_answer_kind,
       word_source: component.state.new_word_source,
       prompt: component.state.new_prompt,
       round_duration: component.state.new_round_duration,
@@ -809,16 +812,18 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   @ai_tones %{"fun" => :fun, "creative" => :creative, "weird" => :weird}
 
-  # Total over any params map: forged values (`word_count: "abc"`, an unknown
+  # Total over any params map: forged values (`max_players: "abc"`, an unknown
   # tone) become invalid inputs that the Room's constraints reject, never an
   # exception. Missing (nil) values are left out, so the Room's defaults apply.
+  # A missing, forged or unknown answer kind is the default one, like a word
+  # source other than "ai" is :local.
   defp room_attrs(params) do
     word_source = if Map.get(params, :word_source) == "ai", do: :ai, else: :local
 
     %{
       name: Map.get(params, :name),
       max_players: parse_int(Map.get(params, :max_players)),
-      word_count: parse_int(Map.get(params, :word_count)),
+      answer_kind: AnswerKind.parse(Map.get(params, :answer_kind)),
       word_source: word_source,
       prompt: if(word_source == :ai, do: Map.get(params, :prompt)),
       round_duration: parse_int(Map.get(params, :round_duration)),

@@ -157,7 +157,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:draw_eraser, false)
               |> put_state(:leaving?, false)
               |> put_state(:watchers, rs.watchers || [])
-              |> put_state(:word_count, rs.word_count || 1)
+              |> put_state(:answer_kind, rs.answer_kind)
               |> put_state(:word_source, rs.word_source || :local)
               |> put_state(:prompt, rs.prompt || "")
               |> put_state(:creator_name, rs.creator_name || "")
@@ -1623,7 +1623,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
             <div class="panel-head">settings</div>
             <div class="spec-grid">
               <div class="spec"><div class="k">word source</div><div class="v">[{if(@word_source == :ai, do: "ai", else: "local")}]</div></div>
-              <div class="spec"><div class="k">words / round</div><div class="v">{@word_count}</div></div>
+              <div class="spec"><div class="k">answers</div><div class="v">{@answer_kind}</div></div>
               <div class="spec"><div class="k">duration</div><div class="v">{@round_duration}s</div></div>
               <div class="spec"><div class="k">rounds / player</div><div class="v">{@round_multiplier}×</div></div>
               {%if @prompt != "" && @prompt != nil}

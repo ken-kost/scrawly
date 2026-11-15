@@ -7,8 +7,9 @@ compiles it in, and every deploy makes the `words` table match it
 inserts a new one.
 
 An entry is a single word ("lighthouse") or a phrase of two to four words
-("polar bear", "walk the dog", "needle in a haystack"). A game can be played
-with phrases only, so the phrases are a list in their own right.
+("polar bear", "walk the dog", "needle in a haystack"). A room offers words,
+phrases or both (`Scrawly.Games.AnswerKind`), so a game can be played with
+phrases only: the phrases are a list in their own right.
 
 After an edit, run `mix test test/scrawly/games/word_list_test.exs`. It checks
 the text rules below, duplicates, themes and the size of each group.

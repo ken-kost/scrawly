@@ -683,7 +683,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       creator_id: @drawer,
       join_notice: nil,
       word_source: :local,
-      word_count: 1,
+      answer_kind: :mixed,
       round_multiplier: 1,
       prompt: "",
       creator_name: "Alice",

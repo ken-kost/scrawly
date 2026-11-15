@@ -21,7 +21,7 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   import Hologram.Component, only: [put_action: 2, put_action: 3, put_subscription: 2]
 
   alias Scrawly.{Accounts, Games}
-  alias Scrawly.Games.{RoomServer, StrokeRules}
+  alias Scrawly.Games.{AnswerKind, RoomServer, StrokeRules}
   alias Scrawly.Games.RoomServer.{Broadcasts, GameFlow}
   alias ScrawlyWeb.{Auth, CommandParams, RoomSubscriptions, SocketToken}
 
@@ -179,10 +179,10 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
          {:ok, state} <- RoomServer.get_state(room_id),
          :ok <- RoomServer.authorize(state, uid, :start_game) do
       # Only reached by an authorized creator: this may make an AI call.
-      {word_count, ai_words, ai_status} = fetch_room_game_settings(state)
+      {answer_kind, ai_words, ai_status} = fetch_room_game_settings(state)
 
       {choices, remaining_ai, _used_from_ai} =
-        GameFlow.pick_word_choices(ai_words, [], word_count, 3)
+        GameFlow.pick_word_choices(ai_words, [], answer_kind, 3)
 
       case RoomServer.start_game(room_id, uid, %{word_choices: choices, ai_words: remaining_ai}) do
         {:ok, _state} ->
@@ -484,9 +484,10 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   end
 
   # Word settings for a new game, from the room state snapshot the caller already
-  # authorized against. Makes the AI call for AI rooms.
+  # authorized against. Makes the AI call for AI rooms; its reply comes back
+  # filtered for the answer kind (Scrawly.Games.AiWords).
   defp fetch_room_game_settings(rs) do
-    wc = rs.word_count || 1
+    kind = AnswerKind.parse(rs.answer_kind)
     p = rs.prompt
     tone = rs.ai_tone || :fun
     total_rounds = RoomServer.total_rounds(length(rs.players), rs.round_multiplier || 1)
@@ -494,10 +495,9 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
     {generated, status} =
       if rs.word_source == :ai and p != nil and p != "" do
-        case Games.generate_ai_words(p, wc, %{num_words: ai_num_words, tone: to_string(tone)}) do
+        case Games.generate_ai_words(p, kind, %{num_words: ai_num_words, tone: to_string(tone)}) do
           {:ok, words} when is_list(words) ->
-            unique_words = Enum.uniq(words)
-            {unique_words, "AI generated #{length(unique_words)}/#{ai_num_words} words"}
+            {words, "AI generated #{length(words)}/#{ai_num_words} #{ai_noun(kind)}"}
 
           {:error, reason} ->
             {[], "AI failed: #{inspect(reason)} — falling back to local words"}
@@ -509,6 +509,10 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
         {[], nil}
       end
 
-    {wc, generated, status}
+    {kind, generated, status}
   end
+
+  defp ai_noun(:words), do: "words"
+  defp ai_noun(:phrases), do: "phrases"
+  defp ai_noun(:mixed), do: "words and phrases"
 end

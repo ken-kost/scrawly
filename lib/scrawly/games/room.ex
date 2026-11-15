@@ -5,8 +5,7 @@ defmodule Scrawly.Games.Room do
     data_layer: AshPostgres.DataLayer,
     notifiers: [Ash.Notifier.PubSub]
 
-  require AshAi.Actions
-
+  alias Scrawly.Games.AnswerKind
   alias Scrawly.Validations.MaxBytes
 
   postgres do
@@ -27,7 +26,7 @@ defmodule Scrawly.Games.Room do
         :name,
         :max_players,
         :creator_id,
-        :word_count,
+        :answer_kind,
         :word_source,
         :prompt,
         :round_duration,
@@ -180,12 +179,13 @@ defmodule Scrawly.Games.Room do
       end
     end
 
-    # AI word generation — prompt-backed action via ash_ai
+    # AI word generation via ash_ai. Scrawly.Games.AiWords builds the prompt
+    # for the room's answer kind and filters what the model returns.
     action :generate_ai_words, {:array, :string} do
       description """
-      Generates a list of drawing words/phrases based on a theme prompt.
-      Each entry matches the specified word_count constraint (1, 2, or 3 words).
-      Words should be concrete, drawable things suitable for a drawing game.
+      Generates drawing answers for a theme prompt: words, phrases or both,
+      as the room's answer kind says. Answers are concrete, drawable things
+      suitable for a drawing game.
       """
 
       argument :prompt, :string do
@@ -195,9 +195,10 @@ defmodule Scrawly.Games.Room do
         description "The theme or category for word generation, e.g. 'ocean animals' or 'things in a kitchen'"
       end
 
-      argument :word_count, :integer do
+      argument :answer_kind, :atom do
         allow_nil? false
-        description "Number of words per entry: 1, 2, or 3"
+        constraints one_of: AnswerKind.all()
+        description "words (one word each), phrases (2 to 4 words each) or mixed"
       end
 
       argument :num_words, :integer do
@@ -212,20 +213,7 @@ defmodule Scrawly.Games.Room do
         description "The tone/style of words: fun, creative, or weird"
       end
 
-      run AshAi.Actions.prompt(
-            LangChain.ChatModels.ChatOpenAI.new!(%{model: "gpt-4o-mini"}),
-            prompt: """
-            Generate exactly <%= @input.arguments.num_words %> unique drawing game words/phrases based on this theme: "<%= @input.arguments.prompt %>".
-
-            RULES:
-            - Each entry MUST be exactly <%= @input.arguments.word_count %> word(s) long.
-            - Words generated based on a prompt.
-            - Keep them <%= @input.arguments.tone %>.
-            - No duplicates. Every single entry must be unique.
-            - Return exactly <%= @input.arguments.num_words %> entries, no more, no less.
-            """,
-            tools: false
-          )
+      run Scrawly.Games.AiWords
     end
   end
 
@@ -283,11 +271,12 @@ defmodule Scrawly.Games.Room do
       public? true
     end
 
-    attribute :word_count, :integer do
+    # Words, phrases or both (Scrawly.Games.AnswerKind).
+    attribute :answer_kind, :atom do
       allow_nil? false
-      default 1
+      default AnswerKind.default()
       public? true
-      constraints min: 1, max: 3
+      constraints one_of: AnswerKind.all()
     end
 
     attribute :word_source, :atom do

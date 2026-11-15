@@ -10,7 +10,7 @@ defmodule Scrawly.Games.Word do
     domain: Scrawly.Games,
     data_layer: AshPostgres.DataLayer
 
-  alias Scrawly.Games.WordList
+  alias Scrawly.Games.{AnswerKind, WordList}
 
   postgres do
     table "words"
@@ -43,18 +43,24 @@ defmodule Scrawly.Games.Word do
       filter expr(difficulty == ^arg(:difficulty))
     end
 
-    read :list_by_difficulty_and_word_count do
+    # A word is one word, a phrase two or more (Scrawly.Games.AnswerKind):
+    # phrases of every length are one pool.
+    read :list_by_difficulty_and_kind do
       argument :difficulty, :atom do
         allow_nil? false
         constraints one_of: WordList.difficulties()
       end
 
-      argument :word_count, :integer do
+      argument :kind, :atom do
         allow_nil? false
-        constraints min: 1, max: 4
+        constraints one_of: [:word, :phrase]
       end
 
-      filter expr(difficulty == ^arg(:difficulty) and word_count == ^arg(:word_count))
+      filter expr(
+               difficulty == ^arg(:difficulty) and
+                 ((^arg(:kind) == :word and word_count == 1) or
+                    (^arg(:kind) == :phrase and word_count > 1))
+             )
     end
   end
 
@@ -98,15 +104,16 @@ defmodule Scrawly.Games.Word do
   end
 
   @doc """
-  The words of `Scrawly.Games.WordList` with `word_count` words (and
-  `difficulty`, when given): what `Scrawly.Games.get_random_word/1` falls back
-  to when the `words` table has none, so word choices never run out.
+  The entries of `Scrawly.Games.WordList` of `kind` (`:word` or `:phrase`,
+  see `Scrawly.Games.AnswerKind.of/1`), and `difficulty` when given: what
+  `Scrawly.Games.get_random_word/1` falls back to when the `words` table has
+  none, so word choices never run out.
   """
-  @spec builtin_words(pos_integer, atom | nil) :: [String.t()]
-  def builtin_words(word_count, difficulty \\ nil) do
+  @spec builtin_words(AnswerKind.answer(), atom | nil) :: [String.t()]
+  def builtin_words(kind, difficulty \\ nil) when kind in [:word, :phrase] do
     for entry <- WordList.entries(),
         difficulty in [nil, entry.difficulty],
-        WordList.word_count(entry.text) == word_count,
+        AnswerKind.of(entry.text) == kind,
         do: entry.text
   end
 end

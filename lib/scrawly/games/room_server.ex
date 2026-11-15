@@ -43,6 +43,8 @@ defmodule Scrawly.Games.RoomServer do
   alias Scrawly.{Accounts, Games}
 
   alias Scrawly.Games.{
+    AiWords,
+    AnswerKind,
     Guess,
     Scoring,
     StrokeRules,
@@ -101,7 +103,9 @@ defmodule Scrawly.Games.RoomServer do
     # :temporary) keeps counting up from above anything its previous process
     # sent unless that one averaged more than a broadcast per µs.
     seq: 0,
-    word_count: 1,
+    # Words, phrases or both (AnswerKind): every pick of word choices
+    # follows it, the AI's included.
+    answer_kind: AnswerKind.default(),
     word_source: :local,
     prompt: nil,
     creator_name: nil,
@@ -300,8 +304,10 @@ defmodule Scrawly.Games.RoomServer do
   room's own player list, never from the caller. Persists the room status and
   the Game row before touching room state.
 
-  `opts` may carry `:word_choices` (first round's choices) and `:ai_words` (the
-  remaining AI pool). Returns `{:ok, public_state}` or `{:error, reason}`.
+  `opts` may carry `:word_choices` (first round's choices, picked for the
+  room's `answer_kind` with `GameFlow.pick_word_choices/4`) and `:ai_words`
+  (the remaining AI pool); without choices the room picks them itself.
+  Returns `{:ok, public_state}` or `{:error, reason}`.
   """
   def start_game(room_id, actor_id, opts \\ %{}) do
     GenServer.call(via(room_id), {:start_game, actor_id, Map.new(opts)})
@@ -595,7 +601,7 @@ defmodule Scrawly.Games.RoomServer do
           creator_id: room.creator_id,
           max_players: room.max_players,
           players: Enum.map(room.players, &to_player_map/1),
-          word_count: room.word_count || 1,
+          answer_kind: AnswerKind.parse(room.answer_kind),
           word_source: room.word_source || :local,
           prompt: room.prompt,
           creator_name: creator_name,
@@ -965,17 +971,19 @@ defmodule Scrawly.Games.RoomServer do
 
   # The AI pool runs low (GameFlow.start_word_choice/3). The AI call takes
   # seconds, so it runs in a supervised task and its words come back as a
-  # message: the room keeps answering meanwhile. One refill at a time.
-  def handle_info({:refill_ai_words, _room_id, word_count, total_rounds, ai_tone}, state) do
+  # message: the room keeps answering meanwhile. One refill at a time, for
+  # the room's own answer kind.
+  def handle_info({:refill_ai_words, _room_id, total_rounds, ai_tone}, state) do
     if state.prompt not in [nil, ""] and state.game_id != nil and state.ai_refill == nil do
-      {:noreply, start_ai_refill(state, word_count, total_rounds, ai_tone)}
+      {:noreply, start_ai_refill(state, total_rounds, ai_tone)}
     else
       {:noreply, state}
     end
   end
 
   # The refill task's result (Task.Supervisor.async_nolink/2), kept only for
-  # the game it was asked for.
+  # the game it was asked for. Filtered again for the room's answer kind
+  # (AiWords.filter/2), so the pool only ever holds what the room may offer.
   def handle_info({ref, result}, %{ai_refill: {ref, game_id}} = state) when is_reference(ref) do
     Process.demonitor(ref, [:flush])
     state = %{state | ai_refill: nil}
@@ -983,7 +991,9 @@ defmodule Scrawly.Games.RoomServer do
     case result do
       {:ok, [_ | _] = words} ->
         if state.game_id == game_id,
-          do: {:noreply, %{state | ai_words: Enum.uniq(words ++ state.ai_words)}},
+          do:
+            {:noreply,
+             %{state | ai_words: AiWords.filter(words ++ state.ai_words, state.answer_kind)}},
           else: {:noreply, state}
 
       _failed ->
@@ -1439,7 +1449,7 @@ defmodule Scrawly.Games.RoomServer do
             GameFlow.pick_word_choices(
               Map.get(opts, :ai_words, state.ai_words),
               [],
-              state.word_count,
+              state.answer_kind,
               3
             )
 
@@ -1513,13 +1523,13 @@ defmodule Scrawly.Games.RoomServer do
     |> notify_lobby()
   end
 
-  defp start_ai_refill(state, word_count, total_rounds, ai_tone) do
-    prompt = state.prompt
+  defp start_ai_refill(state, total_rounds, ai_tone) do
+    %{prompt: prompt, answer_kind: answer_kind} = state
     opts = %{num_words: min(max(total_rounds * 3, 9), 60), tone: to_string(ai_tone || :fun)}
 
     task =
       Task.Supervisor.async_nolink(Scrawly.TaskSupervisor, fn ->
-        Games.generate_ai_words(prompt, word_count, opts)
+        Games.generate_ai_words(prompt, answer_kind, opts)
       end)
 
     %{state | ai_refill: {task.ref, state.game_id}}

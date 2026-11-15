@@ -26,8 +26,9 @@ defmodule Scrawly.Games do
       define :set_room_post_game, action: :post_game
       define :return_room_to_lobby, action: :return_to_lobby
 
-      # AI word generation
-      define :generate_ai_words, action: :generate_ai_words, args: [:prompt, :word_count]
+      # AI word generation (Scrawly.Games.AiWords): the reply is already
+      # filtered for the answer kind.
+      define :generate_ai_words, action: :generate_ai_words, args: [:prompt, :answer_kind]
     end
 
     resource Scrawly.Games.Game do
@@ -51,9 +52,9 @@ defmodule Scrawly.Games do
       define :get_all_words, action: :list_all
       define :get_words_by_difficulty, action: :list_by_difficulty, args: [:difficulty]
 
-      define :get_words_by_difficulty_and_word_count,
-        action: :list_by_difficulty_and_word_count,
-        args: [:difficulty, :word_count]
+      define :get_words_by_difficulty_and_kind,
+        action: :list_by_difficulty_and_kind,
+        args: [:difficulty, :kind]
     end
 
     resource Scrawly.Games.GameResult do
@@ -108,29 +109,30 @@ defmodule Scrawly.Games do
   end
 
   @doc """
-  A random word for a round, with optional difficulty weighting, word_count
-  filter and exclusion.
+  A random word or phrase for a round, with optional difficulty weighting and
+  exclusion.
 
   Options:
+    * `:kind` - `:word` (one word, the default) or `:phrase` (two words or
+      more, see `Scrawly.Games.AnswerKind`). Phrases of every length are one
+      pool, so every difficulty has some.
     * `:difficulty` - `:easy`, `:medium` or `:hard` (default: weighted random)
-    * `:word_count` - 1 to 4 (default: 1)
     * `:exclude` - words to avoid repeating; ignored when it would leave
       nothing to pick from
 
-  When the database has no words for that difficulty and word count (e.g. an
-  unseeded `words` table), it picks from the built-in list
-  (`Scrawly.Games.Word.builtin_words/2`) instead, so a supported word count
-  always yields a word.
+  When the database has none of that kind and difficulty (e.g. an unseeded
+  `words` table), it picks from the built-in list
+  (`Scrawly.Games.Word.builtin_words/2`) instead, so it always yields one.
   """
   def get_random_word(opts \\ []) do
     difficulty = Keyword.get(opts, :difficulty) || weighted_random_difficulty()
     exclude = Keyword.get(opts, :exclude, [])
-    word_count = Keyword.get(opts, :word_count, 1)
+    kind = Keyword.get(opts, :kind, :word)
 
-    with {:ok, words} <- get_words_by_difficulty_and_word_count(difficulty, word_count) do
+    with {:ok, words} <- get_words_by_difficulty_and_kind(difficulty, kind) do
       texts =
         case Enum.map(words, & &1.text) do
-          [] -> Word.builtin_words(word_count, difficulty)
+          [] -> Word.builtin_words(kind, difficulty)
           texts -> texts
         end
 
@@ -138,11 +140,8 @@ defmodule Scrawly.Games do
       pool = if available == [], do: texts, else: available
 
       case pool do
-        [] ->
-          {:error, "No words available for word_count=#{word_count}, difficulty=#{difficulty}"}
-
-        _ ->
-          {:ok, Enum.random(pool)}
+        [] -> {:error, "No words available for kind=#{kind}, difficulty=#{difficulty}"}
+        _ -> {:ok, Enum.random(pool)}
       end
     end
   end

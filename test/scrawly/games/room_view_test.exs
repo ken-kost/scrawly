@@ -142,7 +142,7 @@ defmodule Scrawly.Games.RoomViewTest do
       public = View.public(lobby())
 
       for key <-
-            [:name, :code, :players, :max_players, :status, :word_count, :word_source] ++
+            [:name, :code, :players, :max_players, :status, :answer_kind, :word_source] ++
               [:prompt, :ai_tone, :round_multiplier, :round_duration, :chat_messages] do
         assert Map.has_key?(public, key)
       end

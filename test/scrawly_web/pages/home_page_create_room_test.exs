@@ -2,7 +2,8 @@ defmodule ScrawlyWeb.Pages.HomePageCreateRoomTest do
   @moduledoc """
   `:create_room` takes client params, so forged ones (bad numbers, an unknown
   tone, missing keys, over-long fields) must fail validation and leave the
-  server unchanged instead of raising.
+  server unchanged instead of raising. A forged answer kind is the default
+  one instead, like a forged word source is the local list.
   """
   use Scrawly.DataCase, async: false
 
@@ -17,7 +18,7 @@ defmodule ScrawlyWeb.Pages.HomePageCreateRoomTest do
   @form %{
     name: "TEST forged",
     max_players: "6",
-    word_count: "2",
+    answer_kind: "phrases",
     word_source: "ai",
     prompt: "ocean animals",
     round_duration: "120",
@@ -40,7 +41,7 @@ defmodule ScrawlyWeb.Pages.HomePageCreateRoomTest do
 
     assert %{
              max_players: 6,
-             word_count: 2,
+             answer_kind: :phrases,
              word_source: :ai,
              prompt: "ocean animals",
              round_duration: 120,
@@ -54,8 +55,6 @@ defmodule ScrawlyWeb.Pages.HomePageCreateRoomTest do
     server = server_for(user)
 
     forged = [
-      %{@form | word_count: "abc"},
-      %{@form | word_count: "2x"},
       %{@form | round_duration: "1e3"},
       %{@form | round_multiplier: "0"},
       %{@form | ai_tone: "nope"},
@@ -66,7 +65,6 @@ defmodule ScrawlyWeb.Pages.HomePageCreateRoomTest do
       %{@form | name: nil},
       %{@form | name: String.duplicate("n", 41)},
       %{@form | prompt: String.duplicate("p", 201)},
-      %{@form | word_count: "9"},
       Map.delete(@form, :name),
       %{}
     ]
@@ -84,7 +82,7 @@ defmodule ScrawlyWeb.Pages.HomePageCreateRoomTest do
 
     for params <- [
           %{name: "TEST minimal"},
-          %{@form | word_count: nil, ai_tone: nil, max_players: nil}
+          %{@form | answer_kind: nil, ai_tone: nil, max_players: nil}
         ] do
       result = HomePage.command(:create_room, params, server_for(user))
 
@@ -96,7 +94,7 @@ defmodule ScrawlyWeb.Pages.HomePageCreateRoomTest do
 
     assert %{
              max_players: 12,
-             word_count: 1,
+             answer_kind: :mixed,
              word_source: :local,
              prompt: nil,
              round_duration: 60,
@@ -104,7 +102,46 @@ defmodule ScrawlyWeb.Pages.HomePageCreateRoomTest do
              ai_tone: :fun
            } = minimal
 
-    assert [%{max_players: 12, word_count: 1, ai_tone: :fun, word_source: :ai}] =
+    assert [%{max_players: 12, answer_kind: :mixed, ai_tone: :fun, word_source: :ai}] =
              Enum.filter(rooms_by(user), &(&1.name == "TEST forged"))
+  end
+
+  test "every answer kind the form offers is kept" do
+    user = create_user()
+
+    for kind <- ["words", "phrases", "mixed"] do
+      params = %{@form | name: "TEST kind #{kind}", answer_kind: kind}
+      result = HomePage.command(:create_room, params, server_for(user))
+
+      assert %{name: :join_room_with_user, params: %{room_id: room_id}} = result.next_action
+      stop_room(room_id)
+    end
+
+    kinds = user |> rooms_by() |> Map.new(&{&1.name, &1.answer_kind})
+
+    assert kinds == %{
+             "TEST kind words" => :words,
+             "TEST kind phrases" => :phrases,
+             "TEST kind mixed" => :mixed
+           }
+  end
+
+  test "a forged answer kind creates a mixed room" do
+    user = create_user()
+
+    for {forged, i} <-
+          Enum.with_index(["Words", "phrase", "1", "2", "Elixir.Kernel", 7, :phrase, %{}]) do
+      params = %{@form | name: "TEST forged kind #{i}", answer_kind: forged}
+      result = HomePage.command(:create_room, params, server_for(user))
+
+      assert %{name: :join_room_with_user, params: %{room_id: room_id}} = result.next_action,
+             "#{inspect(forged)} was not created"
+
+      stop_room(room_id)
+    end
+
+    rooms = rooms_by(user)
+    assert length(rooms) == 8
+    assert Enum.all?(rooms, &(&1.answer_kind == :mixed))
   end
 end
