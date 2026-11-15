@@ -30,13 +30,16 @@ defmodule ScrawlyWeb.GameChannel do
   chunks stop at time-up and start right after the word is picked. Chunks must carry a
   stroke id of at most 64 bytes, an integer `seq`, a delta that passes
   `StrokeRules.valid_delta?/1`, and a valid colour and width when present.
+  A socket's chunks are limited to 60 a second (the client flushes at
+  20 Hz, plus early flushes of full chunks); over that they are dropped
+  silently.
 
   NOTE: hard-disconnect player removal is intentionally NOT done here. Reusing
   `terminate` to call `RoomServer.leave/2` would dissolve the room whenever the
   creator reloads (creator-leave dissolves) and cause leave/rejoin flicker on any
-  reload. Disconnected players already linger today (presence only nudged a poll,
-  it never removed anyone), so this is no regression; a correct version needs a
-  reconnect grace period and is left as a follow-up.
+  reload. The room removes members without a live tab itself, with a grace
+  period, from the layout heartbeat (`RoomServer`'s presence sweep: watchers
+  always, players only in the lobby).
   """
   use ScrawlyWeb, :channel
 
@@ -46,6 +49,9 @@ defmodule ScrawlyWeb.GameChannel do
 
   @verdict_ttl_ms 2_000
   @max_open_strokes 8
+  # Chunks per socket per window, sliding.
+  @max_chunks 60
+  @chunk_window_ms 1_000
 
   @impl true
   def join("game:" <> room_code, _payload, socket) do
@@ -61,6 +67,7 @@ defmodule ScrawlyWeb.GameChannel do
         |> assign(:user_id, user_id)
         |> assign(:open_stroke_ids, [])
         |> assign(:chunk_verdict, nil)
+        |> assign(:chunk_times, [])
 
       {:ok, socket}
     else
@@ -70,13 +77,15 @@ defmodule ScrawlyWeb.GameChannel do
 
   @impl true
   def handle_in("drawing_stroke_chunk", payload, socket) do
-    with {:ok, chunk} <- validate_chunk(payload),
+    with {:ok, socket} <- take_chunk_slot(socket),
+         {:ok, chunk} <- validate_chunk(payload),
          {true, socket} <- chunk_allowed(socket, chunk["stroke_id"]) do
       socket = track_open_stroke(socket, chunk["stroke_id"])
       broadcast_from(socket, "drawing_stroke_chunk", chunk)
       {:noreply, socket}
     else
       {false, socket} -> {:noreply, socket}
+      :rate_limited -> {:noreply, socket}
       :invalid -> {:noreply, socket}
     end
   end
@@ -166,6 +175,18 @@ defmodule ScrawlyWeb.GameChannel do
         verdict = if allowed?, do: :allow, else: :deny
         {allowed?, assign(socket, :chunk_verdict, {stroke_id, verdict, now})}
     end
+  end
+
+  # Admits the chunk when the socket sent fewer than @max_chunks within the
+  # window, and records it (invalid ones count too; dropped ones don't).
+  defp take_chunk_slot(socket) do
+    now = System.monotonic_time(:millisecond)
+    # Newest first, so the ones still inside the window are a prefix.
+    recent = Enum.take_while(socket.assigns.chunk_times, &(now - &1 < @chunk_window_ms))
+
+    if length(recent) < @max_chunks,
+      do: {:ok, assign(socket, :chunk_times, [now | recent])},
+      else: :rate_limited
   end
 
   defp track_open_stroke(socket, stroke_id) do

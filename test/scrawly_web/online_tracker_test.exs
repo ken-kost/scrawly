@@ -153,4 +153,34 @@ defmodule ScrawlyWeb.OnlineTrackerTest do
   test "count/0 is 0 when the tracker isn't running" do
     assert OnlineTracker.count(:no_such_tracker) == 0
   end
+
+  describe "live_keys/2 (rooms' presence sweep, QA G9)" do
+    test "returns the given keys seen within the TTL" do
+      t = start_tracker()
+      ttl = OnlineTracker.ttl_ms()
+
+      touch!(t, "user-1")
+      set_clock(t, 10_000)
+      touch!(t, "anon:abc")
+
+      assert OnlineTracker.live_keys(t.pid, ["user-1", "anon:abc", "never"]) ==
+               {:ok, MapSet.new(["user-1", "anon:abc"])}
+
+      # By the TTL, even before a sweep drops the key.
+      set_clock(t, ttl + 1)
+
+      assert OnlineTracker.live_keys(t.pid, ["user-1", "anon:abc"]) ==
+               {:ok, MapSet.new(["anon:abc"])}
+
+      assert OnlineTracker.live_keys(t.pid, []) == {:ok, MapSet.new()}
+    end
+
+    test "is :error when the tracker isn't running" do
+      t = start_tracker()
+      stop_supervised!(OnlineTracker)
+      refute Process.alive?(t.pid)
+
+      assert OnlineTracker.live_keys(t.pid, ["user-1"]) == :error
+    end
+  end
 end

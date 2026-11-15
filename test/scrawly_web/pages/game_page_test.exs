@@ -566,7 +566,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
     do: %{stroke_id: "s-#{seq}", path: "M 1 1", color: "#000000", width: 2, seq: seq}
 
   def cleared_params(seq), do: %{seq: seq}
-  def undone_params(seq), do: %{strokes: [@stroke], seq: seq}
+  def undone_params(seq), do: %{stroke_id: "s-1", seq: seq}
 
   describe "the gap rule" do
     test "seq <= last_seq leaves the page unchanged, for every {:room} action" do
@@ -641,6 +641,118 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
   end
 
   # ── The drawer's private slice ──────────────────────────────────────
+
+  # QA G9: a lobby player the room dropped (no open tab for a while, or a
+  # leave from another tab) is told so and offered to join again.
+  describe "dropped from the lobby" do
+    @others Enum.reject(@players, &(&1.id == @me))
+    # What the lobby template reads beyond page/1.
+    @lobby_keys [
+      is_creator: false,
+      creator_id: @drawer,
+      join_notice: nil,
+      word_source: :local,
+      word_count: 1,
+      round_multiplier: 1,
+      prompt: "",
+      creator_name: "Alice",
+      ai_tone: :fun,
+      chat_notice: nil,
+      chat_notice_gen: 0
+    ]
+
+    defp lobby_delta(seq, players),
+      do:
+        delta(seq,
+          status: :lobby,
+          game_id: nil,
+          current_round: 0,
+          current_drawer_id: nil,
+          current_word: nil,
+          phase: :idle,
+          round_active: false,
+          round_deadline: nil,
+          players: players
+        )
+
+    test "says so and offers a join button" do
+      component = page(@lobby_keys)
+      result = GamePage.action(:room_delta, lobby_delta(11, @others), component)
+
+      assert result.state.join_notice =~ "no longer in this room"
+
+      html = render_template(result.state, %{room_id: "r1"})
+      assert html =~ "no longer in this room"
+      assert html =~ ~r/<button[^>]*>\s*join\s*<\/button>/
+    end
+
+    test "joining again clears it; leaving from this tab never shows it" do
+      component = page(@lobby_keys)
+      dropped = GamePage.action(:room_delta, lobby_delta(11, @others), component)
+
+      back = GamePage.action(:room_delta, lobby_delta(12, @players), dropped)
+      assert back.state.join_notice == nil
+
+      refute render_template(back.state, %{room_id: "r1"}) =~
+               ~r/<button[^>]*>\s*join\s*<\/button>/
+
+      leaving = page(Keyword.put(@lobby_keys, :leaving?, true))
+      left = GamePage.action(:room_delta, lobby_delta(11, @others), leaving)
+      assert left == leaving or left.state.join_notice == nil
+    end
+  end
+
+  # QA G14: the room publishes only the undone stroke's id.
+  describe ":drawing_undone" do
+    test "a viewer removes that stroke by id and keeps the rest, live overlays included" do
+      s2 = %{@stroke | id: "s-2"}
+      component = playing(drawing_strokes: [@stroke, s2])
+
+      {result, calls} =
+        js_calls(fn ->
+          GamePage.action(:drawing_undone, %{stroke_id: "s-1", seq: 11}, component)
+        end)
+
+      assert result.state.drawing_strokes == [s2]
+      assert result.state.strokes_seq == 11
+      assert result.state.last_seq == 11
+      assert calls == []
+    end
+
+    test "an id the viewer doesn't hold changes no stroke" do
+      component = playing(drawing_strokes: [@stroke])
+      result = GamePage.action(:drawing_undone, %{stroke_id: "s-other", seq: 11}, component)
+
+      assert result.state.drawing_strokes == [@stroke]
+      assert result.state.last_seq == 11
+    end
+
+    test "the drawer's tabs keep their own canvas" do
+      drawer = playing(current_user_id: @drawer, is_drawer: true, drawing_strokes: [@stroke])
+
+      {result, calls} =
+        js_calls(fn -> GamePage.action(:drawing_undone, %{stroke_id: "s-1", seq: 11}, drawer) end)
+
+      assert result.state.drawing_strokes == [@stroke]
+      assert calls == []
+    end
+
+    test "a stale snapshot can't bring the undone stroke back" do
+      s2 = %{@stroke | id: "s-2"}
+
+      undone =
+        GamePage.action(
+          :drawing_undone,
+          %{stroke_id: "s-1", seq: 11},
+          playing(drawing_strokes: [@stroke, s2])
+        )
+
+      view = snapshot(@me, seq: 10, phase: :drawing, drawing_strokes: [@stroke, s2])
+      result = GamePage.action(:room_resynced, view, undone)
+
+      assert result.state.drawing_strokes == [s2]
+    end
+  end
 
   describe ":private_state" do
     test "the first drawer of a new game sees the choices as soon as the slice follows the delta" do

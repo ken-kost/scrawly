@@ -72,12 +72,11 @@ defmodule Scrawly.Games.RoomServerTest do
     test "only that stroke, wherever it is" do
       state = room(drawing_strokes: [stroke(1), stroke(2), stroke(3)])
 
-      assert {{:ok, [s1, s3]}, undone} = undo(state, "s-2")
-      assert [s1, s3] == [stroke(1), stroke(3)]
+      assert {:ok, undone} = undo(state, "s-2")
       assert undone.drawing_strokes == [stroke(1), stroke(3)]
       assert undone.seq == state.seq + 1
 
-      assert {{:ok, [_, _]}, _} = undo(state, "s-3")
+      assert {:ok, %{drawing_strokes: [_, _]}} = undo(state, "s-3")
     end
 
     test "an unknown or missing id changes nothing" do
@@ -108,7 +107,7 @@ defmodule Scrawly.Games.RoomServerTest do
     test "applies ops in seq order and keeps the last applied pair" do
       {:ok, state} = append(room(), stroke(1), {"e1", 1})
       {:ok, state} = append(state, stroke(2), {"e1", 2})
-      {{:ok, [_]}, state} = undo(state, "s-2", {"e1", 3})
+      {:ok, state} = undo(state, "s-2", {"e1", 3})
       {:ok, state} = clear(state, {"e1", 4})
       {:ok, state} = append(state, stroke(3), {"e1", 5})
 

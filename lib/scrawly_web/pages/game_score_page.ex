@@ -4,7 +4,7 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   route "/game-results/:game_id"
   param :game_id, :string
 
-  alias Scrawly.Games.RoomServer
+  alias Scrawly.Games.{RoomServer, StrokeRules}
   alias ScrawlyWeb.Pages.{GamePage, HomePage}
 
   @tick_ms 1_000
@@ -52,14 +52,10 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
                   }
                 end)
 
-              drawing_strokes =
-                Enum.map(rd["drawing_strokes"] || [], fn s ->
-                  %{
-                    path: s["path"] || "",
-                    color: s["color"] || "#000000",
-                    width: s["width"] || 2
-                  }
-                end)
+              # Capped again here (StrokeRules.replay/1), for rows saved
+              # before the room capped what it saves: this page renders
+              # every round's drawing, and its state carries them too.
+              {drawing_strokes, cut?} = StrokeRules.replay(rd["drawing_strokes"] || [])
 
               %{
                 round: rd["round"],
@@ -67,7 +63,8 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
                 word: rd["word"],
                 drawer_points: rd["drawer_points"] || 0,
                 player_scores: player_scores,
-                drawing_strokes: drawing_strokes
+                drawing_strokes: drawing_strokes,
+                drawing_truncated: cut? or rd["drawing_truncated"] == true
               }
             end)
 
@@ -437,6 +434,7 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
                   <div class="by">drawn by <span style="color: var(--ink);">{round.drawer_name}</span></div>
                   <div class="row" style="gap: 6px; margin-top: 8px;">
                     <span class="chip mono">{Enum.count(round.player_scores, & &1.guessed)} guessed</span>
+                    {%if round.drawing_truncated}<span class="chip mono" title="long drawings are kept up to a size limit">drawing trimmed</span>{/if}
                   </div>
                 </div>
                 <div class="round-scores">

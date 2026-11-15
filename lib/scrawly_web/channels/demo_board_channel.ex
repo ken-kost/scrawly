@@ -8,18 +8,23 @@ defmodule ScrawlyWeb.DemoBoardChannel do
     * `"stroke_chunk"` (`%{stroke_id, seq, delta, color, width}`) — live in-flight chunk
     * `"stroke_complete"` (`%{stroke_id, path, color, width}`) — final stroke. Replies
       `:ok` when stored, or `{:error, %{reason: "invalid_stroke" | "rate_limited"}}`
-      (peers then get `"stroke_abandon"` for its id). The sender commits the stroke
-      optimistically and uses the reply to roll it back, and the `"stroke"` echo to
-      confirm and order it.
+      (peers then get `"stroke_abandon"` for its id, if the id itself is valid). The
+      sender commits the stroke optimistically and uses the reply to roll it back,
+      and the `"stroke"` echo to confirm and order it.
     * `"clear"` — wipe the board
 
   Any other event is ignored.
 
   The board is open to visitors without an account, so every event is checked
-  and rate-limited per socket (limits in assigns, see `@limits`). `color` must
-  be `#RRGGBB` and `width` an integer in 1..40 (`Scrawly.Games.StrokeRules`),
-  in chunks and completed strokes alike; a missing value is invalid. Invalid or
-  over-limit chunks and clears are dropped silently.
+  and rate-limited per socket (limits in assigns, see `@limits`), with the
+  same `Scrawly.Games.StrokeRules` checks as the game: a stroke id of 1..64
+  bytes, a path of SVG path characters of at most
+  `StrokeRules.max_path_bytes/0` bytes, a chunk delta of at most
+  `StrokeRules.max_delta_bytes/0`, `color` `#RRGGBB` and `width` an integer
+  in 1..40, in chunks and completed strokes alike; a missing value is
+  invalid. Invalid or over-limit chunks and clears are dropped silently. Only
+  the socket's 8 newest open strokes are remembered (abandoned for peers
+  if it goes away mid-stroke).
 
   Outbound events:
     * `"strokes"` — full snapshot on every join and rejoin
@@ -33,9 +38,9 @@ defmodule ScrawlyWeb.DemoBoardChannel do
 
   alias Scrawly.Games.{DemoBoardServer, StrokeRules}
 
-  # Exclusive upper bound on a completed stroke's path length. The client
-  # splits longer gestures into several strokes below this.
-  @max_path_length 8_000
+  # Open strokes remembered per socket (a gesture is one, a split gesture
+  # two in a row); like GameChannel.
+  @max_open_strokes 8
 
   # Per-socket sliding windows: {max events, window ms}. The client flushes
   # chunks at 20 Hz (FLUSH_INTERVAL_MS = 50 in demo_board.mjs).
@@ -52,7 +57,7 @@ defmodule ScrawlyWeb.DemoBoardChannel do
 
     {:ok,
      socket
-     |> assign(:open_stroke_ids, MapSet.new())
+     |> assign(:open_stroke_ids, [])
      |> assign(:rate_events, Map.new(@limits, fn {event, _limit} -> {event, []} end))}
   end
 
@@ -113,7 +118,7 @@ defmodule ScrawlyWeb.DemoBoardChannel do
   # network drop, etc.), tell remaining peers to GC their overlays.
   @impl true
   def terminate(_reason, socket) do
-    open = Map.get(socket.assigns, :open_stroke_ids, MapSet.new())
+    open = Map.get(socket.assigns, :open_stroke_ids, [])
 
     Enum.each(open, fn stroke_id ->
       broadcast_from(socket, "stroke_abandon", %{"stroke_id" => stroke_id})
@@ -126,8 +131,8 @@ defmodule ScrawlyWeb.DemoBoardChannel do
     stroke_id = payload["stroke_id"]
     delta = payload["delta"]
 
-    with true <- is_binary(stroke_id) and stroke_id != "",
-         true <- is_binary(delta) and delta != "" and byte_size(delta) < 2_000,
+    with true <- StrokeRules.valid_stroke_id?(stroke_id),
+         true <- StrokeRules.valid_delta?(delta),
          {:ok, color, width} <- style(payload) do
       broadcast_from(socket, "stroke_chunk", %{
         "stroke_id" => stroke_id,
@@ -137,7 +142,11 @@ defmodule ScrawlyWeb.DemoBoardChannel do
         "width" => width
       })
 
-      assign(socket, :open_stroke_ids, MapSet.put(socket.assigns.open_stroke_ids, stroke_id))
+      open =
+        [stroke_id | List.delete(socket.assigns.open_stroke_ids, stroke_id)]
+        |> Enum.take(@max_open_strokes)
+
+      assign(socket, :open_stroke_ids, open)
     else
       _ -> socket
     end
@@ -146,8 +155,8 @@ defmodule ScrawlyWeb.DemoBoardChannel do
   defp complete_stroke(socket, stroke_id, payload) do
     path = payload["path"]
 
-    with true <- is_binary(stroke_id) and stroke_id != "",
-         true <- is_binary(path) and path != "" and String.length(path) < @max_path_length,
+    with true <- StrokeRules.valid_stroke_id?(stroke_id),
+         true <- StrokeRules.valid_path?(path),
          {:ok, color, width} <- style(payload) do
       # Stored with its stroke_id, which the `stroke` echo carries to every
       # client (the sender included): the sender confirms its pending stroke
@@ -167,7 +176,8 @@ defmodule ScrawlyWeb.DemoBoardChannel do
 
   defp reject_stroke(socket, stroke_id, reason) do
     # Peers drop their overlay for it now rather than when this socket ends.
-    if is_binary(stroke_id) do
+    # Only a valid id can have one (chunks pass the same check).
+    if StrokeRules.valid_stroke_id?(stroke_id) do
       broadcast_from(socket, "stroke_abandon", %{"stroke_id" => stroke_id})
     end
 
@@ -200,6 +210,6 @@ defmodule ScrawlyWeb.DemoBoardChannel do
   end
 
   defp forget_open_stroke(socket, stroke_id) do
-    assign(socket, :open_stroke_ids, MapSet.delete(socket.assigns.open_stroke_ids, stroke_id))
+    assign(socket, :open_stroke_ids, List.delete(socket.assigns.open_stroke_ids, stroke_id))
   end
 end

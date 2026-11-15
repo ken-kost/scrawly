@@ -7,6 +7,18 @@ defmodule Scrawly.Accounts.User do
     extensions: [AshAuthentication]
 
   alias Scrawly.Accounts.User.Validations.NotReservedUsername
+  alias Scrawly.Validations.MaxBytes
+
+  # Byte caps next to the character caps of the attributes below (one
+  # character can be megabytes, see Scrawly.Text). The username's is what
+  # 20 four-byte characters take; the email's is the longest address SMTP
+  # allows.
+  @max_username_bytes 80
+  @max_email_bytes 254
+
+  @doc "The username's size cap in bytes (it is also at most 20 characters)."
+  @spec max_username_bytes() :: pos_integer
+  def max_username_bytes, do: @max_username_bytes
 
   authentication do
     add_ons do
@@ -386,6 +398,13 @@ defmodule Scrawly.Accounts.User do
     end
   end
 
+  # Every create and update that sets these (MaxBytes passes when the
+  # attribute isn't changing).
+  validations do
+    validate {MaxBytes, attribute: :username, max: @max_username_bytes}
+    validate {MaxBytes, attribute: :email, max: @max_email_bytes}
+  end
+
   attributes do
     uuid_primary_key :id
 
@@ -451,10 +470,13 @@ defmodule Scrawly.Accounts.User do
       constraints one_of: [:purple, :yellow, :orange]
     end
 
+    # One of the preset ids (ScrawlyWeb.Components.AvatarDefs, "a-<name>"):
+    # it is sent with every player in room broadcasts and lobby summaries.
     attribute :avatar_id, :string do
       default "a-mushroom"
       allow_nil? false
       public? true
+      constraints match: ~r/\Aa-[a-z]{1,20}\z/
     end
 
     attribute :avatar_color, :string do
@@ -476,22 +498,21 @@ defmodule Scrawly.Accounts.User do
     identity :unique_email, [:email]
   end
 
-  # The email's local part, trimmed and cut to 20 characters. One that is
-  # shorter than 2 characters (`a@x.com`) or reserved (`system@...`) gets a
-  # `_NNNN` suffix instead, so registration never fails on the username.
+  # The email's local part, trimmed and cut to 20 characters and
+  # @max_username_bytes bytes. One that is shorter than 2 characters
+  # (`a@x.com`) or reserved (`system@...`) gets a `_NNNN` suffix instead, so
+  # registration never fails on the username.
   defp generate_username(%{email: email}) do
     base =
       email
       |> to_string()
       |> String.split("@")
       |> List.first()
-      |> String.trim()
-      |> String.slice(0, 20)
-      |> String.trim()
+      |> Scrawly.Text.clean(20, @max_username_bytes)
 
     if String.length(base) < 2 or NotReservedUsername.reserved?(base) do
       suffix = Integer.to_string(1000 + :rand.uniform(9000) - 1)
-      String.slice(base, 0, 15) <> "_" <> suffix
+      Scrawly.Text.truncate(base, 15, @max_username_bytes - 5) <> "_" <> suffix
     else
       base
     end

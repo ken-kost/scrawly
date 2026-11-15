@@ -7,6 +7,8 @@ defmodule Scrawly.Games.Room do
 
   require AshAi.Actions
 
+  alias Scrawly.Validations.MaxBytes
+
   postgres do
     table "rooms"
     repo Scrawly.Repo
@@ -34,6 +36,12 @@ defmodule Scrawly.Games.Room do
       ]
 
       primary? true
+
+      # Byte caps next to the character caps of :name and :prompt: one
+      # character can be megabytes (Scrawly.Text), and both are shown to
+      # everyone (the room list, every room snapshot).
+      validate {MaxBytes, attribute: :name, max: 160}
+      validate {MaxBytes, attribute: :prompt, max: 800}
 
       change fn changeset, _context ->
         Ash.Changeset.force_change_attribute(changeset, :code, generate_room_code())

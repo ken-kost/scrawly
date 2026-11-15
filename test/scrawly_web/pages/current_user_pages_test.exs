@@ -234,7 +234,7 @@ defmodule ScrawlyWeb.Pages.CurrentUserPagesTest do
       {:ok, user} =
         Accounts.update_profile(user, %{
           username: "TESTheader",
-          avatar_id: "a3",
+          avatar_id: "a-star",
           avatar_color: "7"
         })
 
@@ -245,7 +245,7 @@ defmodule ScrawlyWeb.Pages.CurrentUserPagesTest do
 
       assert state.authenticated == true
       assert state.username == "TESTheader"
-      assert state.avatar_id == "a3"
+      assert state.avatar_id == "a-star"
       assert state.avatar_color == "7"
       # dark = account || session; a valid account accent wins.
       assert state.dark_mode == true

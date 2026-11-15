@@ -15,6 +15,9 @@ defmodule ScrawlyWeb.OnlineTracker do
   per 5 s: changes inside that window go out together, as the latest value,
   when it ends.
 
+  Rooms ask it which of their members still have a live tab
+  (`live_keys/2`, see `Scrawly.Games.RoomServer`'s presence sweep).
+
   Node-local (like Hologram.PubSub, unless the nodes are clustered). Hologram
   has no presence API or disconnect hook, hence the heartbeat.
 
@@ -54,6 +57,19 @@ defmodule ScrawlyWeb.OnlineTracker do
     :exit, _ -> 0
   end
 
+  @doc """
+  `{:ok, set}` of those of `keys` seen within the TTL (a live tab), or
+  `:error` when the tracker isn't running or doesn't answer within 1 s: a
+  caller must then assume nothing about its keys. Ordered after the
+  caller's own earlier `touch/2`s.
+  """
+  @spec live_keys(GenServer.server(), [term]) :: {:ok, MapSet.t()} | :error
+  def live_keys(server \\ __MODULE__, keys) when is_list(keys) do
+    GenServer.call(server, {:live_keys, keys}, 1_000)
+  catch
+    :exit, _ -> :error
+  end
+
   @doc "How long a key counts without a touch, in ms."
   @spec ttl_ms() :: pos_integer
   def ttl_ms, do: @ttl_ms
@@ -89,6 +105,24 @@ defmodule ScrawlyWeb.OnlineTracker do
 
   @impl true
   def handle_call(:count, _from, state), do: {:reply, map_size(state.seen), state}
+
+  # By the TTL itself, not by the last sweep (which can be up to sweep_ms
+  # behind).
+  def handle_call({:live_keys, keys}, _from, state) do
+    cutoff = state.clock.() - state.ttl_ms
+
+    live =
+      keys
+      |> Enum.filter(fn key ->
+        case Map.fetch(state.seen, key) do
+          {:ok, at} -> at >= cutoff
+          :error -> false
+        end
+      end)
+      |> MapSet.new()
+
+    {:reply, {:ok, live}, state}
+  end
 
   @impl true
   def handle_info(:sweep, state) do

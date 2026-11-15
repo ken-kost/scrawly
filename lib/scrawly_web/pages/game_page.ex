@@ -403,6 +403,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
+  # Only the undone stroke's id comes (the canvas is never re-sent): a
+  # viewer drops that stroke from the list it renders. Live overlays of the
+  # stroke being drawn stay. strokes_seq moves on, so a stale snapshot
+  # can't bring the stroke back.
   def action(:drawing_undone, params, component) do
     case accept_seq(component, params) do
       {:apply, component, seq, gap} ->
@@ -410,11 +414,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
           if component.state.is_drawer do
             component
           else
-            strokes = params.strokes || []
-            JS.call(:setStrokes, [strokes])
+            stroke_id = Map.get(params, :stroke_id)
 
             component
-            |> put_state(:drawing_strokes, strokes)
+            |> put_state(
+              :drawing_strokes,
+              Enum.reject(component.state.drawing_strokes, &(&1.id == stroke_id))
+            )
             |> put_state(:strokes_seq, seq)
           end
 
@@ -587,7 +593,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
 
     component =
-      if command == :join_room,
+      if command in [:join_room, :join_as_watcher],
         do: put_state(component, :join_notice, join_denied_text(Map.get(params, :reason))),
         else: component
 
@@ -894,6 +900,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
     do: "can't join: the host isn't in the room right now"
 
   defp join_denied_text(:not_in_lobby), do: "can't join: a game is in progress"
+
+  defp join_denied_text(:rate_limited),
+    do: "can't watch: you joined and left too often, try again in a minute"
+
+  defp join_denied_text(:room_full), do: "can't watch: the room is full"
   defp join_denied_text(_reason), do: "can't join this room right now"
 
   defp request_resync(component) do
@@ -1160,10 +1171,24 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
     joined? = is_binary(uid) and Enum.any?(players, &(&1.id == uid))
 
+    # Taken out of the lobby without leaving from this tab: the room's
+    # presence sweep (no open tab for a while, e.g. a frozen background
+    # tab) or another tab's leave. The lobby offers to join again.
+    dropped? =
+      not joined? and not state.leaving? and view.status == :lobby and is_binary(uid) and
+        Enum.any?(state.players, &(&1.id == uid))
+
+    join_notice =
+      cond do
+        joined? -> nil
+        dropped? -> "you're no longer in this room"
+        true -> Map.get(state, :join_notice)
+      end
+
     component =
       component
       |> put_state(:players, players)
-      |> put_state(:join_notice, if(joined?, do: nil, else: Map.get(state, :join_notice)))
+      |> put_state(:join_notice, join_notice)
       |> put_state(:max_players, Map.get(view, :max_players) || state.max_players)
       |> put_state(:watchers, view.watchers || [])
       |> put_state(:room_status, view.status)
@@ -1481,6 +1506,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
                       disabled={!@can_start_game}
                       $click={command: :start_game, params: %{room_id: @room_id}}>
                 {%if @can_start_game}start game{%else}need 2+ players{/if}
+              </button>
+            {/if}
+            {%if @join_notice != nil and @current_user_id != nil and !@watching? and length(@players) < @max_players and !Enum.any?(@players, fn p -> p.id == @current_user_id end)}
+              <button class="app-btn app-btn-primary app-btn-lg" style="flex: 1;"
+                      $click={command: :join_room, params: %{room_id: @room_id}}>
+                join
               </button>
             {/if}
             <button class="app-btn app-btn-lg" $click={:leave_room}>leave</button>

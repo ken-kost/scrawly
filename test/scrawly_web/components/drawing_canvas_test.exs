@@ -276,16 +276,16 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
   end
 
   describe "drawing_undone" do
-    test "replaces a viewer's strokes; the drawer only takes the seq" do
+    test "removes the stroke by id for a viewer; the drawer only takes the seq" do
       viewer = drawing_component(%{is_drawer: false, drawing_strokes: [@s1, @s2]})
-      result = GamePage.action(:drawing_undone, %{strokes: [@s1], seq: 2}, viewer)
+      result = GamePage.action(:drawing_undone, %{stroke_id: @s2.id, seq: 2}, viewer)
       assert result.state.drawing_strokes == [@s1]
 
       drawer = drawing_component(%{drawing_strokes: [@s1, @s2]})
 
       {result, names} =
         js_call_names(fn ->
-          GamePage.action(:drawing_undone, %{strokes: [@s1], seq: 2}, drawer)
+          GamePage.action(:drawing_undone, %{stroke_id: @s2.id, seq: 2}, drawer)
         end)
 
       assert result.state.drawing_strokes == [@s1, @s2]

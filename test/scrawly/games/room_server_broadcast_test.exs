@@ -80,7 +80,7 @@ defmodule Scrawly.Games.RoomServerBroadcastTest do
       stroke = %{id: "s-1", path: "M 1 1 L 2 2", color: "#000000", width: 2}
       :ok = RoomServer.append_drawing(room.id, creator.id, stroke)
       :ok = RoomServer.append_drawing(room.id, creator.id, %{stroke | id: "s-2"})
-      {:ok, _} = RoomServer.undo_drawing(room.id, creator.id, "s-2")
+      :ok = RoomServer.undo_drawing(room.id, creator.id, "s-2")
       :ok = RoomServer.clear_drawing(room.id, creator.id)
       {:ok, {:correct, _}} = RoomServer.submit_message(room.id, player.id, @word)
 

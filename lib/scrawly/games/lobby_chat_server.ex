@@ -22,6 +22,10 @@ defmodule Scrawly.Games.LobbyChatServer do
 
   @max_messages 200
   @max_length 240
+  # One character can be megabytes, so lines and names are cut by bytes
+  # too (Scrawly.Text); the name to the username's caps.
+  @max_bytes 1_000
+  @max_name_length 20
   @chat_max_messages 4
   @chat_window_ms 5_000
 
@@ -42,7 +46,9 @@ defmodule Scrawly.Games.LobbyChatServer do
   @doc """
   Stores and broadcasts a line from `sender_key` (the rate-limit key, never
   shown). `fields` carries the display `username`, the `message` text and
-  `is_guest`. The text is trimmed and cut to #{@max_length} characters.
+  `is_guest`. The text is trimmed and cut to #{@max_length} characters and
+  #{@max_bytes} bytes (`clean_message/1`), the name to #{@max_name_length}
+  characters and the username's byte cap.
 
   `{:error, :empty}` for a blank text, `{:error, :rate_limited}` past
   #{@chat_max_messages} lines in #{@chat_window_ms} ms for that key (rejected
@@ -62,17 +68,29 @@ defmodule Scrawly.Games.LobbyChatServer do
         {:error, :empty}
 
       text ->
-        line = %{username: username, message: text, is_guest: Map.get(fields, :is_guest) == true}
+        line = %{
+          username:
+            Scrawly.Text.truncate(
+              username,
+              @max_name_length,
+              Scrawly.Accounts.User.max_username_bytes()
+            ),
+          message: text,
+          is_guest: Map.get(fields, :is_guest) == true
+        }
+
         GenServer.call(__MODULE__, {:add_message, sender_key, line, now})
     end
   end
 
-  @doc "Trims `text` and cuts it to #{@max_length} characters; `\"\"` for non-strings."
+  @doc """
+  Trims `text` and cuts it to #{@max_length} characters and #{@max_bytes}
+  bytes at a character boundary (`Scrawly.Text.clean/3`); `""` for
+  non-strings, invalid UTF-8, and a text whose first character alone is
+  over the byte cap.
+  """
   @spec clean_message(term) :: String.t()
-  def clean_message(text) when is_binary(text),
-    do: text |> String.trim() |> String.slice(0, @max_length)
-
-  def clean_message(_text), do: ""
+  def clean_message(text), do: Scrawly.Text.clean(text, @max_length, @max_bytes)
 
   @doc "Lines per window and the window in ms of the per-sender rate limit."
   @spec rate_limit() :: {pos_integer, pos_integer}

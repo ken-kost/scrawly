@@ -31,7 +31,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   """
 
   alias Scrawly.Games
-  alias Scrawly.Games.{Word, WordHints}
+  alias Scrawly.Games.{StrokeRules, Word, WordHints}
   alias Scrawly.Games.RoomServer.Broadcasts
 
   @ai_refill_threshold 6
@@ -282,8 +282,15 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   Appends a round result entry to `state.round_results`. drawer_points is the
   points awarded (or deducted) from the drawer this round. `drawer_name`
   overrides the name looked up in `players` (a drawer who just left).
+
+  The drawing is kept as its replay (`StrokeRules.replay/1`: the first
+  strokes up to the stroke and byte caps, without ids), with
+  `drawing_truncated` telling whether strokes were left out: the results are
+  saved in one JSONB update and the score page renders every round.
   """
   def capture_round_result(state, drawer_points, drawer_name \\ nil) do
+    {replay, truncated?} = StrokeRules.replay(state.drawing_strokes)
+
     player_scores =
       Enum.map(state.players, fn p ->
         start_score = Map.get(state.round_start_scores, p.id, 0)
@@ -305,7 +312,8 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
       word: state.current_word,
       drawer_points: drawer_points,
       player_scores: player_scores,
-      drawing_strokes: state.drawing_strokes
+      drawing_strokes: replay,
+      drawing_truncated: truncated?
     }
 
     %{state | round_results: state.round_results ++ [result]}

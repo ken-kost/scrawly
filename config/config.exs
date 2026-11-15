@@ -62,7 +62,12 @@ config :scrawly, ScrawlyWeb.Endpoint,
     layout: false
   ],
   pubsub_server: Scrawly.PubSub,
-  live_view: [signing_salt: "OWISxaez"]
+  live_view: [signing_salt: "OWISxaez"],
+  # Bandit's WebSocket caps for every socket (merged with each env's :http):
+  # nothing this app sends over a WebSocket comes near 64 KiB, and Phoenix
+  # can't set the fragmented-message cap per socket (endpoint.ex caps
+  # /socket's frames lower).
+  http: [websocket_options: [max_frame_size: 65_536, max_fragmented_message_size: 65_536]]
 
 # Configures the mailer
 #

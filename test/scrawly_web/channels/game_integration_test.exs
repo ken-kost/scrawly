@@ -232,6 +232,33 @@ defmodule ScrawlyWeb.GameIntegrationTest do
     end
   end
 
+  # QA G14: a drawer's socket can't flood the room with chunks.
+  describe "chunk rate limit" do
+    setup %{room: room, creator: creator} do
+      start_drawing!(room, creator)
+      :ok
+    end
+
+    test "at most 60 chunks a second per socket are relayed", %{room: room, creator: creator} do
+      socket = join!(creator, room)
+      for seq <- 1..61, do: push(socket, "drawing_stroke_chunk", chunk(%{"seq" => seq}))
+
+      for seq <- 1..60, do: assert_broadcast("drawing_stroke_chunk", %{"seq" => ^seq})
+      refute_broadcast "drawing_stroke_chunk", _
+
+      # A second later the socket may send again.
+      :sys.replace_state(socket.channel_pid, fn state ->
+        Phoenix.Socket.assign(
+          state,
+          :chunk_times,
+          Enum.map(state.assigns.chunk_times, &(&1 - 1_000))
+        )
+      end)
+
+      assert_relayed(socket, chunk(%{"seq" => 62}))
+    end
+  end
+
   describe "drawing_stroke_chunk outside :drawing" do
     test "the drawer's chunk is not relayed while choosing; the denial is cached for 2 s", ctx do
       {:ok, _started} =

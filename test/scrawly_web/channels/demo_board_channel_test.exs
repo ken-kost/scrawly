@@ -105,9 +105,9 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
     assert_push "stroke", %{stroke_id: "d-max-1", path: ^path}
   end
 
-  test "a path of 8,000+ characters is rejected, abandoned for peers and not stored",
+  test "a path over 8,000 bytes is rejected, abandoned for peers and not stored",
        %{socket: socket} do
-    for {id, length} <- [{"d-long-1", 8_000}, {"d-long-2", 20_000}] do
+    for {id, length} <- [{"d-long-1", 8_001}, {"d-long-2", 20_000}] do
       ref = push(socket, "stroke_complete", stroke(id, path_of_length(length)))
 
       assert_reply ref, :error, %{reason: "invalid_stroke"}
@@ -130,14 +130,18 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
     assert DemoBoardServer.get_strokes() == []
   end
 
-  test "a stroke without a binary id is rejected without an abandon", %{socket: socket} do
-    for payload <- [Map.delete(stroke(nil), "stroke_id"), stroke(42), stroke("")] do
+  test "a stroke without a valid id is rejected without an abandon", %{socket: socket} do
+    for payload <- [
+          Map.delete(stroke(nil), "stroke_id"),
+          stroke(42),
+          stroke(""),
+          stroke(String.duplicate("i", 65))
+        ] do
       ref = push(socket, "stroke_complete", payload)
       assert_reply ref, :error, %{reason: "invalid_stroke"}
     end
 
-    # Only the "" id is a binary, so only it is abandoned.
-    assert_broadcast "stroke_abandon", %{"stroke_id" => ""}
+    # No peer can hold an overlay for an id no chunk could carry.
     refute_broadcast "stroke_abandon", _
     assert DemoBoardServer.get_strokes() == []
   end
@@ -155,12 +159,12 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
     })
 
     assert_broadcast "stroke_chunk", %{"stroke_id" => ^id}
-    assert MapSet.member?(:sys.get_state(socket.channel_pid).assigns.open_stroke_ids, id)
+    assert id in :sys.get_state(socket.channel_pid).assigns.open_stroke_ids
 
     ref = push(socket, "stroke_complete", stroke(id, path_of_length(9_000)))
     assert_reply ref, :error, %{reason: "invalid_stroke"}
     assert_broadcast "stroke_abandon", %{"stroke_id" => ^id}
-    assert :sys.get_state(socket.channel_pid).assigns.open_stroke_ids == MapSet.new()
+    assert :sys.get_state(socket.channel_pid).assigns.open_stroke_ids == []
 
     Process.unlink(socket.channel_pid)
     ref = leave(socket)
@@ -174,7 +178,7 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
 
     ref = push(socket, "stroke_complete", stroke("d-open-2"))
     assert_reply ref, :ok
-    assert :sys.get_state(socket.channel_pid).assigns.open_stroke_ids == MapSet.new()
+    assert :sys.get_state(socket.channel_pid).assigns.open_stroke_ids == []
   end
 
   test "the legacy draw event is ignored", %{socket: socket} do
@@ -229,7 +233,7 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
 
       sync!(socket)
       refute_broadcast "stroke_chunk", _
-      assert :sys.get_state(socket.channel_pid).assigns.open_stroke_ids == MapSet.new()
+      assert :sys.get_state(socket.channel_pid).assigns.open_stroke_ids == []
     end
 
     test "palette colours, widths 2/4/8 and the eraser still work", %{socket: socket} do
@@ -344,6 +348,74 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
       # Both sockets receive the second clear.
       assert_push "cleared", %{}
       assert_push "cleared", %{}
+    end
+  end
+
+  # QA G2: the board is open to visitors without an account, so its strokes
+  # and chunks pass the same StrokeRules checks as the game's.
+  describe "StrokeRules validation (QA G2)" do
+    test "a stroke id over 64 bytes is rejected, stored nowhere", %{socket: socket} do
+      id = String.duplicate("i", 65)
+      ref = push(socket, "stroke_complete", stroke(id))
+
+      assert_reply ref, :error, %{reason: "invalid_stroke"}
+      assert DemoBoardServer.get_strokes() == []
+
+      ref = push(socket, "stroke_complete", stroke(String.duplicate("i", 64)))
+      assert_reply ref, :ok
+    end
+
+    test "a path with characters outside SVG path data is rejected", %{socket: socket} do
+      for {path, i} <- Enum.with_index(["M 1 1 L 2 2 <x>", "M 1 1 L 2 2\n", "M 1 1 \u00e9"]) do
+        ref = push(socket, "stroke_complete", stroke("d-chars-#{i}", path))
+        assert_reply ref, :error, %{reason: "invalid_stroke"}
+      end
+
+      # 7,000 two-byte characters: under 8,000 characters, 14,000 bytes.
+      ref = push(socket, "stroke_complete", stroke("d-bytes", String.duplicate("\u00e9", 7_000)))
+      assert_reply ref, :error, %{reason: "invalid_stroke"}
+
+      assert DemoBoardServer.get_strokes() == []
+    end
+
+    test "chunks need a stroke id of at most 64 bytes and a valid delta", %{socket: socket} do
+      bad = [
+        chunk(String.duplicate("i", 65)),
+        chunk("d-bad-delta", %{"delta" => "M 1 1 <script>"}),
+        chunk("d-bad-delta", %{"delta" => String.duplicate("1", 2_001)}),
+        chunk("d-bad-delta", %{"delta" => String.duplicate("\u00e9", 1_000)})
+      ]
+
+      for payload <- bad, do: push(socket, "stroke_chunk", payload)
+      sync!(socket)
+      refute_broadcast "stroke_chunk", _
+      assert :sys.get_state(socket.channel_pid).assigns.open_stroke_ids == []
+
+      push(
+        socket,
+        "stroke_chunk",
+        chunk("d-max-delta", %{"delta" => String.duplicate("1", 2_000)})
+      )
+
+      assert_broadcast "stroke_chunk", %{"stroke_id" => "d-max-delta"}
+    end
+
+    test "only the 8 newest open strokes are remembered", %{socket: socket} do
+      ids = for i <- 1..30, do: "d-open-many-#{i}"
+      for id <- ids, do: push(socket, "stroke_chunk", chunk(id))
+      sync!(socket)
+
+      open = :sys.get_state(socket.channel_pid).assigns.open_stroke_ids
+      assert Enum.sort(open) == Enum.sort(Enum.take(Enum.reverse(ids), 8))
+
+      Process.unlink(socket.channel_pid)
+      ref = leave(socket)
+      assert_reply ref, :ok
+
+      for id <- Enum.take(Enum.reverse(ids), 8),
+          do: assert_broadcast("stroke_abandon", %{"stroke_id" => ^id})
+
+      refute_broadcast "stroke_abandon", _
     end
   end
 end

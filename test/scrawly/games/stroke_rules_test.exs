@@ -74,9 +74,11 @@ defmodule Scrawly.Games.StrokeRulesTest do
       end
     end
 
-    test "caps a path at 64 KB" do
+    # The client splits a gesture at 7,000 characters (stroke_engine.mjs), so
+    # a committed stroke stays under ~7,060 bytes.
+    test "caps a path at 8,000 bytes" do
       max = StrokeRules.max_path_bytes()
-      assert max == 65_536
+      assert max == 8_000
       assert StrokeRules.valid_path?(String.duplicate("1", max))
       refute StrokeRules.valid_path?(String.duplicate("1", max + 1))
     end
@@ -167,8 +169,8 @@ defmodule Scrawly.Games.StrokeRulesTest do
 
     test "rejects a stroke that would push the canvas over 2_000_000 path bytes" do
       assert StrokeRules.max_canvas_bytes() == 2_000_000
-      big = %{@stroke | path: String.duplicate("1", 50_000)}
-      strokes = List.duplicate(big, 40)
+      big = %{@stroke | path: String.duplicate("1", 8_000)}
+      strokes = List.duplicate(big, 250)
       assert StrokeRules.canvas_bytes(strokes) == 2_000_000
 
       assert StrokeRules.check_append(strokes, %{@stroke | path: "1"}) == {:error, :stroke_limit}
@@ -176,8 +178,40 @@ defmodule Scrawly.Games.StrokeRulesTest do
       assert {:ok, _} =
                StrokeRules.check_append(Enum.drop(strokes, 1), %{
                  @stroke
-                 | path: String.duplicate("1", 50_000)
+                 | path: String.duplicate("1", 8_000)
                })
+    end
+  end
+
+  describe "replay/1 (QA G14)" do
+    test "keeps whole strokes in order, without ids, while they fit" do
+      strokes = [%{@stroke | id: "a"}, %{@stroke | id: "b", color: "#ffffff", width: 9}]
+
+      assert StrokeRules.replay(strokes) ==
+               {[
+                  %{path: @stroke.path, color: @stroke.color, width: @stroke.width},
+                  %{path: @stroke.path, color: "#ffffff", width: 9}
+                ], false}
+    end
+
+    test "stops at the stroke cap or the byte cap and says so" do
+      many = List.duplicate(@stroke, StrokeRules.max_replay_strokes() + 1)
+      assert {kept, true} = StrokeRules.replay(many)
+      assert length(kept) == StrokeRules.max_replay_strokes()
+
+      big = %{@stroke | path: String.duplicate("1", 8_000)}
+      assert {kept, true} = StrokeRules.replay(List.duplicate(big, 9))
+      assert length(kept) == div(StrokeRules.max_replay_bytes(), 8_000)
+
+      # Exactly at the byte cap still fits.
+      exact = [%{@stroke | path: String.duplicate("1", StrokeRules.max_replay_bytes())}]
+      assert {[_], false} = StrokeRules.replay(exact)
+    end
+
+    test "reads JSONB rows (string keys) and skips what isn't a stroke" do
+      rows = [%{"path" => "M 1 1", "id" => "x"}, "junk", %{"color" => "#000000"}, nil]
+      assert StrokeRules.replay(rows) == {[%{path: "M 1 1", color: "#000000", width: 2}], false}
+      assert StrokeRules.replay(nil) == {[], false}
     end
   end
 end

@@ -126,6 +126,12 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     end
   end
 
+  @doc """
+  Watches `room_id` as the session's actor (`Auth.actor_key/1`: visitors
+  without an account too). Replies `:room_resynced`; a full room or too many
+  watch joins/leaves in a minute (`RoomServer.watch_rate_limit/0`) reply
+  `:command_denied` with `:room_full` / `:rate_limited`.
+  """
   def join_as_watcher(%{room_id: room_id}, server) do
     case Auth.actor_key(server) do
       nil ->
@@ -139,9 +145,14 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
           end
 
         case RoomServer.join_as_watcher(room_id, %{id: key, username: username}) do
-          {:ok, _state} -> reply_with_snapshot(server, room_id)
-          {:error, :room_full} -> Auth.deny(server, :join_as_watcher, :room_full)
-          {:error, _} -> server
+          {:ok, _state} ->
+            reply_with_snapshot(server, room_id)
+
+          {:error, reason} when reason in [:room_full, :rate_limited] ->
+            Auth.deny(server, :join_as_watcher, reason)
+
+          {:error, _} ->
+            server
         end
     end
   end
@@ -298,7 +309,10 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   A non-drawer, the wrong phase, a missing room or no account gets
   `:command_denied` (with `op_seq`); an invalid stroke or a full canvas gets
   `:stroke_rejected` with the stored strokes, so the drawer's canvas drops
-  what nobody else will see.
+  what nobody else will see. An op over the drawer's rate limit
+  (`StrokeRules.op_rate_limit/0`) gets no reply at all: the op stays at the
+  head of the drawer's queue, which resends it after its retry delay, by
+  when the window has room again, so nothing is lost.
   """
   def complete_stroke(%{room_id: room_id} = params, server) do
     stroke = %{
@@ -314,6 +328,9 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     else
       :duplicate ->
         ack_stroke_op(server, params)
+
+      {:error, :rate_limited} ->
+        server
 
       {:error, reason, strokes} ->
         Logger.warning(
@@ -344,24 +361,26 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
       ack_stroke_op(server, params)
     else
       :duplicate -> ack_stroke_op(server, params)
+      {:error, :rate_limited} -> server
       {:error, reason} -> deny_stroke_op(server, :clear_drawing_cmd, reason, params)
     end
   end
 
   @doc """
   Removes the stroke `stroke_id` as the session user (current drawer,
-  `:drawing` only); the room publishes the remaining strokes as
-  `:drawing_undone`. An unknown id changes nothing and publishes nothing. An
-  op of the drawer's queue: see `complete_stroke/2`.
+  `:drawing` only); the room publishes only that id as `:drawing_undone`.
+  An unknown id changes nothing and publishes nothing. An op of the drawer's
+  queue: see `complete_stroke/2`.
   """
   def undo_drawing_cmd(%{room_id: room_id} = params, server) do
     stroke_id = Map.get(params, :stroke_id)
 
     with {:ok, uid} <- session_user_id(server),
-         {:ok, _strokes} <- RoomServer.undo_drawing(room_id, uid, stroke_id, op_tag(params)) do
+         :ok <- RoomServer.undo_drawing(room_id, uid, stroke_id, op_tag(params)) do
       ack_stroke_op(server, params)
     else
       :duplicate -> ack_stroke_op(server, params)
+      {:error, :rate_limited} -> server
       {:error, reason} -> deny_stroke_op(server, :undo_drawing_cmd, reason, params)
     end
   end

@@ -25,6 +25,16 @@ defmodule Scrawly.Games.RoomServer do
   who leaves mid-game loses their remaining turns, the turn ends at once if
   they were drawing or choosing, and the game ends when fewer than 2 players
   remain.
+
+  Presence: Hologram has no disconnect hook, so every few seconds
+  (`:presence_sweep`) the room asks `ScrawlyWeb.OnlineTracker`, which every
+  open tab's layout heartbeat feeds, which of its watchers (in any phase)
+  and of its players (only while the room is in its lobby) still have a
+  live tab, keyed by `ScrawlyWeb.Auth.actor_key/1` like the tracker. A
+  watcher missing from the tracker for `presence_grace_ms/0` (a lobby player:
+  `player_presence_grace_ms/0`) is removed (a player also loses their DB
+  membership; the creator dissolves the room, as their leaving does). Mid-game players are never removed this way: a drawer who
+  vanished keeps the round running to its deadline.
   """
   use GenServer
 
@@ -46,6 +56,9 @@ defmodule Scrawly.Games.RoomServer do
   @supervisor Scrawly.RoomSupervisor
   @max_watchers 50
   @max_message_length 240
+  # One character can be megabytes ("a" and thousands of combining marks),
+  # so lines are cut by bytes too (Scrawly.Text).
+  @max_message_bytes 1_000
   @chat_max_messages 3
   @chat_window_ms 5_000
   # How long a finished game's score page shows before the room returns to the
@@ -54,6 +67,25 @@ defmodule Scrawly.Games.RoomServer do
   # How long a finished round shows its word before the next one starts.
   @round_end_ms 3_000
   @no_word_text "No word could be picked, so the game ended."
+  # Watch joins and leaves an actor may make per window, together: an over
+  # the limit join is refused, a leave never is (and leaves can't outnumber
+  # joins).
+  @watch_max_events 8
+  @watch_window_ms 60_000
+  # How often the room checks its members against OnlineTracker, and how
+  # long a key may be missing there before its member is removed. The
+  # tracker drops a key 45 s after its last heartbeat (every 20 s per tab,
+  # about once a minute in a long-hidden, throttled one), so a closed tab
+  # goes 105-135 s after its last heartbeat. Both can be overridden with
+  # `config :scrawly, Scrawly.Games.RoomServer, presence_sweep_ms:,
+  # presence_grace_ms:` (read at init; `presence_sweep_ms: false` turns the
+  # sweep off, as the test config does).
+  @presence_sweep_ms 15_000
+  # Watchers go after a minute without a tab. Lobby players (the creator
+  # included, whose absence dissolves the room) get longer, so a phone that
+  # backgrounds the tab for a couple of minutes doesn't lose its room.
+  @presence_grace_ms 60_000
+  @player_presence_grace_ms 300_000
 
   defstruct [
     :room_id,
@@ -113,7 +145,17 @@ defmodule Scrawly.Games.RoomServer do
     # Process.send_after refs of the current turn (GameFlow.track_timer/2).
     turn_timers: [],
     # `{task_ref, game_id}` while an AI word refill runs in a task.
-    ai_refill: nil
+    ai_refill: nil,
+    # Sliding-window rate limits: actor key => recent monotonic ms stamps
+    # (newest first) of watch joins/leaves, and of the drawer's stroke ops.
+    watch_rate_limits: %{},
+    stroke_rate_limits: %{},
+    # Member id => monotonic ms since which OnlineTracker hasn't had their
+    # key (sweep_presence/2), only for members it currently misses.
+    absent_since: %{},
+    presence_sweep_ms: @presence_sweep_ms,
+    presence_grace_ms: @presence_grace_ms,
+    player_presence_grace_ms: @player_presence_grace_ms
   ]
 
   @doc """
@@ -142,6 +184,27 @@ defmodule Scrawly.Games.RoomServer do
   """
   @spec post_game_ms() :: pos_integer
   def post_game_ms, do: @post_game_ms
+
+  @doc """
+  How long, in ms, a member's key may be missing from
+  `ScrawlyWeb.OnlineTracker` before the presence sweep removes them (the
+  default; see the moduledoc).
+  """
+  @spec presence_grace_ms() :: pos_integer
+  def presence_grace_ms, do: @presence_grace_ms
+
+  @doc """
+  How long a LOBBY player (the creator included) may be missing from
+  `ScrawlyWeb.OnlineTracker` before the presence sweep removes them. Longer
+  than the watchers' `presence_grace_ms/0` so a briefly backgrounded phone
+  keeps its room.
+  """
+  @spec player_presence_grace_ms() :: pos_integer
+  def player_presence_grace_ms, do: @player_presence_grace_ms
+
+  @doc "`{events, window_ms}`: watch joins and leaves an actor may make in a room."
+  @spec watch_rate_limit() :: {pos_integer, pos_integer}
+  def watch_rate_limit, do: {@watch_max_events, @watch_window_ms}
 
   def start_link(room_id), do: GenServer.start_link(__MODULE__, room_id, name: via(room_id))
 
@@ -250,8 +313,10 @@ defmodule Scrawly.Games.RoomServer do
   Submits a chat line typed by `user_id`. Guesses are checked here, in the room
   process, so scoring is atomic and guess order is deterministic.
 
-  The text is trimmed and capped at #{@max_message_length} characters. The
-  sender must be a player or a watcher; the displayed name is always the stored
+  The text is trimmed and capped at #{@max_message_length} characters and
+  #{@max_message_bytes} bytes (`Scrawly.Text.clean/3`; a line whose first
+  character alone is bigger is `:empty`). The sender must be a player or a
+  watcher; the displayed name is always the stored
   username. Every sender is limited to #{@chat_max_messages} messages per
   #{@chat_window_ms} ms, guesses included.
 
@@ -411,15 +476,20 @@ defmodule Scrawly.Games.RoomServer do
   Idempotent: when the room already holds a stroke with that id, or `op` is
   stale (see `t:stroke_op/0`), nothing changes and it returns `:duplicate`.
 
-  Returns `:ok`, `:duplicate`, `{:error, :not_drawer | :wrong_phase | :not_found}`,
-  or `{:error, :invalid_stroke | :stroke_limit, strokes}` with the canvas as
-  stored, so the drawer can resync. A stored stroke is published to the whole
-  room as `:stroke_completed` (`%{stroke_id, path, color, width, seq}`).
+  Returns `:ok`, `:duplicate`, `{:error, :not_drawer | :wrong_phase |
+  :rate_limited | :not_found}`, or `{:error, :invalid_stroke | :stroke_limit,
+  strokes}` with the canvas as stored, so the drawer can resync. A stored
+  stroke is published to the whole room as `:stroke_completed` (`%{stroke_id,
+  path, color, width, seq}`).
+
+  The drawer's stroke ops (appends, clears and undos together, duplicates
+  included) are limited to `StrokeRules.op_rate_limit/0`; one over the
+  limit changes nothing, doesn't count, and gets `{:error, :rate_limited}`.
   """
   @spec append_drawing(term, term, term, stroke_op) ::
           :ok
           | :duplicate
-          | {:error, :not_drawer | :wrong_phase | :not_found}
+          | {:error, :not_drawer | :wrong_phase | :rate_limited | :not_found}
           | {:error, :invalid_stroke | :stroke_limit, [StrokeRules.stroke()]}
   def append_drawing(room_id, actor_id, stroke, op \\ nil) do
     GenServer.call(via(room_id), {:append_drawing, actor_id, stroke, op})
@@ -433,7 +503,7 @@ defmodule Scrawly.Games.RoomServer do
   `:duplicate`.
   """
   @spec clear_drawing(term, term, stroke_op) ::
-          :ok | :duplicate | {:error, :not_drawer | :wrong_phase | :not_found}
+          :ok | :duplicate | {:error, :not_drawer | :wrong_phase | :rate_limited | :not_found}
   def clear_drawing(room_id, actor_id, op \\ nil) do
     GenServer.call(via(room_id), {:clear_drawing, actor_id, op})
   catch
@@ -442,14 +512,15 @@ defmodule Scrawly.Games.RoomServer do
 
   @doc """
   Removes the stroke with id `stroke_id` for the current drawer
-  (`authorize/3` `:draw`), publishes the remaining strokes as
-  `:drawing_undone` and returns them. An unknown id or a stale `op` changes
-  nothing and returns `:duplicate`.
+  (`authorize/3` `:draw`) and publishes only that id as `:drawing_undone`
+  (`%{stroke_id, seq}`): pages remove it from the canvas they hold, so the
+  canvas is never re-sent. An unknown id or a stale `op` changes nothing
+  and returns `:duplicate`.
   """
   @spec undo_drawing(term, term, term, stroke_op) ::
-          {:ok, [StrokeRules.stroke()]}
+          :ok
           | :duplicate
-          | {:error, :not_drawer | :wrong_phase | :not_found}
+          | {:error, :not_drawer | :wrong_phase | :rate_limited | :not_found}
   def undo_drawing(room_id, actor_id, stroke_id, op \\ nil) do
     GenServer.call(via(room_id), {:undo_drawing, actor_id, stroke_id, op})
   catch
@@ -531,6 +602,9 @@ defmodule Scrawly.Games.RoomServer do
           seq: System.system_time(:microsecond)
         }
 
+        state = put_presence_config(state)
+        schedule_presence_sweep(state)
+
         {:ok, state |> recover_interrupted_game() |> resume_post_game() |> notify_lobby()}
 
       {:error, _} ->
@@ -558,6 +632,7 @@ defmodule Scrawly.Games.RoomServer do
   end
 
   def handle_call({:join, player}, _from, state) do
+    player = cap_name(player)
     already_in = Enum.any?(state.players, &(&1.id == player.id))
 
     cond do
@@ -598,8 +673,13 @@ defmodule Scrawly.Games.RoomServer do
     end
   end
 
+  # Watching posts no chat line (the room's watcher list shows who
+  # watches), so joins and leaves can't flood the chat; they are
+  # rate-limited per actor (watch_rate_limit/0).
   def handle_call({:join_watcher, watcher}, _from, state) do
+    watcher = cap_name(watcher)
     already_watching = Enum.any?(state.watchers, &(&1.id == watcher.id))
+    now = System.monotonic_time(:millisecond)
 
     cond do
       already_watching ->
@@ -609,27 +689,29 @@ defmodule Scrawly.Games.RoomServer do
         {:reply, {:error, :room_full}, state}
 
       true ->
-        new_state =
-          %{state | watchers: state.watchers ++ [watcher]}
-          |> add_sys_msg("#{watcher.username} is now watching")
-          |> notify_waiters()
+        case take_slot(state, :watch_rate_limits, watcher.id, now, watch_rate_limit()) do
+          {:ok, state} ->
+            new_state = notify_waiters(%{state | watchers: state.watchers ++ [watcher]})
+            {:reply, {:ok, to_public(new_state)}, new_state}
 
-        {:reply, {:ok, to_public(new_state)}, new_state}
+          :rate_limited ->
+            {:reply, {:error, :rate_limited}, state}
+        end
     end
   end
 
   def handle_call({:leave_watcher, watcher_id}, _from, state) do
-    case Enum.find(state.watchers, &(&1.id == watcher_id)) do
-      nil ->
-        {:reply, {:ok, to_public(state)}, state}
+    if Enum.any?(state.watchers, &(&1.id == watcher_id)) do
+      now = System.monotonic_time(:millisecond)
 
-      watcher ->
-        new_state =
-          %{state | watchers: Enum.reject(state.watchers, &(&1.id == watcher_id))}
-          |> add_sys_msg("#{watcher.username} stopped watching")
-          |> notify_waiters()
+      new_state =
+        %{state | watchers: Enum.reject(state.watchers, &(&1.id == watcher_id))}
+        |> record_slot(:watch_rate_limits, watcher_id, now, @watch_window_ms)
+        |> notify_waiters()
 
-        {:reply, {:ok, to_public(new_state)}, new_state}
+      {:reply, {:ok, to_public(new_state)}, new_state}
+    else
+      {:reply, {:ok, to_public(state)}, state}
     end
   end
 
@@ -718,64 +800,32 @@ defmodule Scrawly.Games.RoomServer do
     end
   end
 
+  # Stroke ops are rate-limited per drawer (check_op_slot/2): an applied or
+  # invalid op spends a slot (an invalid one gets the canvas back), a
+  # duplicate (a resend: nothing changes, nothing is published) doesn't.
   def handle_call({:append_drawing, actor_id, stroke, op}, _from, state) do
     with :ok <- authorize(state, actor_id, :draw),
-         :ok <- fresh_stroke_op(state, op),
-         :ok <- new_stroke_id(state, stroke),
-         {:ok, stroke} <- StrokeRules.check_append(state.drawing_strokes, stroke) do
-      new_state =
-        state
-        |> put_stroke_op(op)
-        |> put_strokes(state.drawing_strokes ++ [stroke])
-        |> Broadcasts.publish(:stroke_completed, %{
-          stroke_id: stroke.id,
-          path: stroke.path,
-          color: stroke.color,
-          width: stroke.width
-        })
-
-      {:reply, :ok, new_state}
+         :ok <- check_op_slot(state, actor_id) do
+      state |> append_stroke(stroke, op) |> spend_op_slot(actor_id)
     else
-      :duplicate ->
-        {:reply, :duplicate, state}
-
-      {:error, reason} when reason in [:invalid_stroke, :stroke_limit] ->
-        {:reply, {:error, reason, state.drawing_strokes}, state}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   def handle_call({:clear_drawing, actor_id, op}, _from, state) do
     with :ok <- authorize(state, actor_id, :draw),
-         :ok <- fresh_stroke_op(state, op) do
-      new_state =
-        state
-        |> put_stroke_op(op)
-        |> put_strokes([])
-        |> Broadcasts.publish(:drawing_cleared, %{})
-
-      {:reply, :ok, new_state}
+         :ok <- check_op_slot(state, actor_id) do
+      state |> clear_strokes(op) |> spend_op_slot(actor_id)
     else
-      :duplicate -> {:reply, :duplicate, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   def handle_call({:undo_drawing, actor_id, stroke_id, op}, _from, state) do
     with :ok <- authorize(state, actor_id, :draw),
-         :ok <- fresh_stroke_op(state, op),
-         {:ok, remaining} <- drop_stroke(state.drawing_strokes, stroke_id) do
-      new_state =
-        state
-        |> put_stroke_op(op)
-        |> put_strokes(remaining)
-        |> Broadcasts.publish(:drawing_undone, %{strokes: remaining})
-
-      {:reply, {:ok, remaining}, new_state}
+         :ok <- check_op_slot(state, actor_id) do
+      state |> undo_stroke(stroke_id, op) |> spend_op_slot(actor_id)
     else
-      :duplicate -> {:reply, :duplicate, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
@@ -942,6 +992,17 @@ defmodule Scrawly.Games.RoomServer do
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{ai_refill: {ref, _}} = state),
     do: {:noreply, %{state | ai_refill: nil}}
 
+  # The periodic presence sweep (see the moduledoc and sweep_presence/2).
+  def handle_info(:presence_sweep, state) do
+    schedule_presence_sweep(state)
+    sweep_presence(state, System.monotonic_time(:millisecond))
+  end
+
+  # One sweep at the given monotonic `now`, without scheduling the next
+  # (tests drive the clock this way).
+  def handle_info({:presence_sweep, now}, state) when is_integer(now),
+    do: sweep_presence(state, now)
+
   def handle_info(_msg, state), do: {:noreply, state}
 
   # A crashed room (the child is :temporary) leaves the home pages' room list
@@ -956,18 +1017,12 @@ defmodule Scrawly.Games.RoomServer do
 
   # ── Chat and guesses (submit_message/3) ───────────────────────────────────
 
-  defp clean_message(text) when is_binary(text) do
-    if String.valid?(text) do
-      case text |> String.trim() |> String.slice(0, @max_message_length) do
-        "" -> {:error, :empty}
-        text -> {:ok, text}
-      end
-    else
-      {:error, :empty}
+  defp clean_message(text) do
+    case Scrawly.Text.clean(text, @max_message_length, @max_message_bytes) do
+      "" -> {:error, :empty}
+      text -> {:ok, text}
     end
   end
-
-  defp clean_message(_text), do: {:error, :empty}
 
   # Players first: a player who also watches keeps their player identity.
   defp find_sender(_state, nil), do: {:error, :not_in_room}
@@ -1243,6 +1298,105 @@ defmodule Scrawly.Games.RoomServer do
 
   defp recover_interrupted_game(state), do: state
 
+  # ── Presence (sweep_presence/2) ───────────────────────────────────────────
+
+  defp put_presence_config(state) do
+    env = Application.get_env(:scrawly, __MODULE__, [])
+
+    %{
+      state
+      | presence_sweep_ms: Keyword.get(env, :presence_sweep_ms, @presence_sweep_ms),
+        presence_grace_ms: Keyword.get(env, :presence_grace_ms, @presence_grace_ms),
+        player_presence_grace_ms:
+          Keyword.get(env, :player_presence_grace_ms, @player_presence_grace_ms)
+    }
+  end
+
+  defp schedule_presence_sweep(%{presence_sweep_ms: ms}) when is_integer(ms) and ms > 0,
+    do: Process.send_after(self(), :presence_sweep, ms)
+
+  defp schedule_presence_sweep(_state), do: nil
+
+  # Which members still have a live tab, by OnlineTracker (keyed by
+  # Auth.actor_key, like watcher ids; a player's key is their user id):
+  # every watcher, and the players while the room is in its lobby. One
+  # missing for presence_grace_ms is removed. If the tracker can't answer,
+  # nothing changes.
+  defp sweep_presence(state, now) do
+    lobby_players =
+      if state.status == :lobby and state.game_id == nil,
+        do: Enum.map(state.players, & &1.id),
+        else: []
+
+    candidates = Enum.uniq(Enum.map(state.watchers, & &1.id) ++ lobby_players)
+
+    case live_keys(candidates) do
+      {:ok, live} ->
+        absent =
+          for id <- candidates, not MapSet.member?(live, id), into: %{} do
+            {id, Map.get(state.absent_since, id, now)}
+          end
+
+        watcher_ids = MapSet.new(state.watchers, & &1.id)
+
+        gone =
+          for {id, since} <- absent,
+              now - since >= presence_grace_for(state, id, watcher_ids),
+              do: id
+
+        remove_absent(%{state | absent_since: Map.drop(absent, gone)}, MapSet.new(gone))
+
+      :error ->
+        {:noreply, state}
+    end
+  end
+
+  defp presence_grace_for(state, id, watcher_ids) do
+    if MapSet.member?(watcher_ids, id),
+      do: state.presence_grace_ms,
+      else: Map.get(state, :player_presence_grace_ms, @player_presence_grace_ms)
+  end
+
+  defp live_keys([]), do: {:ok, MapSet.new()}
+  defp live_keys(keys), do: ScrawlyWeb.OnlineTracker.live_keys(keys)
+
+  defp remove_absent(state, gone) do
+    left_players = Enum.filter(state.players, &(state.status == :lobby and &1.id in gone))
+    left_ids = Enum.map(left_players, & &1.id)
+    watchers = Enum.reject(state.watchers, &(&1.id in gone))
+
+    cond do
+      state.creator_id in left_ids ->
+        {:stop, :normal, end_room(%{state | watchers: watchers})}
+
+      left_players != [] ->
+        Enum.each(left_ids, &clear_membership(state.room_id, &1))
+        names = Enum.map_join(left_players, ", ", & &1.username)
+
+        new_state =
+          %{state | watchers: watchers, players: state.players -- left_players}
+          |> add_sys_msg("#{names} left the room (no open tab)")
+          |> notify_waiters()
+          |> notify_lobby()
+
+        {:noreply, new_state}
+
+      length(watchers) != length(state.watchers) ->
+        {:noreply, notify_waiters(%{state | watchers: watchers})}
+
+      true ->
+        {:noreply, state}
+    end
+  end
+
+  # The user's DB membership, only if it still points at this room.
+  defp clear_membership(room_id, user_id) do
+    with {:ok, _uuid} <- Ecto.UUID.cast(user_id),
+         {:ok, %{current_room_id: ^room_id} = user} <- Accounts.get_user_by_id(user_id) do
+      log_failure(Accounts.leave_room(user), "clear a membership")
+    end
+  end
+
   # Marks the room as playing and creates its Game row. If the Game row can't be
   # created, the room is put back in the lobby so no half-started game remains.
   defp persist_game_start(room_id, total_rounds) do
@@ -1389,6 +1543,115 @@ defmodule Scrawly.Games.RoomServer do
     )
   end
 
+  defp append_stroke(state, stroke, op) do
+    with :ok <- fresh_stroke_op(state, op),
+         :ok <- new_stroke_id(state, stroke),
+         {:ok, stroke} <- StrokeRules.check_append(state.drawing_strokes, stroke) do
+      new_state =
+        state
+        |> put_stroke_op(op)
+        |> put_strokes(state.drawing_strokes ++ [stroke])
+        |> Broadcasts.publish(:stroke_completed, %{
+          stroke_id: stroke.id,
+          path: stroke.path,
+          color: stroke.color,
+          width: stroke.width
+        })
+
+      {:reply, :ok, new_state}
+    else
+      :duplicate ->
+        {:reply, :duplicate, state}
+
+      {:error, reason} when reason in [:invalid_stroke, :stroke_limit] ->
+        {:reply, {:error, reason, state.drawing_strokes}, state}
+    end
+  end
+
+  defp clear_strokes(state, op) do
+    case fresh_stroke_op(state, op) do
+      :ok ->
+        new_state =
+          state
+          |> put_stroke_op(op)
+          |> put_strokes([])
+          |> Broadcasts.publish(:drawing_cleared, %{})
+
+        {:reply, :ok, new_state}
+
+      :duplicate ->
+        {:reply, :duplicate, state}
+    end
+  end
+
+  # Only the id goes out: every page already holds the canvas.
+  defp undo_stroke(state, stroke_id, op) do
+    with :ok <- fresh_stroke_op(state, op),
+         {:ok, remaining} <- drop_stroke(state.drawing_strokes, stroke_id) do
+      new_state =
+        state
+        |> put_stroke_op(op)
+        |> put_strokes(remaining)
+        |> Broadcasts.publish(:drawing_undone, %{stroke_id: stroke_id})
+
+      {:reply, :ok, new_state}
+    else
+      :duplicate -> {:reply, :duplicate, state}
+    end
+  end
+
+  # StrokeRules.op_rate_limit/0 per drawer: appends, clears and undos. A
+  # refused op doesn't count.
+  defp check_op_slot(state, actor_id) do
+    {max, window_ms} = StrokeRules.op_rate_limit()
+    now = System.monotonic_time(:millisecond)
+
+    recent =
+      state.stroke_rate_limits
+      |> Map.get(actor_id, [])
+      |> Enum.take_while(&(now - &1 < window_ms))
+
+    if length(recent) >= max, do: {:error, :rate_limited}, else: :ok
+  end
+
+  defp spend_op_slot({:reply, :duplicate, _state} = result, _actor_id), do: result
+
+  defp spend_op_slot({:reply, reply, state}, actor_id) do
+    {_max, window_ms} = StrokeRules.op_rate_limit()
+    now = System.monotonic_time(:millisecond)
+    {:reply, reply, record_slot(state, :stroke_rate_limits, actor_id, now, window_ms)}
+  end
+
+  # A sliding window per key in the map under `field` (key => monotonic ms
+  # stamps, newest first): admits and records `now` when the key has fewer
+  # than `max` stamps less than `window_ms` old, else `:rate_limited`
+  # (refused attempts aren't recorded). Keys left without a recent stamp
+  # are dropped, so the map holds only recent actors.
+  defp take_slot(state, field, key, now, {max, window_ms}) do
+    limits = recent_stamps(Map.fetch!(state, field), now, window_ms)
+    recent = Map.get(limits, key, [])
+
+    if length(recent) >= max,
+      do: :rate_limited,
+      else: {:ok, Map.put(state, field, Map.put(limits, key, [now | recent]))}
+  end
+
+  # Records `now` for `key` whatever the count (a watch leave is never
+  # refused; a stroke op was checked first).
+  defp record_slot(state, field, key, now, window_ms) do
+    limits = recent_stamps(Map.fetch!(state, field), now, window_ms)
+    Map.put(state, field, Map.update(limits, key, [now], &[now | &1]))
+  end
+
+  defp recent_stamps(limits, now, window_ms) do
+    Enum.reduce(limits, %{}, fn {key, stamps}, acc ->
+      case Enum.take_while(stamps, &(now - &1 < window_ms)) do
+        [] -> acc
+        recent -> Map.put(acc, key, recent)
+      end
+    end)
+  end
+
   defp fresh_stroke_op(%{stroke_op: {epoch, last}}, {epoch, seq}) when seq <= last,
     do: :duplicate
 
@@ -1441,12 +1704,22 @@ defmodule Scrawly.Games.RoomServer do
   defp to_player_map(user) do
     %{
       id: user.id,
-      username: user.username,
+      username: cap_username(user.username),
       score: user.score || 0,
       avatar_id: Map.get(user, :avatar_id) || "a-mushroom",
       avatar_color: Map.get(user, :avatar_color) || "3"
     }
   end
+
+  # Names reach every page in deltas and lobby summaries: an older row
+  # might predate the username's byte cap, so they are cut to it here.
+  defp cap_name(%{username: name} = member), do: %{member | username: cap_username(name)}
+  defp cap_name(member), do: member
+
+  defp cap_username(name) when is_binary(name),
+    do: Scrawly.Text.truncate(name, 20, Accounts.User.max_username_bytes())
+
+  defp cap_username(name), do: name
 
   defp capture_round_result(state, drawer_points, drawer_name \\ nil),
     do: GameFlow.capture_round_result(state, drawer_points, drawer_name)

@@ -2,25 +2,37 @@ defmodule Scrawly.Games.StrokeRules do
   @moduledoc """
   What a stroke may look like and how much a canvas may hold. Pure functions.
 
-  Used by `RoomServer` for completed strokes and by `ScrawlyWeb.GameChannel`
-  for live stroke chunks. Paths are SVG path data: commands `M L Q C Z` (either
-  case), numbers (signs, decimals and exponents) and `,`/space separators, so
-  the client's `"M x y L x y ..."` strokes and later curve commands both pass.
+  Used by `RoomServer` for completed strokes, by `ScrawlyWeb.GameChannel`
+  for live stroke chunks and by `ScrawlyWeb.DemoBoardChannel` for both.
+  Paths are SVG path data: commands `M L Q C Z` (either case), numbers
+  (signs, decimals and exponents) and `,`/space separators, so the client's
+  `"M x y Q x y x y ... L x y"` strokes pass.
 
-  The limits are generous on purpose: the client appends an unrounded
-  `" L x y"` (about 10-15 bytes) on every pointer move and does not yet split
-  long gestures, so a tight per-stroke cap would reject ordinary drawing. The
-  canvas budget keeps the stroke list (sent in every page load and every
-  `:drawing_undone` broadcast) bounded. Tighten these once the client rounds
-  coordinates and splits long strokes.
+  The client's stroke engine (stroke_engine.mjs) rounds coordinates to one
+  decimal and splits a gesture into a new stroke once its path reaches 7,000
+  characters, so no stroke it commits passes ~7,060 bytes: the path cap
+  leaves room for that, no more. The canvas budget keeps the stroke list
+  (sent in every page load) bounded.
+
+  Also the rate of a drawer's canvas ops (`op_rate_limit/0`) and the round
+  replay kept for the score page (`replay/1`).
   """
 
-  @max_path_bytes 65_536
+  @max_path_bytes 8_000
   @max_delta_bytes 2_000
   @max_strokes 500
   @max_canvas_bytes 2_000_000
   @max_stroke_id_bytes 64
   @widths 1..40
+  # Stroke ops (commit, undo, clear) a drawer may send per window. The
+  # client sends one at a time and waits for its ack, so drawing never comes
+  # close; it caps what a forged client can make the room broadcast.
+  @op_rate_limit {40, 5_000}
+  # A round's replay: at most this many strokes and path bytes, in drawing
+  # order. A minute of non-stop drawing is ~100 KB; a typical sketch a
+  # fraction of the byte cap.
+  @max_replay_strokes 300
+  @max_replay_bytes 65_536
 
   @path_chars ~r/\A[MLQCZmlqcz0-9eE.,\- ]+\z/
   @color ~r/\A#[0-9a-fA-F]{6}\z/
@@ -32,6 +44,12 @@ defmodule Scrawly.Games.StrokeRules do
   def max_strokes, do: @max_strokes
   def max_canvas_bytes, do: @max_canvas_bytes
   def max_stroke_id_bytes, do: @max_stroke_id_bytes
+  def max_replay_strokes, do: @max_replay_strokes
+  def max_replay_bytes, do: @max_replay_bytes
+
+  @doc "`{ops, window_ms}`: the canvas ops a drawer may send per window."
+  @spec op_rate_limit() :: {pos_integer, pos_integer}
+  def op_rate_limit, do: @op_rate_limit
 
   @doc "A `#RRGGBB` hex colour (either case)."
   @spec valid_color?(term) :: boolean
@@ -82,6 +100,56 @@ defmodule Scrawly.Games.StrokeRules do
       {:ok, stroke}
     end
   end
+
+  @doc """
+  A round's drawing as kept for its replay (the Game's `round_details`,
+  rendered by the score page): `{strokes, truncated?}`, the strokes in
+  drawing order as `%{path, color, width}` (no ids: nothing refers to them
+  any more) while they fit in #{@max_replay_strokes} strokes and
+  #{@max_replay_bytes} path bytes. `truncated?` tells whether any were left
+  out. Accepts atom- or string-keyed maps (a JSONB row) and skips anything
+  that isn't a stroke.
+  """
+  @spec replay([map]) :: {[%{path: String.t(), color: String.t(), width: pos_integer}], boolean}
+  def replay(strokes) when is_list(strokes) do
+    {kept, _count, _bytes, truncated?} =
+      Enum.reduce_while(strokes, {[], 0, 0, false}, fn stroke, {kept, count, bytes, _} ->
+        case replay_stroke(stroke) do
+          nil ->
+            {:cont, {kept, count, bytes, false}}
+
+          %{path: path} = s when count < @max_replay_strokes ->
+            size = byte_size(path)
+
+            if bytes + size <= @max_replay_bytes,
+              do: {:cont, {[s | kept], count + 1, bytes + size, false}},
+              else: {:halt, {kept, count, bytes, true}}
+
+          _over_count ->
+            {:halt, {kept, count, bytes, true}}
+        end
+      end)
+
+    {Enum.reverse(kept), truncated?}
+  end
+
+  def replay(_strokes), do: {[], false}
+
+  defp replay_stroke(stroke) when is_map(stroke) do
+    path = field(stroke, :path)
+
+    if is_binary(path),
+      do: %{
+        path: path,
+        color: field(stroke, :color) || "#000000",
+        width: field(stroke, :width) || 2
+      },
+      else: nil
+  end
+
+  defp replay_stroke(_stroke), do: nil
+
+  defp field(map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
 
   @doc "Total path bytes held by `strokes`."
   @spec canvas_bytes([stroke]) :: non_neg_integer

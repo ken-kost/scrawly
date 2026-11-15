@@ -18,8 +18,12 @@ defmodule ScrawlyWeb.Endpoint do
     websocket: [connect_info: [session: @session_options]],
     longpoll: [connect_info: [session: @session_options]]
 
+  # The game and demo-board channels. Their biggest legitimate frame is a
+  # demo stroke: at most 8,000 path bytes (StrokeRules) in a ~150-byte
+  # envelope. Bandit's global caps (config.exs, :websocket_options) cover
+  # the other sockets and fragmented messages.
   socket "/socket", ScrawlyWeb.UserSocket,
-    websocket: true,
+    websocket: [max_frame_size: 32_768],
     longpoll: false
 
   # Serve at "/" the static files from "priv/static" directory.
@@ -53,9 +57,14 @@ defmodule ScrawlyWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
+  # Every body this app reads is small: the largest is a Hologram command
+  # carrying a stroke (JSON with strings hex-encoded, so an 8,000-byte path
+  # is ~16 KB). 128 KiB leaves room for that and refuses a megabyte body
+  # with 413 before anything decodes it (Plug's default is 8 MB).
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],
+    length: 131_072,
     json_decoder: Phoenix.json_library()
 
   plug Plug.MethodOverride

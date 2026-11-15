@@ -60,6 +60,11 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
 
   defp strokes(room), do: room_state!(room.id).drawing_strokes
 
+  defp fill_canvas!(room, strokes) do
+    [{pid, _}] = Registry.lookup(Scrawly.RoomRegistry, room.id)
+    :sys.replace_state(pid, &%{&1 | drawing_strokes: strokes})
+  end
+
   defp subscribe_room(room) do
     Phoenix.PubSub.subscribe(Hologram.PubSub, Hologram.Realtime.channel_topic({:room, room.id}))
   end
@@ -182,7 +187,7 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
       assert strokes(ctx.room) == [@stroke]
     end
 
-    test ":undo_drawing_cmd removes the given stroke and broadcasts the rest", ctx do
+    test ":undo_drawing_cmd removes the given stroke and broadcasts its id", ctx do
       :ok = RoomServer.append_drawing(ctx.room.id, ctx.creator.id, @stroke)
       :ok = RoomServer.append_drawing(ctx.room.id, ctx.creator.id, @stroke2)
 
@@ -201,7 +206,7 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
         Map.put(Map.delete(@stroke2, :id), :stroke_id, "s-2")
       )
 
-      assert_published(ctx.room, :drawing_undone, %{strokes: [@stroke]})
+      assert_published(ctx.room, :drawing_undone, %{stroke_id: "s-2"})
     end
 
     test ":clear_drawing_cmd empties the canvas and broadcasts", ctx do
@@ -370,8 +375,10 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
     end
 
     test "stroke 501 is rejected", ctx do
-      for n <- 2..StrokeRules.max_strokes(),
-          do: :ok = RoomServer.append_drawing(ctx.room.id, ctx.creator.id, numbered(@stroke2, n))
+      # Filled in place: 500 ops would hit the drawer's op rate limit.
+      fill_canvas!(ctx.room, [
+        @stroke | Enum.map(2..StrokeRules.max_strokes(), &numbered(@stroke2, &1))
+      ])
 
       stored = strokes(ctx.room)
       assert length(stored) == 500
@@ -382,17 +389,16 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
     end
 
     test "a stroke that would push the canvas over the byte budget is rejected", ctx do
-      big = %{@stroke | path: String.duplicate("1", 60_000)}
+      big = %{@stroke | path: String.duplicate("1", 7_900)}
 
-      # 60_000 * 33 + the first stroke's 15 bytes: a 33rd big stroke still fits,
-      # a 34th would exceed 2_000_000 bytes.
-      for n <- 1..33,
-          do: :ok = RoomServer.append_drawing(ctx.room.id, ctx.creator.id, numbered(big, n))
+      # 7_900 * 253 + the first stroke's 15 bytes: one more big stroke would
+      # exceed 2_000_000 bytes.
+      fill_canvas!(ctx.room, [@stroke | Enum.map(1..253, &numbered(big, &1))])
 
       stored = strokes(ctx.room)
 
       result =
-        run(:complete_stroke, ctx.room, tab(ctx.creator), %{path: big.path, stroke_id: "s-34"})
+        run(:complete_stroke, ctx.room, tab(ctx.creator), %{path: big.path, stroke_id: "s-254"})
 
       assert_rejected(result, :stroke_limit, stored)
       assert strokes(ctx.room) == stored

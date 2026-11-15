@@ -41,6 +41,13 @@ defmodule Scrawly.Games.RoomServerDrawingTest do
 
   defp assert_unchanged(reply_state, state), do: assert(reply_state == state)
 
+  # Nothing changed but the drawer's spent op slot (StrokeRules.op_rate_limit/0:
+  # an invalid op counts too, it gets the canvas back).
+  defp assert_only_slot_spent(reply_state, state) do
+    assert Map.delete(reply_state, :stroke_rate_limits) == Map.delete(state, :stroke_rate_limits)
+    assert [_] = reply_state.stroke_rate_limits[@drawer]
+  end
+
   describe "authorize/3 :draw" do
     test "allows the current drawer while :drawing" do
       assert RoomServer.authorize(room(), @drawer, :draw) == :ok
@@ -98,7 +105,7 @@ defmodule Scrawly.Games.RoomServerDrawingTest do
       for bad <- [
             %{new | path: 123},
             %{new | path: "M 1 2 <script>"},
-            %{new | path: String.duplicate("1", 65_537)},
+            %{new | path: String.duplicate("1", StrokeRules.max_path_bytes() + 1)},
             %{new | color: "red"},
             %{new | color: "#fff"},
             %{new | width: 0},
@@ -112,7 +119,7 @@ defmodule Scrawly.Games.RoomServerDrawingTest do
           ] do
         {reply, new_state} = call(state, {:append_drawing, @drawer, bad, nil})
         assert reply == {:error, :invalid_stroke, [@stroke]}, inspect(bad)
-        assert_unchanged(new_state, state)
+        assert_only_slot_spent(new_state, state)
       end
     end
 
@@ -123,23 +130,23 @@ defmodule Scrawly.Games.RoomServerDrawingTest do
 
       {reply, new_state} = call(state, {:append_drawing, @drawer, next, nil})
       assert reply == {:error, :stroke_limit, full}
-      assert_unchanged(new_state, state)
+      assert_only_slot_spent(new_state, state)
 
       assert {:ok, _} =
                call(room(drawing_strokes: tl(full)), {:append_drawing, @drawer, next, nil})
     end
 
     test "rejects a stroke that would push the canvas over the byte budget" do
-      big = &%{stroke(&1) | path: String.duplicate("1", 60_000)}
-      # 33 * 60_000 = 1_980_000 bytes stored; one more 60 KB stroke is over 2 MB.
-      strokes = Enum.map(1..33, big)
+      big = &%{stroke(&1) | path: String.duplicate("1", 7_900)}
+      # 253 * 7_900 = 1_998_700 bytes stored; one more 7,900-byte stroke is over 2 MB.
+      strokes = Enum.map(1..253, big)
       state = room(drawing_strokes: strokes)
 
-      {reply, new_state} = call(state, {:append_drawing, @drawer, big.(34), nil})
+      {reply, new_state} = call(state, {:append_drawing, @drawer, big.(254), nil})
       assert reply == {:error, :stroke_limit, strokes}
-      assert_unchanged(new_state, state)
+      assert_only_slot_spent(new_state, state)
 
-      assert {:ok, _} = call(state, {:append_drawing, @drawer, stroke(34), nil})
+      assert {:ok, _} = call(state, {:append_drawing, @drawer, stroke(254), nil})
     end
   end
 
@@ -148,12 +155,13 @@ defmodule Scrawly.Games.RoomServerDrawingTest do
       other = %{stroke(2) | color: "#000000"}
       state = room(drawing_strokes: [@stroke, other])
 
-      assert {{:ok, [@stroke]}, undone} = call(state, {:undo_drawing, @drawer, other.id, nil})
+      assert {:ok, undone} = call(state, {:undo_drawing, @drawer, other.id, nil})
       assert undone.drawing_strokes == [@stroke]
 
       assert {:ok, cleared} = call(state, {:clear_drawing, @drawer, nil})
       assert cleared.drawing_strokes == []
 
+      # A duplicate changes nothing, not even the drawer's op budget.
       assert {:duplicate, ^state} = call(state, {:undo_drawing, @drawer, "s-unknown", nil})
       assert {:duplicate, _} = call(room(), {:undo_drawing, @drawer, @stroke.id, nil})
     end
