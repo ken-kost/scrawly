@@ -10,7 +10,7 @@ defmodule ScrawlyWeb.Pages.HomePageTest do
   describe "init/3" do
     test "initializes with default state" do
       server = %Hologram.Server{session: %{}}
-      component = HomePage.init(%{}, %Hologram.Component{}, server)
+      {component, _server} = HomePage.init(%{}, %Hologram.Component{}, server)
 
       assert component.state.show_create_room == false
       assert component.state.new_room_name == ""

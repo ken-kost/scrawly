@@ -69,11 +69,14 @@ defmodule Scrawly.Games.GameTest do
                  total_rounds: 0
                })
 
-      # Test maximum constraint
+      # The maximum is the cap RoomServer.total_rounds/2 applies (QA G1).
+      assert {:ok, %{total_rounds: 24}} =
+               Ash.create(Game, %{room_id: room.id, total_rounds: Game.max_total_rounds()})
+
       assert {:error, %Ash.Error.Invalid{}} =
                Ash.create(Game, %{
                  room_id: room.id,
-                 total_rounds: 13
+                 total_rounds: Game.max_total_rounds() + 1
                })
     end
 

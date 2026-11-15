@@ -1,5 +1,9 @@
 // Minimal game socket setup for Hologram pages.
 // Requires phoenix.min.js to be loaded first (provides global Phoenix object).
+//
+// The game channel carries only the drawer's live stroke chunks
+// (sendDrawingStrokeChunk, ScrawlyWeb.GameChannel); completed strokes, undo,
+// clear and the canvas snapshot go through Hologram commands and Realtime.
 (function() {
   if (!window.Phoenix || !window.Phoenix.Socket) {
     console.error("Phoenix.Socket not available for game socket setup");
@@ -9,13 +13,28 @@
   var socket = null;
   var channel = null;
   var currentRoomCode = null;
+  var serverCloseHandler = null;
 
   window.gameSocket = {
+    // `token` is a socket-only token (ScrawlyWeb.SocketToken), never the
+    // session's sign-in token.
     connect: function(token) {
       if (socket) { this.disconnect(); }
-      socket = new Phoenix.Socket("/socket", { params: { token: token } });
-      socket.connect();
+      var s = new Phoenix.Socket("/socket", { params: { token: token } });
+      socket = s;
+      // The server closes a socket with code 1000 when the user's tokens were
+      // revoked (a "disconnect" broadcast), and Phoenix never retries such a
+      // close. Our own disconnect() drops `socket` first, so it doesn't count.
+      s.onClose(function(event) {
+        if (socket === s && event && event.code === 1000 && serverCloseHandler) {
+          serverCloseHandler();
+        }
+      });
+      s.connect();
     },
+
+    // Called (once per close) when the server closed the socket for good.
+    onServerClose: function(handler) { serverCloseHandler = handler; },
 
     joinRoom: function(roomCode) {
       if (!socket) { return { receive: function() { return this; } }; }
@@ -31,15 +50,7 @@
 
     disconnect: function() {
       this.leaveRoom();
-      if (socket) { socket.disconnect(); socket = null; }
-    },
-
-    sendDrawingSegment: function(segment) {
-      if (channel) channel.push("drawing_segment", { segment: segment });
-    },
-
-    sendDrawingStroke: function(path, color, width) {
-      if (channel) channel.push("drawing_stroke", { segment: path, color: color, width: width });
+      if (socket) { var s = socket; socket = null; s.disconnect(); }
     },
 
     sendDrawingStrokeChunk: function(strokeId, seq, delta, color, width) {
@@ -52,34 +63,10 @@
       });
     },
 
-    sendDrawingStrokeComplete: function(strokeId, path, color, width) {
-      if (channel) channel.push("drawing_stroke_complete", {
-        stroke_id: strokeId,
-        path: path,
-        color: color,
-        width: width
-      });
-    },
-
-    sendDrawingClear: function() {
-      if (channel) channel.push("drawing_clear", {});
-    },
-
-    sendDrawingUndo: function() {
-      return channel ? channel.push("drawing_undo", {}) : null;
-    },
-
-    requestDrawingPath: function() {
-      return channel ? channel.push("get_drawing_path", {}) : null;
-    },
-
     isInRoom: function() { return !!channel && !!currentRoomCode; },
 
     // Expose the underlying Phoenix channel for direct event registration
-    _getChannel: function() { return channel; },
-
-    // Callback registration stubs — actual handlers are set up in game_channel.mjs
-    onDrawingSegment: function() {},
-    onDrawingClear: function() {}
+    // (game_channel.mjs registers the handlers)
+    _getChannel: function() { return channel; }
   };
 })();

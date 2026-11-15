@@ -24,8 +24,9 @@ defmodule ScrawlyWeb.Router do
   scope "/", ScrawlyWeb do
     pipe_through :browser
 
-    auth_routes AuthController, Scrawly.Accounts.User, path: "/auth"
-    sign_out_route AuthController
+    # Sign-in, registration, recovery and sign-out are Hologram commands
+    # (CSRF-checked, throttled): see AuthController's moduledoc.
+    get "/guest", AuthController, :guest
   end
 
   # Other scopes may use custom stacks.

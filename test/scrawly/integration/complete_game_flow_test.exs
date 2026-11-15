@@ -80,7 +80,7 @@ defmodule Scrawly.Integration.CompleteGameFlowTest do
             end
 
           # Start the round with the designated drawer
-          {:ok, g} = Games.start_round(g.id, drawer_id)
+          {:ok, g} = Games.start_round(g.id, drawer_id, %{used_words: used})
 
           # Verify round state
           assert g.current_drawer_id == drawer_id
@@ -100,47 +100,9 @@ defmodule Scrawly.Integration.CompleteGameFlowTest do
       {:ok, ended_game} = Games.end_current_game(completed.id)
       assert ended_game.status == :completed
 
-      # 6. Verify all rounds used different words (with high probability)
+      # 6. Verify all rounds used different words (used words are excluded each round)
       unique_words = Enum.uniq(final_used_words)
       assert length(unique_words) == total_rounds
-    end
-
-    test "GamePage start_game params mirror backend state", %{
-      room: room,
-      players: players
-    } do
-      first_drawer = List.first(players)
-
-      # Create and start game via Ash
-      {:ok, game} = Games.create_game(room.id, 5)
-      {:ok, started_game} = Games.start_round(game.id, first_drawer.id)
-
-      # Simulate what GamePage.command(:start_game) produces as action params
-      params = %{
-        game_id: game.id,
-        round: started_game.current_round,
-        first_drawer_id: first_drawer.id,
-        current_word: started_game.current_word,
-        players: players
-      }
-
-      assert params.game_id == game.id
-      assert params.round == 1
-      assert params.first_drawer_id == first_drawer.id
-      assert params.current_word != nil
-
-      # Verify WordHints produces correct hidden display
-      hidden = WordHints.hidden_display(started_game.current_word)
-      assert is_binary(hidden)
-      assert String.contains?(hidden, "_")
-      refute hidden == started_game.current_word
-
-      # Verify is_drawer logic: first player is drawer, others are not
-      assert first_drawer.id == params.first_drawer_id
-
-      for p <- Enum.drop(players, 1) do
-        refute p.id == params.first_drawer_id
-      end
     end
 
     test "GamePage next_round params mirror backend state for round 2", %{

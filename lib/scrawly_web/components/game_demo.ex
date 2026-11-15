@@ -2,26 +2,20 @@ defmodule ScrawlyWeb.Components.GameDemo do
   @moduledoc """
   Shared interactive canvas rendered on the home page. All drawing flows over
   the `demo:board` Phoenix channel — every connected visitor sees and edits the
-  same board in real time. Strokes are committed to the DOM directly by
-  `demo_board.mjs` so Hologram never re-renders per pointer move.
+  same board in real time. Pointer input is native (stroke_engine.mjs) and
+  strokes are committed to the DOM directly by `demo_board.mjs`, so Hologram
+  never runs an action or re-renders per pointer move.
+
+  The svg's layers, bottom to top: the JS-owned `#demo-board-strokes` and
+  `#demo-board-overlay` groups (JS only inserts into these), then
+  `#demo-board-active-path`. The dot grid is drawn by CSS above the strokes
+  (`.demo-canvas::after`), so the white eraser never paints over it.
   """
   use Hologram.Component
 
   prop :color, :string, default: "#000000"
   prop :width, :integer, default: 2
   prop :eraser, :boolean, default: false
-
-  @palette [
-    "#000000",
-    "#EF4444",
-    "#F97316",
-    "#EAB308",
-    "#22C55E",
-    "#3B82F6",
-    "#A855F7",
-    "#EC4899"
-  ]
-  @widths [2, 4, 8]
 
   def template do
     ~HOLO"""
@@ -39,17 +33,9 @@ defmodule ScrawlyWeb.Components.GameDemo do
           id="demo-board-svg"
           viewBox="0 0 400 225"
           preserveAspectRatio="xMidYMid meet"
-          style="touch-action: none; width: 100%; height: 100%;"
-          $pointer_down={:demo_pointer_down}
-          $pointer_move={:demo_pointer_move}
-          $pointer_up={:demo_pointer_up}
-          $pointer_cancel={:demo_pointer_up}>
-          <defs>
-            <pattern id="demo-board-dotgrid" x="0" y="0" width="14" height="14" patternUnits="userSpaceOnUse">
-              <circle cx="1" cy="1" r="0.6" fill="rgba(0,0,0,0.06)" />
-            </pattern>
-          </defs>
-          <rect width="400" height="225" fill="url(#demo-board-dotgrid)" />
+          style="touch-action: none; width: 100%; height: 100%;">
+          <g id="demo-board-strokes"></g>
+          <g id="demo-board-overlay"></g>
           <path id="demo-board-active-path" d="" stroke={@color} stroke-width={@width} fill="none" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </div>
@@ -86,6 +72,7 @@ defmodule ScrawlyWeb.Components.GameDemo do
     """
   end
 
-  def palette, do: @palette
-  def widths, do: @widths
+  # No commands here. A forged one (the module is named in the request) is
+  # denied instead of raising (see ScrawlyWeb.CommandParams).
+  def command(name, _params, server), do: ScrawlyWeb.CommandParams.deny_unknown(server, name)
 end

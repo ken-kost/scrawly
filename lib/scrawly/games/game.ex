@@ -4,6 +4,14 @@ defmodule Scrawly.Games.Game do
     domain: Scrawly.Games,
     data_layer: AshPostgres.DataLayer
 
+  # The most rounds a game may have (RoomServer.total_rounds/2 caps the
+  # players x rounds-per-player product at this, in whole rotations).
+  @max_total_rounds 24
+
+  @doc "The most rounds a game may have; `total_rounds`' constraint."
+  @spec max_total_rounds() :: pos_integer
+  def max_total_rounds, do: @max_total_rounds
+
   postgres do
     table "games"
     repo Scrawly.Repo
@@ -31,6 +39,13 @@ defmodule Scrawly.Games.Game do
     update :end_game do
       accept []
       change set_attribute(:status, :completed)
+    end
+
+    # A game that will never finish: its room was dissolved mid-game, or the
+    # room process restarted while it ran (RoomServer init).
+    update :cancel do
+      accept []
+      change set_attribute(:status, :cancelled)
     end
 
     update :save_round_details do
@@ -110,6 +125,11 @@ defmodule Scrawly.Games.Game do
       end
     end
 
+    read :in_progress_for_room do
+      argument :room_id, :uuid, allow_nil?: false
+      filter expr(room_id == ^arg(:room_id) and status == :in_progress)
+    end
+
     read :for_room do
       argument :room_id, :uuid, allow_nil?: false
       filter expr(room_id == ^arg(:room_id) and status == :completed)
@@ -147,11 +167,14 @@ defmodule Scrawly.Games.Game do
       allow_nil? false
       default 5
       public? true
-      constraints min: 1, max: 12
+      constraints min: 1, max: @max_total_rounds
     end
 
+    # The secret word: kept off public interfaces. Actions still write it
+    # (`accept` only needs it writable), and the RoomServer never exposes it
+    # to non-drawers (see RoomServer.View).
     attribute :current_word, :string do
-      public? true
+      public? false
     end
 
     attribute :current_drawer_id, :uuid do

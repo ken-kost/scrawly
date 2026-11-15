@@ -7,6 +7,8 @@ defmodule Scrawly.Games.Room do
 
   require AshAi.Actions
 
+  alias Scrawly.Validations.MaxBytes
+
   postgres do
     table "rooms"
     repo Scrawly.Repo
@@ -34,6 +36,12 @@ defmodule Scrawly.Games.Room do
       ]
 
       primary? true
+
+      # Byte caps next to the character caps of :name and :prompt: one
+      # character can be megabytes (Scrawly.Text), and both are shown to
+      # everyone (the room list, every room snapshot).
+      validate {MaxBytes, attribute: :name, max: 160}
+      validate {MaxBytes, attribute: :prompt, max: 800}
 
       change fn changeset, _context ->
         Ash.Changeset.force_change_attribute(changeset, :code, generate_room_code())
@@ -182,6 +190,7 @@ defmodule Scrawly.Games.Room do
 
       argument :prompt, :string do
         allow_nil? false
+        constraints max_length: 200
 
         description "The theme or category for word generation, e.g. 'ocean animals' or 'things in a kitchen'"
       end
@@ -240,6 +249,7 @@ defmodule Scrawly.Games.Room do
     attribute :name, :string do
       allow_nil? false
       public? true
+      constraints max_length: 40
     end
 
     attribute :code, :string do
@@ -287,8 +297,11 @@ defmodule Scrawly.Games.Room do
       constraints one_of: [:local, :ai]
     end
 
+    # Interpolated into the AI word prompt: the cap bounds cost, it does not
+    # defend against prompt injection.
     attribute :prompt, :string do
       public? true
+      constraints max_length: 200
     end
 
     attribute :round_duration, :integer do

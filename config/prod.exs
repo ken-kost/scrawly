@@ -7,6 +7,9 @@ import Config
 # before starting your production server.
 config :scrawly, ScrawlyWeb.Endpoint, cache_static_manifest: "priv/static/cache_manifest.json"
 
+# The session cookie carries the sign-in token: send it over HTTPS only.
+config :scrawly, secure_session_cookie: true
+
 # Configures Swoosh API Client
 config :swoosh, api_client: Swoosh.ApiClient.Req
 

@@ -4,72 +4,121 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
 
   Functions take a RoomServer state struct and return a (possibly modified) state
   struct. Side effects (PubSub, process messages, AI calls) are kept minimal —
-  callers remain responsible for `bump_version` / `notify_waiters`.
+  callers remain responsible for `notify_waiters` (the `:room_delta`). Chat
+  lines are published here (`push_chat/2`), through
+  `RoomServer.Broadcasts.publish/3` like every `{:room}` broadcast.
 
   The round lifecycle has two phases:
-    1. `:choosing` — drawer is shown 3 word options (15s timer)
-    2. `:drawing`  — round timer runs; guessers submit guesses
+    1. `:choosing` — drawer is shown 3 word options (`choice_duration/0` s)
+    2. `:drawing`  — the round runs; guessers submit guesses
 
-  `start_word_choice/4` advances the Game record + drawer rotation and enters
+  `start_word_choice/3` advances the Game record, takes the next drawer from
+  the room's turn queue (`turn_queue`, built at game start) and enters
   `:choosing`. `commit_word_choice/2` is invoked when the drawer picks or the
-  choice timer expires; it calls `Games.start_round` + `Games.start_round_timer`.
+  choice timer expires; it calls `Games.start_round` and schedules the round's
+  own expiry.
+
+  Both phases run against a monotonic deadline (`choice_deadline`,
+  `round_deadline`): nothing ticks on the server. Clients count down from the
+  remaining ms in `RoomServer.View`. The room process times its turns itself
+  with `Process.send_after/3` (no shared timer process that could lose them):
+  the choice timeout, the round's `{:round_ended, %{game_id, round, reason:
+  :time_up}}` expiry, the `{:hint_reveal, game_id, round, stage}` reveals and
+  the `:auto_advance_round` after a round ends. Their refs are kept in
+  `turn_timers` (`track_timer/2`) and cancelled whenever the turn or the game
+  ends (`cancel_turn_timers/1`); the handlers also check game, round and
+  phase, so a timer that fired anyway changes nothing.
   """
 
   alias Scrawly.Games
+  alias Scrawly.Games.{StrokeRules, Word, WordHints}
+  alias Scrawly.Games.RoomServer.Broadcasts
 
-  # Trigger async AI word refill when the pool drops at or below this count.
-  # Each round consumes 3 words (one chosen, two discarded), so this is generous
-  # enough to keep the pool full without paying for unused generation.
   @ai_refill_threshold 6
+  @max_chat_history 50
+  # Finished games a room remembers (shown in its lobby, sent in snapshots).
+  @max_past_games 5
+  # The drawer's word-choice window.
+  @choice_duration 15
+
+  @doc "How long, in seconds, the drawer has to pick a word before one is auto-picked."
+  @spec choice_duration() :: pos_integer
+  def choice_duration, do: @choice_duration
+
+  @doc "`choice_duration/0` in ms."
+  @spec choice_duration_ms() :: pos_integer
+  def choice_duration_ms, do: @choice_duration * 1000
+
+  @doc "How many finished games a room keeps in `past_games`."
+  @spec max_past_games() :: pos_integer
+  def max_past_games, do: @max_past_games
+
+  @doc """
+  Remembers `ref` (a `Process.send_after/3` ref) as one of the current turn's
+  timers, so `cancel_turn_timers/1` can cancel it. Anything else is ignored.
+  """
+  def track_timer(state, ref) when is_reference(ref),
+    do: %{state | turn_timers: [ref | state.turn_timers]}
+
+  def track_timer(state, _not_a_ref), do: state
+
+  @doc "Cancels every timer of the current turn (`track_timer/2`)."
+  def cancel_turn_timers(state) do
+    Enum.each(state.turn_timers, &Process.cancel_timer/1)
+    %{state | turn_timers: []}
+  end
 
   @doc """
   Advance to the next round and enter the word-choice phase.
 
-  Picks 3 candidate words (AI pool first, falls back to local), sets `phase:
-  :choosing`, populates `word_choices`, schedules a 15s timeout via the
-  supplied `schedule_timeout_fn.(game_id, round)`. Does NOT start the round
-  timer — that happens in `commit_word_choice/2`.
+  The drawer is the first player of `turn_queue` (the turn order built at
+  game start, from which a leaver's turns are removed), so nobody is skipped
+  or draws twice when someone leaves. Picks 3 candidate words (AI pool
+  first, then the local words, which fall back to the built-in list), sets
+  `phase: :choosing`, and schedules the `choice_duration/0` timeout via
+  `schedule_timeout_fn.(game_id, round)` (which returns the timer ref).
+  `notify_fn` runs last, on the new state (the room's `:room_delta`, then the
+  drawer's private slice).
 
-  Returns unchanged state on any error.
+  Returns `{:ok, state}`, or `{:error, reason}` when the round can't start
+  (no drawer left, a failed Game update, no words): the caller ends the game
+  instead of leaving the room stuck between rounds.
   """
-  def start_word_choice(state, bump_fn, notify_fn, schedule_timeout_fn) do
-    player_queue = Enum.map(state.players, & &1.id)
+  def start_word_choice(state, notify_fn, schedule_timeout_fn) do
+    state = cancel_turn_timers(state)
 
-    with {:ok, _} <- Games.complete_round(state.game_id),
+    with {:ok, drawer_id, queue} <- next_drawer(state),
+         {:ok, _} <- Games.complete_round(state.game_id),
          {:ok, _} <- Games.next_round(state.game_id),
-         {:ok, game_with_drawer} <- Games.select_next_drawer(state.game_id, player_queue) do
-      {choices, remaining_ai, used_from_ai} =
-        pick_word_choices(state.ai_words, state.used_words, state.word_count, 3)
-
-      drawer_name = get_player_name(state.players, game_with_drawer.current_drawer_id)
+         {[_ | _] = choices, remaining_ai, used_from_ai} <-
+           pick_word_choices(state.ai_words, state.used_words, state.word_count, 3) do
+      round = state.current_round + 1
+      drawer_name = get_player_name(state.players, drawer_id)
 
       new_state =
         %{
           state
-          | current_round: game_with_drawer.current_round,
-            current_drawer_id: game_with_drawer.current_drawer_id,
+          | current_round: round,
+            current_drawer_id: drawer_id,
+            turn_queue: queue,
             current_word: nil,
             ai_words: remaining_ai,
-            time_left: state.round_duration,
+            round_deadline: nil,
+            hint_stage: 0,
             round_active: false,
             correct_guessers: [],
             drawing_strokes: [],
+            stroke_op: nil,
             round_guesser_points: [],
             round_start_scores:
               Enum.reduce(state.players, %{}, fn p, acc ->
                 Map.put(acc, p.id, p.score || 0)
               end)
         }
-        |> enter_word_choice(choices, fn game_id, round ->
-          schedule_timeout_fn.(game_id, round)
-        end)
-        |> add_sys_msg(
-          "Round #{game_with_drawer.current_round} — #{drawer_name} is choosing a word …"
-        )
-        |> bump_fn.()
+        |> enter_word_choice(choices, schedule_timeout_fn)
+        |> add_sys_msg("Round #{round} — #{drawer_name} is choosing a word …")
         |> notify_fn.()
 
-      # Trigger async AI word refill if pool is running low
       if state.word_source == :ai and used_from_ai > 0 and
            length(remaining_ai) <= @ai_refill_threshold do
         send(
@@ -78,26 +127,46 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
         )
       end
 
-      new_state
+      {:ok, new_state}
     else
-      _ -> state
+      {:error, reason} -> {:error, reason}
+      {[], _remaining_ai, _used} -> {:error, :no_words}
+      other -> {:error, other}
+    end
+  end
+
+  # The next drawer still in the room, and the turns after theirs.
+  defp next_drawer(state) do
+    ids = MapSet.new(state.players, & &1.id)
+
+    case Enum.drop_while(state.turn_queue, &(not MapSet.member?(ids, &1))) do
+      [drawer_id | rest] -> {:ok, drawer_id, rest}
+      [] -> {:error, :no_drawer}
     end
   end
 
   @doc """
   Set `phase: :choosing`, populate `word_choices`, set `choice_deadline`, and
-  schedule the 15s timeout. Pure-ish: only side effect is the scheduled message.
+  schedule the `choice_duration/0` timeout (`schedule_timeout_fn` returns its
+  ref, which joins the turn's timers).
   """
   def enter_word_choice(state, choices, schedule_timeout_fn) when is_list(choices) do
-    deadline = System.monotonic_time(:millisecond) + 15_000
-    schedule_timeout_fn.(state.game_id, state.current_round)
+    deadline = System.monotonic_time(:millisecond) + choice_duration_ms()
+    ref = schedule_timeout_fn.(state.game_id, state.current_round)
 
     %{state | phase: :choosing, word_choices: choices, choice_deadline: deadline}
+    |> track_timer(ref)
   end
 
   @doc """
-  Commit the chosen word: persist it to the Game, start the round timer, and
-  transition to `:drawing`. Returns `{:ok, state}` or `{:error, reason}`.
+  Commit the chosen word: persist it to the Game and transition to
+  `:drawing`. Returns `{:ok, state}` or `{:error, reason}`.
+
+  Runs inside the room process: cancels the choice timeout, sets
+  `round_deadline` (monotonic ms) and `hint_stage: 0`, and schedules to
+  `self()` the round's expiry, `{:round_ended, %{game_id, round, reason:
+  :time_up}}` after `round_duration` seconds, and one `{:hint_reveal,
+  game_id, round, stage}` per stage of `WordHints.reveal_offsets_ms/2`.
   """
   def commit_word_choice(state, word) when is_binary(word) do
     start_round_opts = %{
@@ -106,49 +175,77 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
       override_word: word
     }
 
-    with {:ok, _updated_game} <-
-           Games.start_round(state.game_id, state.current_drawer_id, start_round_opts),
-         :ok <- Games.start_round_timer(state.game_id, state.round_duration) do
-      drawer_name = get_player_name(state.players, state.current_drawer_id)
-      new_used = Enum.uniq([word | state.used_words])
+    case Games.start_round(state.game_id, state.current_drawer_id, start_round_opts) do
+      {:ok, _updated_game} ->
+        round_ms = round(state.round_duration * 1000)
+        drawer_name = get_player_name(state.players, state.current_drawer_id)
 
-      new_state =
-        %{
-          state
-          | current_word: word,
-            word_choices: [],
-            choice_deadline: nil,
-            phase: :drawing,
-            round_active: true,
-            time_left: state.round_duration,
-            used_words: new_used,
-            correct_guessers: [],
-            drawing_strokes: [],
-            round_guesser_points: []
-        }
-        |> add_sys_msg("Round #{state.current_round} — #{drawer_name} is drawing")
+        expiry =
+          Process.send_after(
+            self(),
+            {:round_ended,
+             %{game_id: state.game_id, round: state.current_round, reason: :time_up}},
+            round_ms
+          )
 
-      {:ok, new_state}
-    else
-      err -> {:error, err}
+        new_state =
+          %{
+            state
+            | current_word: word,
+              word_choices: [],
+              choice_deadline: nil,
+              phase: :drawing,
+              round_active: true,
+              round_deadline: System.monotonic_time(:millisecond) + round_ms,
+              hint_stage: 0,
+              used_words: Enum.uniq([word | state.used_words]),
+              correct_guessers: [],
+              drawing_strokes: [],
+              stroke_op: nil,
+              round_guesser_points: []
+          }
+          |> cancel_turn_timers()
+          |> track_timer(expiry)
+          |> schedule_hint_reveals()
+          |> add_sys_msg("Round #{state.current_round} — #{drawer_name} is drawing")
+
+        {:ok, new_state}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
+  defp schedule_hint_reveals(state) do
+    Enum.reduce(WordHints.reveal_offsets_ms(state.round_duration), state, fn {stage, offset_ms},
+                                                                             acc ->
+      ref =
+        Process.send_after(
+          self(),
+          {:hint_reveal, state.game_id, state.current_round, stage},
+          offset_ms
+        )
+
+      track_timer(acc, ref)
+    end)
+  end
+
   @doc """
-  Ends the game: saves results, stops timers, updates Ash resources, schedules
-  a delayed self-stop via the given `send_after_fn` (to allow clients to read
-  final state). Returns updated state.
+  Ends the game: cancels the turn's timers, saves the results, marks the Game
+  `:completed` and the room `:post_game`, and remembers the game in
+  `past_games` (the newest `max_past_games/0`). Posts "Game over!" and, when
+  given, `reason` (why it ended early), then runs `notify_fn`. Returns the
+  updated state.
   """
-  def auto_end_game(state, bump_fn, notify_fn) do
+  def auto_end_game(state, notify_fn, reason \\ nil) do
+    state = cancel_turn_timers(state)
+
     if state.game_id do
       Games.save_game_results(state.game_id, state.room_id, state.players, state.round_results)
-      Games.stop_round_timer(state.game_id)
       Games.end_current_game(state.game_id)
       Games.set_room_post_game(state.room_id)
-      Phoenix.PubSub.unsubscribe(Scrawly.PubSub, "game:#{state.game_id}")
     end
 
-    # Build past game entry before clearing state
     game_entry = build_past_game_entry(state)
 
     %{
@@ -159,7 +256,8 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
         current_round: 0,
         current_drawer_id: nil,
         current_word: nil,
-        time_left: 0,
+        round_deadline: nil,
+        hint_stage: 0,
         round_active: false,
         phase: :idle,
         word_choices: [],
@@ -167,22 +265,32 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
         round_guesser_points: [],
         correct_guessers: [],
         drawing_strokes: [],
+        stroke_op: nil,
         round_results: [],
         used_words: [],
         ai_words: [],
+        turn_queue: [],
         chat_messages: [],
-        past_games: [game_entry | state.past_games]
+        past_games: Enum.take([game_entry | state.past_games], @max_past_games)
     }
     |> add_sys_msg("Game over! Final scores are in.")
-    |> bump_fn.()
+    |> then(&if(reason, do: add_sys_msg(&1, reason), else: &1))
     |> notify_fn.()
   end
 
   @doc """
   Appends a round result entry to `state.round_results`. drawer_points is the
-  points awarded (or deducted) from the drawer this round.
+  points awarded (or deducted) from the drawer this round. `drawer_name`
+  overrides the name looked up in `players` (a drawer who just left).
+
+  The drawing is kept as its replay (`StrokeRules.replay/1`: the first
+  strokes up to the stroke and byte caps, without ids), with
+  `drawing_truncated` telling whether strokes were left out: the results are
+  saved in one JSONB update and the score page renders every round.
   """
-  def capture_round_result(state, drawer_points) do
+  def capture_round_result(state, drawer_points, drawer_name \\ nil) do
+    {replay, truncated?} = StrokeRules.replay(state.drawing_strokes)
+
     player_scores =
       Enum.map(state.players, fn p ->
         start_score = Map.get(state.round_start_scores, p.id, 0)
@@ -200,11 +308,12 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
     result = %{
       round: state.current_round,
       drawer_id: state.current_drawer_id,
-      drawer_name: get_player_name(state.players, state.current_drawer_id),
+      drawer_name: drawer_name || get_player_name(state.players, state.current_drawer_id),
       word: state.current_word,
       drawer_points: drawer_points,
       player_scores: player_scores,
-      drawing_strokes: state.drawing_strokes
+      drawing_strokes: replay,
+      drawing_truncated: truncated?
     }
 
     %{state | round_results: state.round_results ++ [result]}
@@ -235,22 +344,41 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
     }
   end
 
-  @doc "Prepends a system chat message to state.chat_messages (capped at 50)."
-  def add_sys_msg(state, text) do
-    msg = %{
-      id: :rand.uniform(100_000),
-      player_name: "System",
-      message: text,
-      timestamp: DateTime.utc_now(),
-      type: :system
-    }
-
-    %{state | chat_messages: [msg | state.chat_messages] |> Enum.take(50)}
+  @doc """
+  Prepends a server-built chat line to state.chat_messages (capped at 50) and
+  broadcasts it. `type` is `:system` or `:correct_guess`; these lines only ever
+  come from the room process, never from client input.
+  """
+  def add_sys_msg(state, text, type \\ :system) do
+    push_chat(state, %{player_name: "System", message: text, type: type})
   end
 
   @doc """
-  Pick `count` candidate words for the drawer, preferring the AI pool, falling
-  back to local DB if the pool is exhausted.
+  The only place a chat line enters a room: stamps `fields` with an `id` and
+  an integer `timestamp` (Unix ms), publishes it as `:chat_appended`
+  (`%{message: msg, seq: seq}`) and prepends it to `state.chat_messages`
+  (capped at 50).
+
+  The id is the line's broadcast seq (`Broadcasts.publish/3`): unique within
+  the room and increasing, so pages can merge chat from a snapshot with lines
+  that arrived after it.
+
+  Chat lines reach the browser through room state and that broadcast, so they
+  hold plain data only: a struct (a DateTime, say) would make every client
+  load that type's code chunk before it can show the line.
+  """
+  def push_chat(state, fields) when is_map(fields) do
+    msg = Map.merge(fields, %{id: state.seq + 1, timestamp: System.system_time(:millisecond)})
+    state = Broadcasts.publish(state, :chat_appended, %{message: msg})
+
+    %{state | chat_messages: Enum.take([msg | state.chat_messages], @max_chat_history)}
+  end
+
+  @doc """
+  Pick `count` candidate words for the drawer, preferring the AI pool, then
+  local words (`Games.get_random_word/1`, which falls back to the built-in
+  list when the DB has none), then the built-in list directly, so the
+  choices are never empty for a supported word count.
 
   Returns `{choices, remaining_ai_pool, used_from_ai_count}`.
   """
@@ -276,21 +404,30 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
 
   defp pop_n(list, _), do: {[], list}
 
+  # Distinct words not in `exclude` (unless nothing else is left), at most
+  # `count` * 4 lookups, topped up from the built-in list.
   defp pick_local_words(exclude, word_count, count) do
-    Enum.reduce_while(1..count, {[], exclude}, fn _, {acc, excl} ->
-      case Games.get_random_word(exclude: excl, word_count: word_count) do
-        {:ok, word} ->
-          if word in acc do
-            {:halt, {acc, excl}}
-          else
-            {:cont, {[word | acc], [word | excl]}}
+    picked =
+      Enum.reduce_while(1..(count * 4), [], fn _attempt, acc ->
+        if length(acc) >= count do
+          {:halt, acc}
+        else
+          case Games.get_random_word(exclude: exclude ++ acc, word_count: word_count) do
+            {:ok, word} -> {:cont, if(word in acc, do: acc, else: [word | acc])}
+            _error -> {:cont, acc}
           end
+        end
+      end)
+      |> Enum.reverse()
 
-        _ ->
-          {:halt, {acc, excl}}
-      end
-    end)
-    |> elem(0)
-    |> Enum.reverse()
+    picked ++ builtin_top_up(exclude, picked, word_count, count - length(picked))
+  end
+
+  defp builtin_top_up(_exclude, _picked, _word_count, missing) when missing <= 0, do: []
+
+  defp builtin_top_up(exclude, picked, word_count, missing) do
+    candidates = Word.builtin_words(word_count) -- picked
+    fresh = candidates -- exclude
+    Enum.take(Enum.shuffle(fresh) ++ Enum.shuffle(candidates -- fresh), missing)
   end
 end

@@ -1,15 +1,21 @@
 defmodule ScrawlyWeb.Components.ChatBox do
   @moduledoc """
   Stateless chat component. All events bubble to the parent GamePage.
+
+  Visitors without an account (`current_user_id` nil) can read but not type.
+  "me" is marked by the message's `player_id`, which the server sets.
   """
   use Hologram.Component
 
-  prop :messages, :list, default: []
-  prop :current_message, :string, default: ""
+  prop :messages, :list, required: true
+  prop :current_message, :string, required: true
   prop :current_user_id, :string, default: nil
   prop :disabled, :boolean, default: false
   prop :is_drawer, :boolean, default: false
   prop :rate_limited, :boolean, default: false
+  # A private hint for this user only (e.g. their line wasn't sent because it
+  # contained the word).
+  prop :notice, :string, default: nil
 
   def template do
     ~HOLO"""
@@ -28,22 +34,10 @@ defmodule ScrawlyWeb.Components.ChatBox do
                 <span>{msg.message}</span>
               </div>
             {%else}
-              {%if Map.get(msg, :type) == :close_guess}
-                <div class="msg close">
-                  <span class="who">{Map.get(msg, :player_name, "")}</span>
-                  <span>{msg.message}</span>
-                  <span class="mono" style="margin-left: auto; font-size: 11px; color: var(--muted);">close</span>
-                </div>
-              {%else}
-                {%if Map.get(msg, :type) == :round_complete}
-                  <div class="msg system">→ {msg.message}</div>
-                {%else}
-                  <div class="msg">
-                    <span class={"who " <> if(Map.get(msg, :player_name) == @current_user_id, do: "me", else: "")}>{Map.get(msg, :player_name, "")}</span>
-                    <span>{msg.message}</span>
-                  </div>
-                {/if}
-              {/if}
+              <div class="msg">
+                <span class={"who " <> if(@current_user_id != nil and Map.get(msg, :player_id) == @current_user_id, do: "me", else: "")}>{Map.get(msg, :player_name, "")}</span>
+                <span>{msg.message}</span>
+              </div>
             {/if}
           {/if}
         {/for}
@@ -51,15 +45,23 @@ defmodule ScrawlyWeb.Components.ChatBox do
       {%if @rate_limited}
         <div style="padding: 4px 14px; font-size: 11px; color: var(--danger);">slow down</div>
       {/if}
+      {%if @notice}
+        <div style="padding: 4px 14px; font-size: 11px; color: var(--muted);">{@notice}</div>
+      {/if}
       <form class="chat-input" $submit="send_message">
-        <input type="text" name="message"
-               placeholder={if(@is_drawer, do: "you are drawing — chat disabled", else: "type a guess...")}
+        <input type="text" name="message" maxlength="240"
+               placeholder={if(@current_user_id == nil, do: "sign in to chat", else: if(@is_drawer, do: "you are drawing — chat disabled", else: "type a guess..."))}
                value={@current_message}
-               disabled={@disabled}
-               $input={:update_message} />
-        <button type="submit" class="app-btn app-btn-sm" disabled={@disabled || String.trim(@current_message) == ""}>send</button>
+               disabled={@disabled || @current_user_id == nil}
+               $change={:update_message}
+               $key_down.escape.prevent_default="clear_message" />
+        <button type="submit" class="app-btn app-btn-sm" disabled={@disabled || @current_user_id == nil || String.trim(@current_message) == ""}>send</button>
       </form>
     </div>
     """
   end
+
+  # No commands here. A forged one (the module is named in the request) is
+  # denied instead of raising (see ScrawlyWeb.CommandParams).
+  def command(name, _params, server), do: ScrawlyWeb.CommandParams.deny_unknown(server, name)
 end

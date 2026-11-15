@@ -1,0 +1,1462 @@
+diff --git a/lib/scrawly/application.ex b/lib/scrawly/application.ex
+index 006abc8..c97c585 100644
+--- a/lib/scrawly/application.ex
++++ b/lib/scrawly/application.ex
+@@ -19,6 +19,9 @@ defmodule Scrawly.Application do
+       Scrawly.Accounts.RecoveryThrottle,
+       # Distinct visitors seen in the last 45 s (the header's "N online")
+       ScrawlyWeb.OnlineTracker,
++      # Per-actor sliding windows for the demo board's and the game's
++      # live stroke commands
++      ScrawlyWeb.RateLimiter,
+       # Round timer for game flow management
+       Scrawly.Games.RoundTimer,
+       # Shared canvas for the home-page demo board
+diff --git a/lib/scrawly/games/demo_board_server.ex b/lib/scrawly/games/demo_board_server.ex
+index 8a707af..2f5f409 100644
+--- a/lib/scrawly/games/demo_board_server.ex
++++ b/lib/scrawly/games/demo_board_server.ex
+@@ -1,9 +1,14 @@
+ defmodule Scrawly.Games.DemoBoardServer do
+   @moduledoc """
+   Single shared canvas for the home page. Holds an ordered list of completed
+-  strokes in memory. State changes are broadcast over an internal PubSub
+-  topic (`demo:board:state`) which the channel subscribes to alongside its
+-  standard channel-topic subscription.
++  strokes in memory (the newest 500).
++
++  Every change is pushed on the `:demo_board` Hologram Realtime channel
++  (`channel/0`), to every subscriber including the sender:
++  `:demo_stroke_added` (`%{stroke_id, path, color, width}`) and
++  `:demo_board_cleared`. While the demo board's transport is switchable (see
++  `ScrawlyWeb.DemoBoard`), the same changes also go out on the internal
++  Scrawly.PubSub topic `demo:board:state` for `ScrawlyWeb.DemoBoardChannel`.
+   """
+   use GenServer
+ 
+@@ -12,6 +17,7 @@ defmodule Scrawly.Games.DemoBoardServer do
+   # any given topic — a double subscription routes `%Broadcast{}` messages
+   # through `handle_out/3` and crashes on un-intercepted events.
+   @topic "demo:board:state"
++  @channel :demo_board
+   @max_strokes 500
+ 
+   # ── Client API ─────────────────────────────────────────────────────
+@@ -38,6 +44,12 @@ defmodule Scrawly.Games.DemoBoardServer do
+ 
+   def topic, do: @topic
+ 
++  @doc "The Hologram Realtime channel the board's changes are pushed on."
++  def channel, do: @channel
++
++  @doc "The number of strokes the board keeps (oldest dropped first)."
++  def max_strokes, do: @max_strokes
++
+   # ── Server callbacks ───────────────────────────────────────────────
+ 
+   @impl true
+@@ -50,11 +62,13 @@ defmodule Scrawly.Games.DemoBoardServer do
+   def handle_cast({:add_stroke, stroke}, state) do
+     strokes = Enum.take(state.strokes ++ [stroke], -@max_strokes)
+     Phoenix.PubSub.broadcast(Scrawly.PubSub, @topic, {:stroke_added, stroke})
++    Hologram.Realtime.broadcast_action(@channel, :demo_stroke_added, stroke)
+     {:noreply, %{state | strokes: strokes}}
+   end
+ 
+   def handle_cast(:clear, state) do
+     Phoenix.PubSub.broadcast(Scrawly.PubSub, @topic, :strokes_cleared)
++    Hologram.Realtime.broadcast_action(@channel, :demo_board_cleared, %{})
+     {:noreply, %{state | strokes: []}}
+   end
+ end
+diff --git a/lib/scrawly/games/stroke_rules.ex b/lib/scrawly/games/stroke_rules.ex
+index 322eb68..b218b8c 100644
+--- a/lib/scrawly/games/stroke_rules.ex
++++ b/lib/scrawly/games/stroke_rules.ex
+@@ -2,8 +2,8 @@ defmodule Scrawly.Games.StrokeRules do
+   @moduledoc """
+   What a stroke may look like and how much a canvas may hold. Pure functions.
+ 
+-  Used by `RoomServer` for completed strokes and by `ScrawlyWeb.GameChannel`
+-  for live stroke chunks. Paths are SVG path data: commands `M L Q C Z` (either
++  Used by `RoomServer` for completed strokes and by the live stroke chunk
++  paths (`chunk/1`). Paths are SVG path data: commands `M L Q C Z` (either
+   case), numbers (signs, decimals and exponents) and `,`/space separators, so
+   the client's `"M x y L x y ..."` strokes and later curve commands both pass.
+ 
+@@ -55,6 +55,40 @@ defmodule Scrawly.Games.StrokeRules do
+   def valid_stroke_id?(id),
+     do: is_binary(id) and byte_size(id) in 1..@max_stroke_id_bytes
+ 
++  @doc """
++  A live stroke chunk from a client's params (atom keys, as Hologram decodes
++  them): `{:ok, chunk}` with exactly `stroke_id` (`valid_stroke_id?/1`), `seq`
++  (a non-negative integer, increasing per stroke), `delta`
++  (`valid_delta?/1`), `color` and `width` (all required), otherwise
++  `:invalid`. Used for the demo board's and the game's chunk streams alike.
++  """
++  @spec chunk(term) ::
++          {:ok,
++           %{
++             stroke_id: String.t(),
++             seq: non_neg_integer,
++             delta: String.t(),
++             color: String.t(),
++             width: pos_integer
++           }}
++          | :invalid
++  def chunk(params) when is_map(params) do
++    chunk = %{
++      stroke_id: Map.get(params, :stroke_id),
++      seq: Map.get(params, :seq),
++      delta: Map.get(params, :delta),
++      color: Map.get(params, :color),
++      width: Map.get(params, :width)
++    }
++
++    if valid_stroke_id?(chunk.stroke_id) and is_integer(chunk.seq) and chunk.seq >= 0 and
++         valid_delta?(chunk.delta) and valid_color?(chunk.color) and valid_width?(chunk.width),
++       do: {:ok, chunk},
++       else: :invalid
++  end
++
++  def chunk(_params), do: :invalid
++
+   @doc """
+   The ordering tag of a drawer tab's canvas op (commit, undo or clear):
+   `{op_epoch, op_seq}` when `op_epoch` is a 1..#{@max_stroke_id_bytes}-byte
+diff --git a/lib/scrawly_web/pages/demo_board.mjs b/lib/scrawly_web/pages/demo_board.mjs
+index 5f1e3d1..aec675f 100644
+--- a/lib/scrawly_web/pages/demo_board.mjs
++++ b/lib/scrawly_web/pages/demo_board.mjs
+@@ -1,15 +1,24 @@
+-// Bridge between the shared demo canvas SVG (#demo-board-svg) and the
+-// `demo:board` Phoenix channel. Pointer input comes from the native stroke
+-// engine (stroke_engine.mjs), so Hologram never runs an action or a render
+-// per pointer move.
++// The shared demo canvas on the home page (#demo-board-svg). Pointer input
++// comes from the native stroke engine (stroke_engine.mjs), so Hologram never
++// runs an action or a render per pointer move.
+ //
+ // While the pointer is down the stroke lives in the active path and its
+-// final segments are streamed to peers as ~20 Hz delta chunks. On release
+-// (or when a long gesture is split) it is committed locally as a *pending*
+-// stroke node in the same task that clears the active path (so no frame is
+-// ever painted without it), then `stroke_complete` is pushed. The server's
+-// `stroke` echo confirms it (and fixes its order); an error reply or a push
+-// timeout rolls it back.
++// final segments are streamed to peers as delta chunks (at most one per
++// FLUSH_INTERVAL_MS). On release (or when a long gesture is split) it is
++// committed locally as a *pending* stroke node in the same task that clears
++// the active path (so no frame is ever painted without it), then sent. The
++// server's echo of the stored stroke confirms it (and fixes its order); a
++// rejection or no answer within STROKE_ACK_TIMEOUT_MS rolls it back.
++//
++// Two transports, chosen by HomePage (ScrawlyWeb.DemoBoard.transport/0)
++// until the measured gate decides:
++//   * "channel": the `demo:board` Phoenix channel (snapshot on join,
++//     stroke_chunk, stroke_complete with ok/error reply, clear);
++//   * "realtime": Hologram commands and Realtime pushes, through HomePage's
++//     actions. Chunks are ack-paced: the next one goes only once the previous
++//     one's :demo_chunk_acked came back (onChunkAck), so a drawer has one
++//     chunk command in flight and its chunks reach the server in order. The
++//     snapshot is loaded by a command after mount (replaceDemoStrokes).
+ //
+ // Store invariant: confirmed strokes in server order, then pending local
+ // strokes in local order, at most MAX_STROKES (like DemoBoardServer). The
+@@ -17,13 +26,18 @@
+ //   [#demo-board-strokes: confirmed..., pending...]
+ //   [#demo-board-overlay: peers' strokes in progress]
+ //   #demo-board-active-path
++// Peers' strokes in progress follow remote_strokes.mjs (stale seq dropped,
++// closed ids remembered); an overlay with no chunk for OVERLAY_IDLE_MS is
++// swept (its drawer left mid-stroke).
+ //
+ // Hologram 0.12 copies this module into every page bundle that can reach the
+ // home page. All live state therefore sits in window slots: one instance
+-// object bound to the svg element it was created for, the tool state, and
+-// one stroke engine; every export acts on those.
++// object bound to the svg element it was created for (timers included), the
++// tool state, the transport and one stroke engine; every export acts on
++// those.
+ 
+-import { createStrokeEngine, startDelta } from "./stroke_engine.mjs";
++import { createStrokeEngine } from "./stroke_engine.mjs";
++import { createRemoteStrokes } from "./remote_strokes.mjs";
+ 
+ const SVG_ID = "demo-board-svg";
+ const STROKES_ID = "demo-board-strokes";
+@@ -33,15 +47,25 @@ const SVG_NS = "http://www.w3.org/2000/svg";
+ const ERASER_COLOR = "#ffffff";
+ const ERASER_WIDTH = 18;
+ const FLUSH_INTERVAL_MS = 50;
+-// DemoBoardChannel drops deltas of 2_000+ bytes: flush before that.
++// Chunks of 2_000+ bytes are rejected: flush before that.
+ const MAX_CHUNK = 1500;
+ // DemoBoardServer keeps the newest 500 strokes.
+ const MAX_STROKES = 500;
++// Realtime: a chunk whose ack never came (failed request) stops holding back
++// the next one after this long.
++const CHUNK_ACK_TIMEOUT_MS = 3000;
++const STROKE_ACK_TIMEOUT_MS = 10000;
++const IDLE_SWEEP_MS = 1000;
+ 
+ const SLOT = "__scrawlyDemoBoard";
+ const TOOLS_SLOT = "__scrawlyDemoBoardTools";
++const TRANSPORT_SLOT = "__scrawlyDemoBoardTransport";
+ const ENGINE_SLOT = "__scrawlyDemoStrokeEngine";
+ 
++function now() {
++  return performance.now();
++}
++
+ // ── Instance slot ────────────────────────────────────────────────────
+ 
+ function current() {
+@@ -69,6 +93,10 @@ function tools() {
+   return window[TOOLS_SLOT];
+ }
+ 
++function transportKind() {
++  return window[TRANSPORT_SLOT] === "realtime" ? "realtime" : "channel";
++}
++
+ function phoenixAvailable() {
+   if (window.Phoenix && window.Phoenix.Socket) return true;
+   console.error("Phoenix.Socket not available for demo board");
+@@ -84,31 +112,52 @@ function boundInstance() {
+   const inst = current();
+   if (inst && inst.svg === el) return inst;
+   if (inst) dispose(inst);
+-  if (!phoenixAvailable()) return null;
+-  window[SLOT] = createInstance(el);
++  window[SLOT] = createInstance(el, transportKind());
+   return window[SLOT];
+ }
+ 
+-function createInstance(svgEl) {
++function createInstance(svgEl, kind) {
++  if (kind === "channel" && !phoenixAvailable()) return null;
++
+   const inst = {
+     svg: svgEl,
+-    socket: null,
+-    channel: null,
++    kind: kind,
+     disposed: false,
+     idCounter: 0,
+     // Store: [{id, path, color, width, pending, acked, el}]
+     strokes: [],
+-    // Peers' in-progress strokes: {[strokeId]: {el, path, color, width}}
+-    remote: {},
++    // Peers' strokes in progress (entries carry their overlay element)
++    remote: createRemoteStrokes(),
++    sweepTimer: null,
+     // Chunk stream of the stroke being drawn (the engine holds its path)
+     strokeId: null,
+     strokeColor: "#000000",
+     strokeWidth: 2,
+     seq: 0,
+     pendingDelta: "",
++    chunkStopped: false,
++    lastChunkAt: 0,
+     flushTimer: null,
++    // channel transport
++    socket: null,
++    channel: null,
++    // realtime transport: the unacked chunk, stroke ack timers, and the
++    // strokes pushed while a snapshot load is on its way
++    inFlight: null,
++    strokeTimers: {},
++    loading: false,
++    sinceLoad: [],
+   };
+ 
++  inst.sweepTimer = setInterval(function () {
++    if (alive(inst)) sweepIdleOverlays(inst);
++  }, IDLE_SWEEP_MS);
++
++  if (kind === "channel") connectChannel(inst);
++  return inst;
++}
++
++function connectChannel(inst) {
+   inst.socket = new window.Phoenix.Socket("/socket", { params: { demo: "true" } });
+   inst.socket.connect();
+ 
+@@ -123,20 +172,19 @@ function createInstance(svgEl) {
+   // A stroke the server stored, mine included.
+   channel.on("stroke", function (payload) {
+     if (!alive(inst)) return;
+-    applyServerStroke(inst, payload || {});
++    applyServerStrokeTo(inst, payload || {});
+   });
+   channel.on("stroke_chunk", function (payload) {
+     if (!alive(inst) || !payload) return;
+-    applyRemoteChunk(inst, payload.stroke_id, payload.delta, payload.color, payload.width);
++    applyChunk(inst, payload.stroke_id, payload.seq, payload.delta, payload.color, payload.width);
+   });
+   channel.on("stroke_abandon", function (payload) {
+     if (!alive(inst) || !payload) return;
+-    removeOverlay(inst, payload.stroke_id);
++    closeOverlay(inst, payload.stroke_id);
+   });
+   channel.on("cleared", function () {
+     if (!alive(inst)) return;
+-    cancelActiveStroke(inst);
+-    clearAll(inst);
++    boardCleared(inst);
+   });
+ 
+   // Keep the channel on a join error: Phoenix retries the join and sends
+@@ -144,15 +192,18 @@ function createInstance(svgEl) {
+   channel.join().receive("error", function (resp) {
+     console.warn("demo:board join failed, retrying:", resp);
+   });
+-
+-  return inst;
+ }
+ 
+ function dispose(inst) {
+   if (inst.disposed) return;
+   inst.disposed = true;
+   cancelActiveStroke(inst);
+-  clearOverlays(inst);
++  clearOverlays(inst, false);
++  clearInterval(inst.sweepTimer);
++  Object.keys(inst.strokeTimers).forEach(function (id) {
++    clearTimeout(inst.strokeTimers[id]);
++  });
++  inst.strokeTimers = {};
+   try {
+     if (inst.channel) inst.channel.leave();
+   } catch (_e) {}
+@@ -162,6 +213,13 @@ function dispose(inst) {
+   if (window[SLOT] === inst) window[SLOT] = null;
+ }
+ 
++// Realtime upstream: a HomePage action that puts the command.
++function dispatch(inst, name, params) {
++  if (!alive(inst) || !globalThis.Hologram) return false;
++  globalThis.Hologram.dispatchAction(name, "page", params);
++  return true;
++}
++
+ // ── Stroke engine (window singleton) ─────────────────────────────────
+ 
+ function engine() {
+@@ -338,7 +396,7 @@ function rollback(inst, id) {
+ 
+ // Someone else's stroke: swap its live overlay for the stroke in one task.
+ function addRemote(inst, stroke) {
+-  removeOverlay(inst, stroke.id);
++  closeOverlay(inst, stroke.id);
+   const entry = {
+     id: stroke.id,
+     path: stroke.path,
+@@ -361,6 +419,7 @@ function replaceAll(inst, serverStrokes) {
+   const ids = {};
+   for (let i = 0; i < serverStrokes.length; i++) {
+     const s = normalizeServerStroke(inst, serverStrokes[i]);
++    if (ids[s.id]) continue;
+     ids[s.id] = true;
+     confirmed.push({
+       id: s.id,
+@@ -377,13 +436,13 @@ function replaceAll(inst, serverStrokes) {
+   });
+   inst.strokes = confirmed.concat(keep);
+   inst.strokes.splice(0, Math.max(0, inst.strokes.length - MAX_STROKES));
+-  clearOverlays(inst);
++  clearOverlays(inst, false);
+   renderAll(inst);
+ }
+ 
+ function clearAll(inst) {
+   inst.strokes = [];
+-  clearOverlays(inst);
++  clearOverlays(inst, true);
+   renderAll(inst);
+ }
+ 
+@@ -396,29 +455,31 @@ function normalizeServerStroke(inst, s) {
+   };
+ }
+ 
+-function applyServerStroke(inst, payload) {
++function applyServerStrokeTo(inst, payload) {
+   const stroke = normalizeServerStroke(inst, payload);
+-  removeOverlay(inst, stroke.id);
++  closeOverlay(inst, stroke.id);
+   if (!confirm(inst, stroke)) addRemote(inst, stroke);
++  return stroke;
++}
++
++// A remote clear cancels my stroke in progress too: no stray chunk follows
++// and nothing is committed.
++function boardCleared(inst) {
++  cancelActiveStroke(inst);
++  clearAll(inst);
+ }
+ 
+ // ── Peers' in-progress overlays ──────────────────────────────────────
+ 
+-function applyRemoteChunk(inst, strokeId, delta, color, width) {
+-  if (!strokeId || !delta) return;
++function applyChunk(inst, strokeId, seq, delta, color, width) {
+   // Already a stroke here: a late chunk must not leave an overlay behind.
+   if (findIndex(inst, strokeId) >= 0) return;
+   const group = overlayGroup(inst);
+   if (!group) return;
+ 
+-  let entry = inst.remote[strokeId];
+-  if (!entry) {
+-    // Joined mid-stroke: start the path at the first point we got.
+-    delta = startDelta(delta);
+-    if (!delta) return;
+-    entry = { el: null, path: "", color: "#000000", width: 2 };
+-    inst.remote[strokeId] = entry;
+-  }
++  const entry = inst.remote.append(strokeId, seq, delta, color, width, now());
++  if (!entry) return;
++
+   if (!entry.el || entry.el.parentNode !== group) {
+     const p = document.createElementNS(SVG_NS, "path");
+     p.setAttribute("fill", "none");
+@@ -428,26 +489,31 @@ function applyRemoteChunk(inst, strokeId, delta, color, width) {
+     group.appendChild(p);
+     entry.el = p;
+   }
+-  entry.path += delta;
+-  entry.color = color || entry.color;
+-  entry.width = width || entry.width;
+   entry.el.setAttribute("d", entry.path);
+   entry.el.setAttribute("stroke", entry.color);
+   entry.el.setAttribute("stroke-width", entry.width);
+ }
+ 
+-function removeOverlay(inst, strokeId) {
+-  const entry = inst.remote[strokeId];
+-  if (!entry) return;
+-  removeEl(entry.el);
+-  delete inst.remote[strokeId];
++// Completed, abandoned or swept: the overlay goes and the id stays closed.
++function closeOverlay(inst, strokeId) {
++  const entry = inst.remote.close(strokeId);
++  if (entry) removeEl(entry.el);
++}
++
++// `close` for a clear (those strokes are gone for good); a snapshot only
++// forgets them, so a stroke still being drawn reappears with its next chunk.
++function clearOverlays(inst, close) {
++  inst.remote.entries().forEach(function (entry) {
++    removeEl(entry.el);
++    if (close) inst.remote.close(entry.id);
++    else inst.remote.drop(entry.id);
++  });
+ }
+ 
+-function clearOverlays(inst) {
+-  Object.keys(inst.remote).forEach(function (id) {
+-    removeEl(inst.remote[id].el);
++function sweepIdleOverlays(inst) {
++  inst.remote.idle(now()).forEach(function (id) {
++    closeOverlay(inst, id);
+   });
+-  inst.remote = {};
+ }
+ 
+ // ── Drawing (transport side) ─────────────────────────────────────────
+@@ -467,20 +533,16 @@ function beginStroke(inst, stroke) {
+   inst.strokeColor = stroke.color;
+   inst.strokeWidth = stroke.width;
+   inst.seq = 0;
++  inst.chunkStopped = false;
+   inst.pendingDelta = stroke.delta;
+-  // Leading-edge flush so peers see the first point within ~1 RTT.
+-  flushPending(inst);
++  // Leading edge, so peers see the first point within ~1 RTT.
++  pump(inst);
+ }
+ 
+ function queueDelta(inst, stroke) {
+   if (stroke.id !== inst.strokeId) return;
+   inst.pendingDelta += stroke.delta;
+-  if (inst.pendingDelta.length >= MAX_CHUNK) {
+-    stopFlushTimer(inst);
+-    flushPending(inst);
+-  } else {
+-    scheduleFlush(inst);
+-  }
++  pump(inst);
+ }
+ 
+ function stopFlushTimer(inst) {
+@@ -490,34 +552,73 @@ function stopFlushTimer(inst) {
+   }
+ }
+ 
+-function scheduleFlush(inst) {
+-  if (inst.flushTimer) return;
+-  inst.flushTimer = setTimeout(function () {
+-    inst.flushTimer = null;
+-    if (alive(inst)) flushPending(inst);
+-  }, FLUSH_INTERVAL_MS);
++// Realtime: true while the last chunk is unacked (its ack pumps again).
++function chunkInFlight(inst) {
++  if (!inst.inFlight) return false;
++  if (now() - inst.inFlight.at < CHUNK_ACK_TIMEOUT_MS) return true;
++  inst.inFlight = null;
++  return false;
++}
++
++// Sends the accumulated delta when it may: the stroke's first chunk at once,
++// later ones at most every FLUSH_INTERVAL_MS (sooner when the delta nears
++// MAX_CHUNK), and over Realtime only when no chunk is in flight.
++function pump(inst) {
++  if (!inst.strokeId || !inst.pendingDelta || inst.chunkStopped) return;
++  if (chunkInFlight(inst)) return;
++
++  const wait = inst.seq === 0 ? 0 : FLUSH_INTERVAL_MS - (now() - inst.lastChunkAt);
++  if (wait > 0 && inst.pendingDelta.length < MAX_CHUNK) {
++    if (!inst.flushTimer) {
++      inst.flushTimer = setTimeout(function () {
++        inst.flushTimer = null;
++        if (alive(inst)) pump(inst);
++      }, wait);
++    }
++    return;
++  }
++
++  stopFlushTimer(inst);
++  sendChunk(inst);
+ }
+ 
+-function flushPending(inst) {
+-  if (!inst.channel || !inst.strokeId || !inst.pendingDelta) return;
++function sendChunk(inst) {
+   inst.seq += 1;
+-  inst.channel.push("stroke_chunk", {
++  const chunk = {
+     stroke_id: inst.strokeId,
+     seq: inst.seq,
+     delta: inst.pendingDelta,
+     color: inst.strokeColor,
+     width: inst.strokeWidth,
+-  });
++  };
+   inst.pendingDelta = "";
++  inst.lastChunkAt = now();
++
++  if (inst.kind === "realtime") {
++    if (dispatch(inst, "demo_chunk_out", chunk)) {
++      inst.inFlight = { strokeId: chunk.stroke_id, at: inst.lastChunkAt };
++    }
++  } else if (inst.channel) {
++    inst.channel.push("stroke_chunk", chunk);
++  }
+ }
+ 
+-// The engine's onEnd (release, or a long gesture's split). Peers' overlays
+-// catch up before the completed stroke arrives. The committed node is added
+-// here and the engine clears the active path right after, in the same task,
+-// so no frame is painted without the stroke.
++// The engine's onEnd (release, or a long gesture's split). The committed
++// node is added here and the engine clears the active path right after, in
++// the same task, so no frame is painted without the stroke. Over the channel
++// the tail chunk goes first so peers' overlays catch up; over Realtime the
++// completed stroke carries the tail (a chunk could not overtake the one
++// still unacked anyway).
+ function commitStroke(inst, stroke) {
+   stopFlushTimer(inst);
+-  if (stroke.id === inst.strokeId) flushPending(inst);
++  if (
++    inst.kind === "channel" &&
++    stroke.id === inst.strokeId &&
++    inst.pendingDelta &&
++    !inst.chunkStopped
++  ) {
++    sendChunk(inst);
++  }
+   inst.strokeId = null;
+   inst.pendingDelta = "";
+   if (!stroke.id || !stroke.path) return;
+@@ -527,15 +628,27 @@ function commitStroke(inst, stroke) {
+ }
+ 
+ function sendStroke(inst, stroke) {
++  const payload = {
++    stroke_id: stroke.id,
++    path: stroke.path,
++    color: stroke.color,
++    width: stroke.width,
++  };
++
++  if (inst.kind === "realtime") {
++    if (!dispatch(inst, "demo_stroke_out", payload)) return rollback(inst, stroke.id);
++    // A command has no failure callback: no ack in time rolls back.
++    inst.strokeTimers[stroke.id] = setTimeout(function () {
++      delete inst.strokeTimers[stroke.id];
++      if (alive(inst)) rollback(inst, stroke.id);
++    }, STROKE_ACK_TIMEOUT_MS);
++    return;
++  }
++
+   // While the socket is down Phoenix buffers the push; one that is never
+   // sent fires "timeout" after 10 s.
+   inst.channel
+-    .push("stroke_complete", {
+-      stroke_id: stroke.id,
+-      path: stroke.path,
+-      color: stroke.color,
+-      width: stroke.width,
+-    })
++    .push("stroke_complete", payload)
+     .receive("ok", function () {
+       if (alive(inst)) markAcked(inst, stroke.id);
+     })
+@@ -557,21 +670,37 @@ function cancelActiveStroke(inst) {
+   inst.pendingDelta = "";
+ }
+ 
++// The live realtime instance for a pushed action or a reply (none on other
++// pages, or with the channel transport).
++function realtimeInstance() {
++  const inst = boundInstance();
++  return inst && inst.kind === "realtime" ? inst : null;
++}
++
+ // ── Public API ───────────────────────────────────────────────────────
+ 
+ // Called from HomePage's init-queued `connect_lobby` action (and on a
+-// Back/Forward restore). Keeps the live instance while it is bound to the
+-// svg in the document; otherwise the old instance (socket, channel, timers)
+-// is disposed first. Enables the stroke engine.
+-export function connectDemoBoard() {
++// Back/Forward restore) with the transport. Keeps the live instance while it
++// is bound to the svg in the document and uses that transport; otherwise the
++// old instance (socket, channel, timers) is disposed first. Enables the
++// stroke engine. Over Realtime, HomePage loads the snapshot next.
++export function connectDemoBoard(kind) {
+   // HomePage's init has just reset its tool state to the defaults.
+   window[TOOLS_SLOT] = defaultTools();
++  window[TRANSPORT_SLOT] = kind === "realtime" ? "realtime" : "channel";
++
+   const el = document.getElementById(SVG_ID);
+-  const inst = current();
+-  if (!(inst && el && inst.svg === el)) {
++  let inst = current();
++  if (!(inst && el && inst.svg === el && inst.kind === transportKind())) {
+     if (inst) dispose(inst);
+-    if (!el || !phoenixAvailable()) return;
+-    window[SLOT] = createInstance(el);
++    if (!el) return;
++    inst = createInstance(el, transportKind());
++    window[SLOT] = inst;
++    if (!inst) return;
++  }
++  if (inst.kind === "realtime") {
++    inst.loading = true;
++    inst.sinceLoad = [];
+   }
+   engine().enable();
+ }
+@@ -583,6 +712,8 @@ export function disconnectDemoBoard() {
+   if (inst) dispose(inst);
+ }
+ 
++// The clear button, channel transport (over Realtime HomePage sends the
++// :demo_clear command itself).
+ export function clearBoard() {
+   const inst = current();
+   if (inst && inst.channel) inst.channel.push("clear", {});
+@@ -603,3 +734,78 @@ export function setWidth(width) {
+ export function setEraser() {
+   tools().eraser = true;
+ }
++
++// :demo_chunk_acked. ok: false (invalid or over the limit) drops the rest of
++// that stroke's chunk stream; its completed stroke still goes out.
++export function onChunkAck(ok) {
++  const inst = current();
++  if (!inst || inst.kind !== "realtime" || !alive(inst)) return;
++  const sent = inst.inFlight;
++  inst.inFlight = null;
++  if (ok === false && sent && sent.strokeId === inst.strokeId) {
++    inst.chunkStopped = true;
++    inst.pendingDelta = "";
++    stopFlushTimer(inst);
++    return;
++  }
++  pump(inst);
++}
++
++// :demo_stroke_acked: confirm (the echo orders it) or roll back.
++export function onStrokeAck(strokeId, ok) {
++  const inst = current();
++  if (!inst || inst.kind !== "realtime" || !alive(inst)) return;
++  if (inst.strokeTimers[strokeId]) {
++    clearTimeout(inst.strokeTimers[strokeId]);
++    delete inst.strokeTimers[strokeId];
++  }
++  if (ok) markAcked(inst, strokeId);
++  else rollback(inst, strokeId);
++}
++
++// :demo_chunk_in: another tab's live chunk (unsequenced; remote_strokes.mjs
++// drops a stale seq).
++export function applyRemoteChunk(strokeId, seq, delta, color, width) {
++  const inst = realtimeInstance();
++  if (inst) applyChunk(inst, strokeId, seq, delta, color, width);
++}
++
++// :demo_stroke_added: every stored stroke, mine included (deduped by id).
++export function applyServerStroke(payload) {
++  const inst = realtimeInstance();
++  if (!inst) return;
++  const stroke = applyServerStrokeTo(inst, payload || {});
++  if (inst.loading) inst.sinceLoad.push(stroke);
++}
++
++// :demo_stroke_abandon: a peer's stroke was rejected.
++export function abandonRemoteStroke(strokeId) {
++  const inst = realtimeInstance();
++  if (inst) closeOverlay(inst, strokeId);
++}
++
++// :demo_board_cleared
++export function onBoardCleared() {
++  const inst = realtimeInstance();
++  if (!inst) return;
++  boardCleared(inst);
++  inst.sinceLoad = [];
++}
++
++// :demo_board_loaded: the snapshot. Strokes pushed while it was on its way
++// that it doesn't hold (stored after it was read) stay.
++export function replaceDemoStrokes(strokes) {
++  const inst = realtimeInstance();
++  if (!inst) return;
++  const list = (strokes || []).slice();
++  const ids = {};
++  list.forEach(function (s) {
++    if (s && s.stroke_id) ids[s.stroke_id] = true;
++  });
++  inst.sinceLoad.forEach(function (s) {
++    if (!ids[s.id]) list.push({ stroke_id: s.id, path: s.path, color: s.color, width: s.width });
++  });
++  inst.loading = false;
++  inst.sinceLoad = [];
++  replaceAll(inst, list);
++}
+diff --git a/lib/scrawly_web/pages/home_page.ex b/lib/scrawly_web/pages/home_page.ex
+index a2972c8..768dbdd 100644
+--- a/lib/scrawly_web/pages/home_page.ex
++++ b/lib/scrawly_web/pages/home_page.ex
+@@ -8,13 +8,20 @@ defmodule ScrawlyWeb.Pages.HomePage do
+   js_import :setColor, from: "./demo_board.mjs"
+   js_import :setWidth, from: "./demo_board.mjs"
+   js_import :setEraser, from: "./demo_board.mjs"
++  js_import :onChunkAck, from: "./demo_board.mjs"
++  js_import :onStrokeAck, from: "./demo_board.mjs"
++  js_import :applyRemoteChunk, from: "./demo_board.mjs"
++  js_import :applyServerStroke, from: "./demo_board.mjs"
++  js_import :abandonRemoteStroke, from: "./demo_board.mjs"
++  js_import :onBoardCleared, from: "./demo_board.mjs"
++  js_import :replaceDemoStrokes, from: "./demo_board.mjs"
+ 
+   js_import :copyRecoveryCode, from: "../components/recovery_code.mjs"
+   js_import :downloadRecoveryCode, from: "../components/recovery_code.mjs"
+ 
+   route "/"
+ 
+-  alias Scrawly.Games.{LobbyChatServer, RoomServer}
++  alias Scrawly.Games.{DemoBoardServer, LobbyChatServer, RoomServer}
+   alias Scrawly.Games.RoomServer.Broadcasts
+   alias ScrawlyWeb.Components.RoomList
+   alias ScrawlyWeb.Components.GameDemo
+@@ -25,7 +32,8 @@ defmodule ScrawlyWeb.Pages.HomePage do
+ 
+   # The room list and the lobby chat are pushed on the `:lobby` Realtime
+   # channel (see "Lobby broadcasts" below); init loads the current ones and
+-  # subscribes.
++  # subscribes. With the Realtime demo board, the page also subscribes to
++  # `:demo_board` (see "Demo board" below).
+   def init(_params, component, server) do
+     {authenticated, is_guest} =
+       case ScrawlyWeb.Auth.current_user(server) do
+@@ -64,9 +72,17 @@ defmodule ScrawlyWeb.Pages.HomePage do
+       |> put_state(:demo_color, "#000000")
+       |> put_state(:demo_width, 2)
+       |> put_state(:demo_eraser, false)
++      |> put_state(:demo_transport, ScrawlyWeb.DemoBoard.transport())
+       |> put_action(:connect_lobby)
+ 
+-    {component, put_subscription(server, Broadcasts.lobby_channel())}
++    server = put_subscription(server, Broadcasts.lobby_channel())
++
++    server =
++      if component.state.demo_transport == :realtime,
++        do: put_subscription(server, DemoBoardServer.channel()),
++        else: server
++
++    {component, server}
+   end
+ 
+   # Server-side (init and :resync_lobby): the last chat lines, newest first.
+@@ -604,8 +620,12 @@ defmodule ScrawlyWeb.Pages.HomePage do
+   # tool state lives here and reaches JS through these calls.
+ 
+   def action(:demo_clear, _params, component) do
+-    JS.call(:clearBoard, [])
+-    component
++    if component.state.demo_transport == :realtime do
++      put_command(component, :demo_clear)
++    else
++      JS.call(:clearBoard, [])
++      component
++    end
+   end
+ 
+   def action(:demo_set_color, %{value: color}, component) do
+@@ -637,8 +657,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
+   # ── Lobby & Room Actions ──────────────────────────────────────────
+ 
+   def action(:connect_lobby, _params, component) do
+-    JS.call(:connectDemoBoard, [])
+-    component
++    connect_demo_board(component, false)
+   end
+ 
+   # Dispatched by the template's inline script each time this page instance's
+@@ -647,11 +666,13 @@ defmodule ScrawlyWeb.Pages.HomePage do
+   # neither init nor its queued actions, brings back the lists the page was
+   # left with, and the connection no longer holds the page's `:lobby`
+   # subscription, so the second time round the page reloads both lists and
+-  # subscribes again (:resync_lobby), and reconnects the demo board.
++  # subscribes again (:resync_lobby), and reconnects the demo board (whose
++  # Realtime variant reloads the strokes and subscribes again too).
+   def action(:page_shown, _params, component) do
+     if component.state.page_shown? do
+-      JS.call(:connectDemoBoard, [])
+-      put_command(component, :resync_lobby)
++      component
++      |> connect_demo_board(true)
++      |> put_command(:resync_lobby)
+     else
+       put_state(component, :page_shown?, true)
+     end
+@@ -667,6 +688,76 @@ defmodule ScrawlyWeb.Pages.HomePage do
+     put_command(component, :enter_watch_mode, room_id: room_id)
+   end
+ 
++  # ── Demo board ──────────────────────────────────────────────────
++  # demo_board.mjs owns the board (store, stroke engine, overlays). With the
++  # Realtime transport (ScrawlyWeb.DemoBoard) it talks to the server only
++  # through these actions:
++  #
++  #   * upstream, dispatched by JS: :demo_chunk_out (one live chunk; JS sends
++  #     the next only after its :demo_chunk_acked) and :demo_stroke_out (a
++  #     finished stroke; :demo_stroke_acked confirms or rolls it back);
++  #   * downstream, pushed on `:demo_board`: :demo_chunk_in (another tab's
++  #     live chunk; unsequenced, JS drops a stale seq per stroke),
++  #     :demo_stroke_added (every stored stroke, the sender's own included),
++  #     :demo_stroke_abandon and :demo_board_cleared;
++  #   * :demo_board_loaded, the snapshot loaded after mount.
++  #
++  # None of them changes page state.
++
++  def action(:load_demo_board, %{resubscribe: resubscribe}, component) do
++    put_command(component, :load_demo_board, resubscribe: resubscribe)
++  end
++
++  def action(:demo_board_loaded, %{strokes: strokes}, component) do
++    JS.call(:replaceDemoStrokes, [strokes])
++    component
++  end
++
++  def action(:demo_chunk_out, params, component) do
++    put_command(component, :demo_stroke_chunk, params)
++  end
++
++  def action(:demo_chunk_acked, %{ok: ok}, component) do
++    JS.call(:onChunkAck, [ok])
++    component
++  end
++
++  def action(:demo_chunk_in, params, component) do
++    JS.call(:applyRemoteChunk, [
++      params.stroke_id,
++      params.seq,
++      params.delta,
++      params.color,
++      params.width
++    ])
++
++    component
++  end
++
++  def action(:demo_stroke_out, params, component) do
++    put_command(component, :demo_stroke_complete, params)
++  end
++
++  def action(:demo_stroke_acked, %{stroke_id: stroke_id, ok: ok}, component) do
++    JS.call(:onStrokeAck, [stroke_id, ok])
++    component
++  end
++
++  def action(:demo_stroke_added, stroke, component) do
++    JS.call(:applyServerStroke, [stroke])
++    component
++  end
++
++  def action(:demo_stroke_abandon, %{stroke_id: stroke_id}, component) do
++    JS.call(:abandonRemoteStroke, [stroke_id])
++    component
++  end
++
++  def action(:demo_board_cleared, _params, component) do
++    JS.call(:onBoardCleared, [])
++    component
++  end
++
+   # ── Lobby broadcasts (`:lobby`) ───────────────────────────────────
+   # From the rooms (RoomServer, `Broadcasts.notify_lobby/1`) and from
+   # LobbyChatServer. Realtime is at-most-once: a lost room update leaves that
+@@ -754,7 +845,19 @@ defmodule ScrawlyWeb.Pages.HomePage do
+       else: component
+   end
+ 
+-  defp chat_notice(:rate_limited), do: "slow down: at most 4 messages every 5 seconds."
++  # The demo board for :connect_lobby (init's follow-up) and :page_shown (a
++  # Back/Forward restore, `resubscribe`).
++  defp connect_demo_board(component, resubscribe) do
++    if component.state.demo_transport == :realtime do
++      JS.call(:connectDemoBoard, ["realtime"])
++      put_action(component, :load_demo_board, resubscribe: resubscribe)
++    else
++      JS.call(:connectDemoBoard, ["channel"])
++      component
++    end
++  end
++
++
+   defp chat_notice(_reason), do: "message not sent. reload the page and try again."
+ 
+   # ── Commands ─────────────────────────────────────────────────────────
+@@ -859,6 +962,16 @@ defmodule ScrawlyWeb.Pages.HomePage do
+     ScrawlyWeb.LobbyChat.send_message(params, server)
+   end
+ 
++  def command(:load_demo_board, params, server), do: ScrawlyWeb.DemoBoard.load(params, server)
++
++  def command(:demo_stroke_chunk, params, server),
++    do: ScrawlyWeb.DemoBoard.chunk(params, server)
++
++  def command(:demo_stroke_complete, params, server),
++    do: ScrawlyWeb.DemoBoard.complete_stroke(params, server)
++
++  def command(:demo_clear, params, server), do: ScrawlyWeb.DemoBoard.clear(params, server)
++
+   # After a Back/Forward restore (:page_shown): the current lists, and the
+   # :lobby subscription again.
+   def command(:resync_lobby, _params, server) do
+diff --git a/lib/scrawly_web/demo_board.ex b/lib/scrawly_web/demo_board.ex
+new file mode 100644
+index 0000000..c8823e1
+--- /dev/null
++++ b/lib/scrawly_web/demo_board.ex
+@@ -0,0 +1,173 @@
++defmodule ScrawlyWeb.DemoBoard do
++  @moduledoc """
++  The home page's demo-board commands over Hologram Realtime. Server-only.
++
++  The board is open to visitors without an account, so every command is
++  validated and rate-limited per `ScrawlyWeb.Auth.actor_key/1`
++  (`ScrawlyWeb.RateLimiter`, limits in `limits/0`): the per-socket limits
++  `ScrawlyWeb.DemoBoardChannel` applies, plus the live chunk stream's.
++
++    * `load/2`: the stored strokes (`:demo_board_loaded %{strokes}`), loaded
++      by a command after mount rather than in init state (up to 500 strokes
++      of up to 8,000 chars).
++    * `chunk/2`: one live chunk of the stroke being drawn
++      (`Scrawly.Games.StrokeRules.chunk/1`). Valid -> relayed to the other
++      tabs as `:demo_chunk_in` with `put_broadcast_except` (never back to the
++      sender); always answered `:demo_chunk_acked %{ok}`. The client sends
++      the next chunk only after the ack, so one chunk command per drawer is in
++      flight and a drawer's chunks reach the board in order.
++    * `complete_stroke/2`: a finished stroke. Valid -> stored by
++      `Scrawly.Games.DemoBoardServer`, which pushes `:demo_stroke_added` to
++      every tab (the sender confirms its pending stroke by id). Invalid ->
++      peers get `:demo_stroke_abandon` so they drop the live overlay at once
++      (over-limit strokes relay nothing). Always answered
++      `:demo_stroke_acked %{stroke_id, ok}` (`reason` when not ok).
++    * `clear/2`: wipes the board (`:demo_board_cleared` to every tab).
++
++  Over-limit commands and invalid chunks queue no broadcast; an invalid
++  finished stroke queues only its `:demo_stroke_abandon`.
++  """
++
++  import Hologram.Component,
++    only: [put_action: 3, put_broadcast_except: 5, put_subscription: 2]
++
++  alias Hologram.Server
++  alias Scrawly.Games.{DemoBoardServer, StrokeRules}
++  alias ScrawlyWeb.{Auth, RateLimiter}
++
++  # Exclusive upper bound on a completed stroke's path length (chars). The
++  # client splits longer gestures into several strokes below this.
++  @max_path_length 8_000
++
++  # {max events, window ms} per actor. The client sends at most one chunk per
++  # 50 ms, and only once the previous one was acked.
++  @limits %{
++    clear: {1, 5_000},
++    stroke_complete: {20, 1_000},
++    stroke_chunk: {30, 1_000}
++  }
++
++  @doc "The rate limits per actor: `%{bucket => {max, window_ms}}`."
++  def limits, do: @limits
++
++  @doc "Exclusive upper bound on a completed stroke's path length."
++  def max_path_length, do: @max_path_length
++
++  @doc """
++  The transport the home page uses for the demo board: `:channel` (the
++  `demo:board` Phoenix channel) or `:realtime` (these commands). Switchable
++  until the measured gate decides (`config :scrawly, :demo_board_transport`).
++  """
++  @spec transport() :: :channel | :realtime
++  def transport do
++    case Application.get_env(:scrawly, :demo_board_transport, :channel) do
++      :realtime -> :realtime
++      _other -> :channel
++    end
++  end
++
++  @doc """
++  Replies `:demo_board_loaded %{strokes}` with the stored strokes. With
++  `resubscribe: true` (a page restored by Back/Forward, whose subscriptions the
++  connection dropped when it was left) it subscribes the page to the board's
++  channel again, as `HomePage.init/3` does.
++  """
++  @spec load(map, Server.t()) :: Server.t()
++  def load(params, %Server{} = server) do
++    server =
++      if Map.get(params, :resubscribe) == true,
++        do: put_subscription(server, DemoBoardServer.channel()),
++        else: server
++
++    put_action(server, :demo_board_loaded, strokes: DemoBoardServer.get_strokes())
++  end
++
++  @doc "Relays one live chunk to the other tabs and acks it (see the moduledoc)."
++  @spec chunk(map, Server.t()) :: Server.t()
++  def chunk(params, %Server{} = server) do
++    with :ok <- take(server, :stroke_chunk),
++         {:ok, chunk} <- StrokeRules.chunk(params) do
++      server
++      |> put_broadcast_except(
++        {:instance, server.instance_id},
++        DemoBoardServer.channel(),
++        :demo_chunk_in,
++        chunk
++      )
++      |> put_action(:demo_chunk_acked, ok: true)
++    else
++      _rate_limited_or_invalid -> put_action(server, :demo_chunk_acked, ok: false)
++    end
++  end
++
++  @doc "Stores a finished stroke, or rejects it (see the moduledoc)."
++  @spec complete_stroke(map, Server.t()) :: Server.t()
++  def complete_stroke(params, %Server{} = server) do
++    stroke_id = Map.get(params, :stroke_id)
++
++    with :ok <- take(server, :stroke_complete),
++         {:ok, stroke} <- stroke(params) do
++      # Stored with its stroke_id, which `:demo_stroke_added` carries to
++      # every tab, the sender included.
++      DemoBoardServer.add_stroke(stroke)
++      put_action(server, :demo_stroke_acked, stroke_id: stroke_id, ok: true)
++    else
++      :rate_limited -> nack_stroke(server, stroke_id, :rate_limited)
++      :invalid_stroke -> server |> abandon(stroke_id) |> nack_stroke(stroke_id, :invalid_stroke)
++    end
++  end
++
++  @doc "Clears the board, at most once per 5 s per actor."
++  @spec clear(map, Server.t()) :: Server.t()
++  def clear(_params, %Server{} = server) do
++    case take(server, :clear) do
++      :ok -> DemoBoardServer.clear()
++      :rate_limited -> :ok
++    end
++
++    server
++  end
++
++  defp take(server, bucket),
++    do: RateLimiter.take(Auth.actor_key(server), bucket, Map.fetch!(@limits, bucket))
++
++  defp stroke(params) do
++    stroke = %{
++      stroke_id: Map.get(params, :stroke_id),
++      path: Map.get(params, :path),
++      color: Map.get(params, :color),
++      width: Map.get(params, :width)
++    }
++
++    if StrokeRules.valid_stroke_id?(stroke.stroke_id) and StrokeRules.valid_path?(stroke.path) and
++         String.length(stroke.path) < @max_path_length and
++         StrokeRules.valid_color?(stroke.color) and StrokeRules.valid_width?(stroke.width),
++       do: {:ok, stroke},
++       else: :invalid_stroke
++  end
++
++  # Peers drop their live overlay for the id now; only a valid id is relayed.
++  # An over-limit stroke is not relayed (peers' idle sweep removes it), so
++  # abandons stay within the stroke limit.
++  defp abandon(server, stroke_id) do
++    if StrokeRules.valid_stroke_id?(stroke_id) do
++      put_broadcast_except(
++        server,
++        {:instance, server.instance_id},
++        DemoBoardServer.channel(),
++        :demo_stroke_abandon,
++        %{stroke_id: stroke_id}
++      )
++    else
++      server
++    end
++  end
++
++  defp nack_stroke(server, stroke_id, reason) do
++    put_action(server, :demo_stroke_acked,
++      stroke_id: if(is_binary(stroke_id), do: stroke_id),
++      ok: false,
++      reason: reason
++    )
++  end
++end
+diff --git a/lib/scrawly_web/rate_limiter.ex b/lib/scrawly_web/rate_limiter.ex
+new file mode 100644
+index 0000000..3de6c8a
+--- /dev/null
++++ b/lib/scrawly_web/rate_limiter.ex
+@@ -0,0 +1,111 @@
++defmodule ScrawlyWeb.RateLimiter do
++  @moduledoc """
++  Sliding-window rate limits for Hologram commands.
++
++  A Phoenix channel kept its counters in the socket's assigns; a command has
++  no per-connection state, so the windows live here, keyed by
++  `{actor, bucket}` where `actor` is `ScrawlyWeb.Auth.actor_key/1` (the user
++  id, or `"anon:<hash of the session id>"`). `take/3` admits an event when the
++  actor sent fewer than `max` events of that bucket within the last
++  `window_ms` and records it; over-limit events are not recorded. A `nil`
++  actor (no session) is always limited.
++
++  Every call goes through this process, so check-and-record is atomic per
++  key. Timestamps are monotonic ms; idle keys are swept periodically. State
++  is lost on restart (the app runs on a single machine).
++  """
++
++  use GenServer
++
++  @table __MODULE__
++  @sweep_every_ms 30_000
++  # Longest window a bucket may use; older events are swept.
++  @max_window_ms 60_000
++
++  @type limit :: {pos_integer, pos_integer}
++
++  def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
++
++  @doc """
++  Admits (`:ok`) and records one `bucket` event for `actor`, or answers
++  `:rate_limited` when `limit` (`{max, window_ms}`, window at most
++  #{@max_window_ms} ms) is used up.
++  """
++  @spec take(term, atom, limit, integer) :: :ok | :rate_limited
++  def take(actor, bucket, limit, now \\ System.monotonic_time(:millisecond))
++
++  def take(nil, _bucket, _limit, _now), do: :rate_limited
++
++  def take(actor, bucket, {max, window_ms}, now)
++      when is_integer(max) and max > 0 and is_integer(window_ms) and window_ms > 0 and
++             window_ms <= @max_window_ms do
++    GenServer.call(__MODULE__, {:take, {actor, bucket}, max, window_ms, now})
++  end
++
++  @doc "Forgets every recorded event of `actor` (tests)."
++  @spec reset(term) :: :ok
++  def reset(actor), do: GenServer.call(__MODULE__, {:reset, actor})
++
++  @doc false
++  def sweep(now \\ System.monotonic_time(:millisecond)),
++    do: GenServer.call(__MODULE__, {:sweep, now})
++
++  @impl true
++  def init(_opts) do
++    :ets.new(@table, [:named_table, :set, :protected])
++    schedule_sweep()
++    {:ok, nil}
++  end
++
++  @impl true
++  def handle_call({:take, key, max, window_ms, now}, _from, state) do
++    # Newest first, so the events still inside the window are a prefix.
++    recent =
++      case :ets.lookup(@table, key) do
++        [{^key, events}] -> Enum.take_while(events, &(now - &1 < window_ms))
++        [] -> []
++      end
++
++    if length(recent) < max do
++      :ets.insert(@table, {key, [now | recent]})
++      {:reply, :ok, state}
++    else
++      :ets.insert(@table, {key, recent})
++      {:reply, :rate_limited, state}
++    end
++  end
++
++  def handle_call({:reset, actor}, _from, state) do
++    :ets.match_delete(@table, {{actor, :_}, :_})
++    {:reply, :ok, state}
++  end
++
++  def handle_call({:sweep, now}, _from, state) do
++    {:reply, :ok, do_sweep(now, state)}
++  end
++
++  @impl true
++  def handle_info(:sweep, state) do
++    schedule_sweep()
++    {:noreply, do_sweep(System.monotonic_time(:millisecond), state)}
++  end
++
++  defp do_sweep(now, state) do
++    :ets.foldl(
++      fn {key, events}, :ok ->
++        case events do
++          [newest | _] when now - newest < @max_window_ms -> :ok
++          _stale -> :ets.delete(@table, key)
++        end
++
++        :ok
++      end,
++      :ok,
++      @table
++    )
++
++    state
++  end
++
++  defp schedule_sweep, do: Process.send_after(self(), :sweep, @sweep_every_ms)
++end
+diff --git a/lib/scrawly_web/pages/remote_strokes.mjs b/lib/scrawly_web/pages/remote_strokes.mjs
+new file mode 100644
+index 0000000..1a0f091
+--- /dev/null
++++ b/lib/scrawly_web/pages/remote_strokes.mjs
+@@ -0,0 +1,102 @@
++// Bookkeeping for peers' strokes in progress (the live overlays fed by
++// unsequenced stroke chunks), shared by the demo board and the game canvas.
++// Pure: no DOM and no timers; callers draw `entry.path` and run the idle
++// sweep from their own timer. Tests: test/js/remote_strokes.test.mjs.
++//
++// Chunks carry a per-stroke `seq` and arrive unordered and at most once:
++//   * a chunk whose seq is <= the last applied one for its stroke is dropped;
++//   * the first chunk seen for a stroke starts the path at its first point
++//     (startDelta), so joining mid-stroke works;
++//   * a closed stroke (completed, abandoned, cleared or swept) never comes
++//     back: its id is remembered (bounded, oldest forgotten first), so a
++//     late chunk cannot recreate an orphan overlay;
++//   * a stroke that got no chunk for `idleMs` is idle: its drawer left
++//     mid-stroke (closed the tab, lost the network) and no completion will
++//     come. There is no disconnect hook, so the owner sweeps idle() ids.
++
++import { startDelta } from "./stroke_engine.mjs";
++
++export const OVERLAY_IDLE_MS = 5000;
++export const MAX_CLOSED_IDS = 1000;
++
++export function createRemoteStrokes(opts) {
++  const idleMs = (opts && opts.idleMs) || OVERLAY_IDLE_MS;
++  const maxClosed = (opts && opts.maxClosed) || MAX_CLOSED_IDS;
++  const live = new Map();
++  const closed = new Set();
++
++  function remember(id) {
++    closed.delete(id);
++    closed.add(id);
++    if (closed.size > maxClosed) closed.delete(closed.values().next().value);
++  }
++
++  return {
++    // Applies one chunk. Returns the stroke's entry ({id, path, color, width,
++    // lastSeq, lastAt, el}) with its path extended, or null when the chunk is
++    // dropped (closed id, stale seq, or a first delta with no readable point).
++    // `el` is the caller's (its overlay element).
++    append(id, seq, delta, color, width, now) {
++      if (!id || typeof delta !== "string" || delta === "" || closed.has(id)) return null;
++
++      let entry = live.get(id);
++      if (entry && typeof seq === "number" && seq <= entry.lastSeq) return null;
++
++      if (!entry || entry.path === "") {
++        delta = startDelta(delta);
++        if (!delta) return null;
++      }
++
++      if (!entry) {
++        entry = { id: id, path: "", color: "#000000", width: 2, lastSeq: 0, lastAt: now, el: null };
++        live.set(id, entry);
++      }
++
++      entry.path += delta;
++      if (typeof seq === "number") entry.lastSeq = seq;
++      entry.lastAt = now;
++      if (color) entry.color = color;
++      if (width) entry.width = width;
++      return entry;
++    },
++
++    // Ends a stroke for good (completed, abandoned, cleared, swept). Returns
++    // its entry, or null when none was live.
++    close(id) {
++      if (!id) return null;
++      const entry = live.get(id) || null;
++      live.delete(id);
++      remember(id);
++      return entry;
++    },
++
++    // Forgets a live stroke without closing it (a snapshot replaced the
++    // canvas: later chunks of a stroke still being drawn start it afresh).
++    drop(id) {
++      const entry = live.get(id) || null;
++      live.delete(id);
++      return entry;
++    },
++
++    get(id) {
++      return live.get(id) || null;
++    },
++
++    isClosed(id) {
++      return closed.has(id);
++    },
++
++    entries() {
++      return Array.from(live.values());
++    },
++
++    // Ids of live strokes with no chunk for idleMs or longer.
++    idle(now) {
++      const ids = [];
++      live.forEach(function (entry) {
++        if (now - entry.lastAt >= idleMs) ids.push(entry.id);
++      });
++      return ids;
++    },
++  };
++}
+diff --git a/test/js/remote_strokes.test.mjs b/test/js/remote_strokes.test.mjs
+new file mode 100644
+index 0000000..f199713
+--- /dev/null
++++ b/test/js/remote_strokes.test.mjs
+@@ -0,0 +1,90 @@
++// Peers' strokes in progress (lib/scrawly_web/pages/remote_strokes.mjs): the
++// unsequenced live chunk stream of the demo board and the game canvas.
++// Run with `node --test test/js/*.test.mjs` (test/scrawly_web/js_unit_test.exs).
++
++import { test } from "node:test";
++import assert from "node:assert/strict";
++
++import {
++  createRemoteStrokes,
++  OVERLAY_IDLE_MS,
++  MAX_CLOSED_IDS,
++} from "../../lib/scrawly_web/pages/remote_strokes.mjs";
++
++test("chunks extend a stroke's path in seq order; the first one starts it", () => {
++  const r = createRemoteStrokes();
++  const a = r.append("s1", 1, "M 1 2", "#ff0000", 4, 0);
++  assert.equal(a.path, "M 1 2");
++  assert.equal(a.color, "#ff0000");
++  assert.equal(a.width, 4);
++  const b = r.append("s1", 2, " Q 1 2 3 4", "#ff0000", 4, 10);
++  assert.equal(b, a);
++  assert.equal(a.path, "M 1 2 Q 1 2 3 4");
++  assert.equal(a.lastSeq, 2);
++  assert.equal(a.lastAt, 10);
++});
++
++test("a stale or repeated seq is dropped", () => {
++  const r = createRemoteStrokes();
++  r.append("s1", 1, "M 1 2", "#000000", 2, 0);
++  r.append("s1", 3, " L 5 6", "#000000", 2, 1);
++  assert.equal(r.append("s1", 2, " L 3 4", "#000000", 2, 2), null);
++  assert.equal(r.append("s1", 3, " L 5 6", "#000000", 2, 3), null);
++  assert.equal(r.get("s1").path, "M 1 2 L 5 6");
++  assert.equal(r.get("s1").lastSeq, 3);
++  assert.equal(r.get("s1").lastAt, 1);
++});
++
++test("joining mid-stroke starts the path at the chunk's first point", () => {
++  const r = createRemoteStrokes();
++  assert.equal(r.append("s1", 5, " L 7 8 L 9 9", "#000000", 2, 0).path, "M 7 8 L 9 9");
++  assert.equal(r.append("s2", 5, " Q 1 1 2 2 Q 3 3 4 4", "#000000", 2, 0).path, "M 2 2 Q 3 3 4 4");
++  // No readable point: nothing is created.
++  assert.equal(r.append("s3", 1, " Z", "#000000", 2, 0), null);
++  assert.equal(r.get("s3"), null);
++  assert.equal(r.append("s4", 1, "", "#000000", 2, 0), null);
++  assert.equal(r.append(null, 1, "M 1 1", "#000000", 2, 0), null);
++});
++
++test("a closed stroke never comes back", () => {
++  const r = createRemoteStrokes();
++  r.append("s1", 1, "M 1 2", "#000000", 2, 0);
++  const closed = r.close("s1");
++  assert.equal(closed.path, "M 1 2");
++  assert.ok(r.isClosed("s1"));
++  assert.equal(r.append("s1", 2, " L 3 4", "#000000", 2, 1), null);
++  // Closing an id never seen also blocks its late chunks.
++  assert.equal(r.close("s9"), null);
++  assert.equal(r.append("s9", 1, "M 1 1", "#000000", 2, 1), null);
++});
++
++test("closed ids are bounded, oldest forgotten first", () => {
++  const r = createRemoteStrokes({ maxClosed: 3 });
++  ["a", "b", "c", "d"].forEach((id) => r.close(id));
++  assert.equal(r.isClosed("a"), false);
++  assert.ok(r.isClosed("b") && r.isClosed("c") && r.isClosed("d"));
++  assert.equal(MAX_CLOSED_IDS, 1000);
++});
++
++test("drop forgets a stroke without closing it (snapshot)", () => {
++  const r = createRemoteStrokes();
++  r.append("s1", 4, "M 1 2", "#000000", 2, 0);
++  r.drop("s1");
++  assert.equal(r.get("s1"), null);
++  assert.equal(r.isClosed("s1"), false);
++  assert.equal(r.append("s1", 5, " L 3 4", "#000000", 2, 1).path, "M 3 4");
++});
++
++test("idle sweep: strokes with no chunk for idleMs", () => {
++  assert.equal(OVERLAY_IDLE_MS, 5000);
++  const r = createRemoteStrokes();
++  r.append("old", 1, "M 1 1", "#000000", 2, 0);
++  r.append("busy", 1, "M 1 1", "#000000", 2, 0);
++  r.append("busy", 2, " L 2 2", "#000000", 2, 4000);
++  assert.deepEqual(r.idle(4999), []);
++  assert.deepEqual(r.idle(5000), ["old"]);
++  assert.deepEqual(r.idle(9000).sort(), ["busy", "old"]);
++  r.close("old");
++  assert.deepEqual(r.idle(9000), ["busy"]);
++  assert.deepEqual(r.entries().map((e) => e.id), ["busy"]);
++});

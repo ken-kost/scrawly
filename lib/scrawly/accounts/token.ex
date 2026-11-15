@@ -66,6 +66,15 @@ defmodule Scrawly.Accounts.Token do
       change filter expr(expires_at < now())
     end
 
+    # A session token replaced by a newer one (renewal, account switch; see
+    # ScrawlyWeb.Auth.put_session_user/3): its expiry is brought forward to a
+    # short grace, so requests already in flight with the old cookie still
+    # pass, and a copy of the old cookie stops working right after.
+    update :retire do
+      description "Brings a stored token's expiry forward."
+      accept [:expires_at]
+    end
+
     update :revoke_all_stored_for_subject do
       description "Revokes all stored tokens for a specific subject."
       accept [:extra_data]

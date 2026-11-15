@@ -7,6 +7,8 @@ defmodule Scrawly.Application do
 
   @impl true
   def start(_type, _args) do
+    ScrawlyWeb.LogRedactor.install()
+
     children = [
       ScrawlyWeb.Telemetry,
       Scrawly.Repo,
@@ -15,16 +17,19 @@ defmodule Scrawly.Application do
       # Registry and DynamicSupervisor for RoomServer processes
       {Registry, keys: :unique, name: Scrawly.RoomRegistry},
       {DynamicSupervisor, strategy: :one_for_one, name: Scrawly.RoomSupervisor},
-      # Presence tracking for game channels
-      ScrawlyWeb.Presence,
-      # Round timer for game flow management
-      Scrawly.Games.RoundTimer,
+      # Slow work a room hands off so it keeps answering (AI word refills)
+      {Task.Supervisor, name: Scrawly.TaskSupervisor},
+      # Sign-in, recovery-reset and guest-creation attempts (in memory)
+      Scrawly.Accounts.Throttle,
+      # Distinct visitors seen in the last 45 s (the header's "N online")
+      ScrawlyWeb.OnlineTracker,
       # Shared canvas for the home-page demo board
       Scrawly.Games.DemoBoardServer,
       # Start to serve requests, typically the last entry
       ScrawlyWeb.Endpoint,
       {AshAuthentication.Supervisor, [otp_app: :scrawly]},
-      # Weekly cleanup of persisted lobby chat (relies on Endpoint to broadcast)
+      # Lobby chat log + its Realtime broadcasts (Hologram.PubSub, started by
+      # the :hologram application) and the weekly wipe
       Scrawly.Games.LobbyChatServer
     ]
 

@@ -62,7 +62,12 @@ config :scrawly, ScrawlyWeb.Endpoint,
     layout: false
   ],
   pubsub_server: Scrawly.PubSub,
-  live_view: [signing_salt: "OWISxaez"]
+  live_view: [signing_salt: "OWISxaez"],
+  # Bandit's WebSocket caps for every socket (merged with each env's :http):
+  # nothing this app sends over a WebSocket comes near 64 KiB, and Phoenix
+  # can't set the fragmented-message cap per socket (endpoint.ex caps
+  # /socket's frames lower).
+  http: [websocket_options: [max_frame_size: 65_536, max_fragmented_message_size: 65_536]]
 
 # Configures the mailer
 #
@@ -93,6 +98,13 @@ config :tailwind,
     ),
     cd: Path.expand("..", __DIR__)
   ]
+
+# Fail the build when the Hologram runtime bundle or a page bundle (the
+# uncompressed .js; struct chunks are exempt) grows past this many bytes. Read
+# while the bundles compile, so it can't live in runtime.exs. Sized at ~1.25x
+# the largest dev bundle (runtime, 671_034 bytes on Hologram 0.12.8); dev and
+# test bundles carry client stacktraces, so prod bundles have more headroom.
+config :hologram, max_bundle_size: 840_000
 
 # Configures Elixir's Logger
 config :logger, :default_formatter,

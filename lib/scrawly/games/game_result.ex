@@ -79,5 +79,26 @@ defmodule Scrawly.Games.GameResult do
       destination_attribute :id
       define_attribute? false
     end
+
+    # Every result of the same game, this one included (the place aggregates).
+    has_many :same_game_results, Scrawly.Games.GameResult do
+      source_attribute :game_id
+      destination_attribute :game_id
+    end
+  end
+
+  # The player's place in the game (PastGamesPage): 1 + the results of the
+  # same game with a higher score, so a shared score shares the place. (Over
+  # a relationship: two unrelated aggregates on this resource loaded together
+  # were merged into one subquery by Ash 3.23 and both came back 0.)
+  aggregates do
+    count :players_in_game, :same_game_results do
+      public? true
+    end
+
+    count :players_ahead, :same_game_results do
+      public? true
+      filter expr(score > parent(score))
+    end
   end
 end

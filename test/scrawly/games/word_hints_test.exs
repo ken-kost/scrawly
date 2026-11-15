@@ -117,7 +117,8 @@ defmodule Scrawly.Games.WordHintsTest do
       Enum.zip(stage_1_chars, stage_2_chars)
       |> Enum.each(fn {a, b} ->
         if a != "_" and a != " " do
-          assert a == b, "Expected #{inspect(a)} to remain revealed in stage 2 but got #{inspect(b)}"
+          assert a == b,
+                 "Expected #{inspect(a)} to remain revealed in stage 2 but got #{inspect(b)}"
         end
       end)
     end
@@ -295,6 +296,61 @@ defmodule Scrawly.Games.WordHintsTest do
 
     test "returns 0 for nil" do
       assert WordHints.word_length_hint(nil) == 0
+    end
+  end
+
+  describe "reveal_offsets_ms/2" do
+    test "one {stage, ms} per batch, at 37.5% and 68.75% of the round" do
+      assert WordHints.reveal_offsets_ms(60) == [{1, 22_500}, {2, 41_250}]
+      assert WordHints.reveal_offsets_ms(80) == [{1, 30_000}, {2, 55_000}]
+      assert WordHints.reveal_offsets_ms(90) == [{1, 33_750}, {2, 61_875}]
+    end
+
+    test "follows a custom schedule" do
+      assert WordHints.reveal_offsets_ms(60, hint_schedule: [0.5]) == [{1, 30_000}]
+
+      assert WordHints.reveal_offsets_ms(100, hint_schedule: [0.25, 0.5, 0.75]) ==
+               [{1, 25_000}, {2, 50_000}, {3, 75_000}]
+    end
+  end
+
+  describe "hint_for_stage/3" do
+    test "equals generate_hint/4 at every time in that stage" do
+      for word <- ["elephant", "watermelon", "ice cream", "co-op", "cat", "a"],
+          duration <- [60, 80, 90] do
+        duration_ms = duration * 1000
+        offsets = WordHints.reveal_offsets_ms(duration)
+
+        samples =
+          [0, 1_000, duration_ms - 1, duration_ms] ++
+            Enum.flat_map(offsets, fn {_stage, ms} -> [ms - 1, ms, ms + 1] end)
+
+        for elapsed_ms <- samples do
+          stage = Enum.count(offsets, fn {_stage, ms} -> elapsed_ms >= ms end)
+          time_left = (duration_ms - elapsed_ms) / 1000
+
+          assert WordHints.hint_for_stage(word, stage) ==
+                   WordHints.generate_hint(word, time_left, duration),
+                 "#{word} #{duration}s at #{elapsed_ms} ms (stage #{stage})"
+        end
+      end
+    end
+
+    test "stage 0 hides every letter and a stage past the last shows all batches" do
+      assert WordHints.hint_for_stage("elephant", 0) == "_ _ _ _ _ _ _ _"
+      assert WordHints.hint_for_stage("elephant", 5) == WordHints.hint_for_stage("elephant", 2)
+      assert revealed_letters(WordHints.hint_for_stage("elephant", 1)) == 1
+      assert revealed_letters(WordHints.hint_for_stage("elephant", 2)) == 2
+    end
+
+    test "a short word's second batch can be empty" do
+      assert WordHints.hint_for_stage("cat", 1) == WordHints.hint_for_stage("cat", 2)
+      assert revealed_letters(WordHints.hint_for_stage("cat", 1)) == 1
+    end
+
+    test "nil and empty words" do
+      assert WordHints.hint_for_stage(nil, 2) == ""
+      assert WordHints.hint_for_stage("", 1) == ""
     end
   end
 end

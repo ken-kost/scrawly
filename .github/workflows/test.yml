@@ -1,0 +1,88 @@
+name: CI
+
+# Runs the Elixir test suite (and a warnings-as-errors compile) on every PR and
+# on pushes to the default branch. The repo previously had no CI — only
+# fly-deploy.yml — so the migration's realtime/auth paths had no automated gate.
+on:
+  pull_request:
+  push:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: mix test (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: "1.19.7"
+            otp: "28.3.3"
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MIX_ENV: test
+      # Hologram's runtime and compiler stay OFF in test (Hologram.enabled? is
+      # false in :dev/:test unless HOLOGRAM_START=1; the default since 0.9, and
+      # unchanged in 0.12). The suite is designed to run with it disabled:
+      # Hologram.Router passes requests through when disabled, and
+      # test/test_helper.exs starts Hologram.PubSub so realtime broadcasts no-op.
+      # Building the page bundles needs HOLOGRAM_START=1 (`mix holo` sets it).
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir / OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+
+      - name: Cache deps and _build
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Compile (warnings as errors)
+        run: mix compile --warnings-as-errors
+
+      # The Hologram compiler only runs with HOLOGRAM_START=1, so without this
+      # step CI never builds the page bundles (and no test renders through the
+      # client). It catches client-compilation failures and prop `required` /
+      # `values` errors. The cached _build is not trusted for bundle freshness:
+      # Hologram's build dir is removed first, so every run is a full build.
+      # `mix test` below keeps running without the variable.
+      - name: Build Hologram bundles
+        run: |
+          rm -rf _build/test/lib/hologram/priv
+          HOLOGRAM_START=1 mix compile
+
+      # `mix test` is aliased to `ash.setup --quiet` + `test`, so it creates and
+      # migrates the test database against the Postgres service above.
+      - name: Run tests
+        run: mix test

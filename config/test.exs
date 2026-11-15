@@ -38,3 +38,6 @@ config :phoenix, :plug_init_mode, :runtime
 # Enable helpful, but potentially expensive runtime checks
 config :phoenix_live_view,
   enable_expensive_runtime_checks: true
+
+# Rooms' presence sweep (RoomServer) is driven by the tests themselves.
+config :scrawly, Scrawly.Games.RoomServer, presence_sweep_ms: false

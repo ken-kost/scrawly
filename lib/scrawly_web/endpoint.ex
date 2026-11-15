@@ -8,15 +8,22 @@ defmodule ScrawlyWeb.Endpoint do
     store: :cookie,
     key: "_scrawly_key",
     signing_salt: "hvqvlU6S",
-    same_site: "Lax"
+    same_site: "Lax",
+    # HTTPS-only in prod (config/prod.exs: the proxy terminates TLS and the
+    # browser only ever sees https), so the cookie never travels in clear.
+    secure: Application.compile_env(:scrawly, :secure_session_cookie, false)
   ]
 
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [session: @session_options]],
     longpoll: [connect_info: [session: @session_options]]
 
+  # The game and demo-board channels. Their biggest legitimate frame is a
+  # demo stroke: at most 8,000 path bytes (StrokeRules) in a ~150-byte
+  # envelope. Bandit's global caps (config.exs, :websocket_options) cover
+  # the other sockets and fragmented messages.
   socket "/socket", ScrawlyWeb.UserSocket,
-    websocket: true,
+    websocket: [max_frame_size: 32_768],
     longpoll: false
 
   # Serve at "/" the static files from "priv/static" directory.
@@ -28,7 +35,7 @@ defmodule ScrawlyWeb.Endpoint do
     at: "/",
     from: :scrawly,
     gzip: not code_reloading?,
-    only: ["hologram" | ScrawlyWeb.static_paths()]
+    only: ScrawlyWeb.static_paths()
 
   if Code.ensure_loaded?(Tidewave) do
     plug Tidewave
@@ -38,7 +45,7 @@ defmodule ScrawlyWeb.Endpoint do
   # :code_reloader configuration of your endpoint.
   if code_reloading? do
     socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
- #   plug Phoenix.LiveReloader
+    #   plug Phoenix.LiveReloader
     plug Phoenix.CodeReloader
     plug AshPhoenix.Plug.CheckCodegenStatus
   end
@@ -50,9 +57,14 @@ defmodule ScrawlyWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
+  # Every body this app reads is small: the largest is a Hologram command
+  # carrying a stroke (JSON with strings hex-encoded, so an 8,000-byte path
+  # is ~16 KB). 128 KiB leaves room for that and refuses a megabyte body
+  # with 413 before anything decodes it (Plug's default is 8 MB).
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],
+    length: 131_072,
     json_decoder: Phoenix.json_library()
 
   plug Plug.MethodOverride

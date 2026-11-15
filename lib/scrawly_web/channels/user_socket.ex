@@ -9,51 +9,22 @@ defmodule ScrawlyWeb.UserSocket do
   ## Channels
 
   channel "game:*", ScrawlyWeb.GameChannel
-  channel "lobby:*", ScrawlyWeb.LobbyChannel
   channel "demo:board", ScrawlyWeb.DemoBoardChannel
 
-  # Socket params are passed from the client and can
-  # be used to verify and authenticate a user. After
-  # verification, you can put default assigns into
-  # the socket that will be set for all channels, ie
-  #
-  #     {:ok, assign(socket, :user_id, verified_user_id)}
-  #
-  # To deny connection, return `:error` or `{:error, term}`. To control the
-  # response the client receives in that case, [define an error handler in the
-  # websocket
-  # configuration](https://hexdocs.pm/phoenix/Phoenix.Endpoint.html#socket/3-websocket-configuration).
-  #
-  # See `Phoenix.Token` documentation for examples in
-  # performing token verification on connect.
+  # The game page connects with a socket-only token (ScrawlyWeb.SocketToken),
+  # never the session's sign-in JWT, which stays in the http-only session
+  # cookie. A valid token (unexpired, and its session token still stored and
+  # unrevoked: one lookup) assigns the user; anything else, including no token,
+  # connects anonymously, which is enough for the public demo board. The
+  # channels authorize what a socket may do.
   @impl true
-  def connect(%{"token" => token} = params, socket, connect_info) do
-    case AshAuthentication.Jwt.verify(token, Scrawly.Accounts.User) do
-      {:ok, %{"sub" => subject}, _claims} ->
-        case Scrawly.Accounts.User
-             |> Ash.Query.for_read(:get_by_subject, %{subject: subject})
-             |> Ash.read_one() do
-          {:ok, user} when not is_nil(user) ->
-            {:ok, assign(socket, :user_id, user.id)}
-
-          _ ->
-            connect(Map.delete(params, "token"), socket, connect_info)
-        end
-
-      _ ->
-        # Token is invalid/expired — fall through so public channels (lobby)
-        # can still join as anonymous.
-        connect(Map.delete(params, "token"), socket, connect_info)
+  def connect(%{"token" => token}, socket, _connect_info) when is_binary(token) do
+    case ScrawlyWeb.SocketToken.verify(token) do
+      {:ok, user_id} -> {:ok, assign(socket, :user_id, user_id)}
+      :error -> {:ok, assign(socket, :user_id, nil)}
     end
   end
 
-  # Allow anonymous connections for lobby channel (room list is public)
-  def connect(%{"lobby" => "true"}, socket, _connect_info) do
-    {:ok, assign(socket, :user_id, nil)}
-  end
-
-  # Permit any other websocket attempt as anonymous; channel authorization
-  # in individual channels still restricts protected actions.
   def connect(_params, socket, _connect_info) do
     {:ok, assign(socket, :user_id, nil)}
   end
@@ -67,7 +38,16 @@ defmodule ScrawlyWeb.UserSocket do
   #
   #     Elixir.ScrawlyWeb.Endpoint.broadcast("user_socket:#{user.id}", "disconnect", %{})
   #
-  # Returning `nil` makes this socket anonymous.
+  # ScrawlyWeb.Auth.disconnect_sockets/1 does that whenever the user's tokens
+  # are revoked (sign-out, password change, recovery reset, guest upgrade);
+  # a new connect with a socket token of that session fails
+  # SocketToken.verify/1.
+  #
+  # Returning `nil` makes this socket anonymous: account-less sockets must not
+  # share one "user_socket:" id (a disconnect broadcast to it would hit them all).
   @impl true
-  def id(socket), do: "user_socket:#{socket.assigns.user_id}"
+  def id(%{assigns: %{user_id: user_id}}) when is_binary(user_id) and user_id != "",
+    do: "user_socket:#{user_id}"
+
+  def id(_socket), do: nil
 end

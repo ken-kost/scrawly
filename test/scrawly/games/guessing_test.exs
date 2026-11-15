@@ -2,7 +2,7 @@ defmodule Scrawly.Games.GuessingTest do
   use Scrawly.DataCase
 
   alias Scrawly.Games
-  alias Scrawly.Games.Scoring
+  alias Scrawly.Games.{Guess, Scoring}
   alias Scrawly.Accounts.User
 
   describe "scoring formula" do
@@ -48,30 +48,37 @@ defmodule Scrawly.Games.GuessingTest do
     end
   end
 
-  describe "guess matching" do
+  describe "guess matching (Guess.matches?/2)" do
     test "exact match returns true" do
-      assert guess_matches?("butterfly", "butterfly")
+      assert Guess.matches?("butterfly", "butterfly")
     end
 
     test "case insensitive match" do
-      assert guess_matches?("Butterfly", "butterfly")
-      assert guess_matches?("BUTTERFLY", "butterfly")
+      assert Guess.matches?("Butterfly", "butterfly")
+      assert Guess.matches?("BUTTERFLY", "butterfly")
     end
 
     test "trims whitespace" do
-      assert guess_matches?("  butterfly  ", "butterfly")
+      assert Guess.matches?("  butterfly  ", "butterfly")
     end
 
     test "wrong guess returns false" do
-      refute guess_matches?("caterpillar", "butterfly")
+      refute Guess.matches?("caterpillar", "butterfly")
     end
 
     test "partial match returns false" do
-      refute guess_matches?("butter", "butterfly")
+      refute Guess.matches?("butter", "butterfly")
     end
 
     test "empty guess returns false" do
-      refute guess_matches?("", "butterfly")
+      refute Guess.matches?("", "butterfly")
+      refute Guess.matches?("   ", "butterfly")
+    end
+
+    test "nil or empty word never matches" do
+      refute Guess.matches?("butterfly", nil)
+      refute Guess.matches?("", "")
+      refute Guess.matches?(nil, nil)
     end
   end
 
@@ -160,14 +167,5 @@ defmodule Scrawly.Games.GuessingTest do
       # At least one should be different from the first word
       assert Enum.any?(results, &(&1 != first_word))
     end
-  end
-
-  # Legacy helper kept for reference; new tests use Scoring module directly
-  defp calculate_points(time_left) when is_integer(time_left) do
-    Scoring.guesser_points(time_left, 80)
-  end
-
-  defp guess_matches?(guess, word) do
-    String.downcase(String.trim(guess)) == String.downcase(String.trim(word))
   end
 end

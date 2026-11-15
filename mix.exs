@@ -5,12 +5,12 @@ defmodule Scrawly.MixProject do
     [
       app: :scrawly,
       version: "0.1.0",
-      elixir: "~> 1.15",
+      elixir: "~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
-      compilers: [:phoenix_live_view, :hologram] ++ Mix.compilers(),
+      compilers: [:phoenix_live_view] ++ Mix.compilers() ++ [:hologram],
       listeners: [Phoenix.CodeReloader],
       consolidate_protocols: Mix.env() != :dev,
       usage_rules: usage_rules()
@@ -43,7 +43,7 @@ defmodule Scrawly.MixProject do
   defp deps do
     [
       {:usage_rules, "~> 1.2", only: [:dev]},
-      {:hologram, "~> 0.8"},
+      {:hologram, "~> 0.12.8"},
       {:picosat_elixir, "~> 0.2"},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:tidewave, "~> 0.5", only: [:dev]},
@@ -103,7 +103,7 @@ defmodule Scrawly.MixProject do
         "esbuild scrawly --minify",
         "phx.digest"
       ],
-      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
+      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
     ]
   end
 
@@ -115,7 +115,9 @@ defmodule Scrawly.MixProject do
       # use a regex to match multiple deps, or atoms/strings for specific ones
       # usage_rules: [:ash, ~r/^ash_/],
       # If your CLAUDE.md is getting too big, link instead of inlining:
-      usage_rules: [:ash, {~r/^ash_/, link: :markdown}],
+      # :hologram first keeps its section at the top of CLAUDE.md.
+      # re-run mix usage_rules.sync after every Hologram (or Ash) bump
+      usage_rules: [:hologram, :ash, {~r/^ash_/, link: :markdown}],
       # or use skills
       skills: [
         location: ".claude/skills",

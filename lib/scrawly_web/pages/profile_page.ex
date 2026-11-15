@@ -1,45 +1,60 @@
 defmodule ScrawlyWeb.Pages.ProfilePage do
-  use Hologram.Page
+  use ScrawlyWeb.Page
+  use Hologram.JS
+
+  js_import :copyRecoveryCode, from: "../components/recovery_code.mjs"
+  js_import :downloadRecoveryCode, from: "../components/recovery_code.mjs"
+  js_import :takeStaleRoomChannels, from: "./room_channels.mjs"
 
   route "/profile"
-  layout ScrawlyWeb.Layouts.AppLayout
 
-  alias ScrawlyWeb.Components.{Avatar, AvatarDefs}
+  # Signed out (or a revoked session): 302 / page data to the home page, for
+  # the page and its commands alike.
+  middleware ScrawlyWeb.Middleware.RequireUser
 
+  alias Scrawly.Accounts.User.Validations.NotReservedUsername
+  alias ScrawlyWeb.{Auth, CommandParams, RoomSubscriptions}
+  alias ScrawlyWeb.Components.{Avatar, AvatarDefs, RecoveryCodePanel}
+
+  # RequireUser guarantees the stashed user. Only copied fields reach the
+  # state (it is sent to the browser). Passwords never do: the password inputs
+  # are not synchronized, the $submit actions read them from the event, and
+  # every reply empties them in the DOM (clear_secret_fields/1).
   def init(_params, component, server) do
-    case get_session(server, :user_id) do
-      nil ->
-        put_page(component, ScrawlyWeb.Pages.HomePage)
+    {:ok, user} = Auth.current_user(server)
 
-      user_id ->
-        case Ash.get(Scrawly.Accounts.User, user_id) do
-          {:ok, user} ->
-            component
-            |> put_state(:authenticated, true)
-            |> put_state(:user_id, user.id)
-            |> put_state(:email, to_string(user.email))
-            |> put_state(:username, user.username || "")
-            |> put_state(:avatar_id, user.avatar_id || AvatarDefs.default_id())
-            |> put_state(:avatar_color, user.avatar_color || AvatarDefs.default_color())
-            |> put_state(:current_password, "")
-            |> put_state(:new_password, "")
-            |> put_state(:new_password_confirmation, "")
-            |> put_state(:profile_message, nil)
-            |> put_state(:profile_error, nil)
-            |> put_state(:password_message, nil)
-            |> put_state(:password_error, nil)
-            |> put_state(:avatars, AvatarDefs.avatars())
-            |> put_state(:color_choices, Enum.map(1..24, &Integer.to_string/1))
-
-          _ ->
-            put_page(component, ScrawlyWeb.Pages.HomePage)
-        end
-    end
+    component
+    |> put_state(:authenticated, true)
+    |> put_state(:user_id, user.id)
+    |> put_state(:is_guest, user.is_guest == true)
+    |> put_state(:email, to_string(user.email))
+    |> put_state(:username, user.username || "")
+    |> put_state(:avatar_id, user.avatar_id || AvatarDefs.default_id())
+    |> put_state(:avatar_color, user.avatar_color || AvatarDefs.default_color())
+    |> put_state(:profile_message, nil)
+    |> put_state(:profile_error, nil)
+    |> put_state(:password_message, nil)
+    |> put_state(:password_error, nil)
+    |> put_state(:avatars, AvatarDefs.avatars())
+    |> put_state(:color_choices, Enum.map(1..24, &Integer.to_string/1))
+    |> put_state(:recovery_status, ScrawlyWeb.Recovery.status(user))
+    |> put_state(
+      :recovery_generated_label,
+      ScrawlyWeb.Recovery.generated_label(user.recovery_code_generated_at)
+    )
+    |> put_state(:recovery_error, nil)
+    |> put_state(:recovery_message, nil)
+    |> put_state(:recovery_code, nil)
+    |> put_state(:recovery_code_saved, false)
+    |> put_state(:recovery_code_copied, false)
+    |> put_state(:mount_id, System.unique_integer([:positive]))
+    |> put_state(:page_shown?, false)
   end
 
   def template do
     ~HOLO"""
     <div class="page page-narrow">
+      <script>Hologram.dispatchAction("page_shown", "page", \{mount_id: "{@mount_id}"\});</script>
       <section class="hero" style="padding-bottom: 24px;">
         <div>
           <h1 style="font-size: 44px;">profile.</h1>
@@ -71,7 +86,7 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
               placeholder="how the lobby knows you"
               minlength="2"
               maxlength="20"
-              $input={:update_username} />
+              $change={:update_username} />
 
             <div style="margin-top: 18px;">
               <div class="row" style="justify-content: space-between; align-items: center;">
@@ -124,50 +139,108 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
             <span class="mono" style="font-size: 11px; color: var(--muted);">change</span>
           </div>
 
-          <form $submit={:save_password}>
-            <label class="field-label">current password</label>
-            <input
-              class="app-input"
-              type="password"
-              name="current_password"
-              autocomplete="current-password"
-              value={@current_password}
-              placeholder="••••••••"
-              $input={:update_current_password} />
+          {%if @is_guest}
+            <p class="sub" style="font-size: 13px; margin: 0;">
+              guests have no password. register to keep this account and set one.
+            </p>
+          {%else}
+            <form $submit={:save_password}>
+              <label class="field-label">current password</label>
+              <input
+                class="app-input"
+                type="password"
+                name="current_password"
+                autocomplete="current-password"
+                placeholder="••••••••"
+                data-secret="1" />
 
-            <label class="field-label" style="margin-top: 14px;">new password</label>
-            <input
-              class="app-input"
-              type="password"
-              name="new_password"
-              autocomplete="new-password"
-              value={@new_password}
-              placeholder="at least 8 characters"
-              $input={:update_new_password} />
+              <label class="field-label" style="margin-top: 14px;">new password</label>
+              <input
+                class="app-input"
+                type="password"
+                name="new_password"
+                autocomplete="new-password"
+                placeholder="at least 8 characters"
+                data-secret="1" />
 
-            <label class="field-label" style="margin-top: 14px;">confirm new password</label>
-            <input
-              class="app-input"
-              type="password"
-              name="new_password_confirmation"
-              autocomplete="new-password"
-              value={@new_password_confirmation}
-              placeholder="repeat new password"
-              $input={:update_new_password_confirmation} />
+              <label class="field-label" style="margin-top: 14px;">confirm new password</label>
+              <input
+                class="app-input"
+                type="password"
+                name="new_password_confirmation"
+                autocomplete="new-password"
+                placeholder="repeat new password"
+                data-secret="1" />
 
-            {%if @password_error}
-              <div class="form-error">{@password_error}</div>
+              {%if @password_error}
+                <div class="form-error">{@password_error}</div>
+              {/if}
+              {%if @password_message}
+                <div class="form-success">{@password_message}</div>
+              {/if}
+
+              <div style="margin-top: 20px; display: flex; gap: 8px; justify-content: flex-end;">
+                <button type="submit" class="app-btn app-btn-primary">change password</button>
+              </div>
+            </form>
+          {/if}
+        </section>
+
+        <section class="surface profile-card profile-card-wide">
+          <div class="section-header" style="border-bottom: 1px solid var(--hairline); padding-bottom: 12px; margin-bottom: 18px;">
+            <h2>recovery code</h2>
+            <span class="mono" style="font-size: 11px; color: var(--muted);">
+              {%if @recovery_status == :active}set up{%else}{%if @recovery_status == :guest}guest{%else}not set up{/if}{/if}
+            </span>
+          </div>
+
+          {%if @recovery_status == :guest}
+            <p class="sub" style="font-size: 13px; margin: 0;">
+              register to get a recovery code. it lets you set a new password if you forget yours.
+            </p>
+          {%else}
+            {%if @recovery_status == :active}
+              <p class="sub" style="font-size: 13px; margin: 0 0 14px;">
+                your recovery code was generated <span class="mono">{@recovery_generated_label}</span>.
+                it can only set a new password. lost it? generate a new one and the old code stops working.
+              </p>
+            {%else}
+              <p class="sub" style="font-size: 13px; margin: 0 0 14px;">
+                set up a recovery code: it is the only way to reset a forgotten password,
+                since scrawly sends no email.
+              </p>
             {/if}
-            {%if @password_message}
-              <div class="form-success">{@password_message}</div>
-            {/if}
 
-            <div style="margin-top: 20px; display: flex; gap: 8px; justify-content: flex-end;">
-              <button type="submit" class="app-btn app-btn-primary">change password</button>
-            </div>
-          </form>
+            <form $submit={:regenerate_recovery_code}>
+              <label class="field-label">current password</label>
+              <div class="row" style="gap: 8px; align-items: stretch; flex-wrap: wrap;">
+                <input
+                  class="app-input"
+                  style="flex: 1; min-width: 200px;"
+                  type="password"
+                  name="recovery_current_password"
+                  autocomplete="current-password"
+                  placeholder="••••••••"
+                  data-secret="1" />
+                <button type="submit" class="app-btn app-btn-primary">
+                  {%if @recovery_status == :active}generate a new code{%else}set up a recovery code{/if}
+                </button>
+              </div>
+
+              {%if @recovery_error}
+                <div class="form-error">{@recovery_error}</div>
+              {/if}
+              {%if @recovery_message}
+                <div class="form-success">{@recovery_message}</div>
+              {/if}
+            </form>
+          {/if}
         </section>
       </div>
+
+      {%if @recovery_code}
+        <RecoveryCodePanel code={@recovery_code} saved={@recovery_code_saved} copied={@recovery_code_copied} />
+      {/if}
     </div>
     """
   end
@@ -223,26 +296,14 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
 
   # ── Password form actions ───────────────────────────────────────────
 
-  def action(:update_current_password, %{event: %{value: val}}, component) do
-    put_state(component, :current_password, val)
-  end
-
-  def action(:update_new_password, %{event: %{value: val}}, component) do
-    put_state(component, :new_password, val)
-  end
-
-  def action(:update_new_password_confirmation, %{event: %{value: val}}, component) do
-    put_state(component, :new_password_confirmation, val)
-  end
-
-  def action(:save_password, _params, component) do
+  def action(:save_password, params, component) do
     component
     |> put_state(:password_error, nil)
     |> put_state(:password_message, nil)
     |> put_command(:save_password, %{
-      current_password: component.state.current_password,
-      password: component.state.new_password,
-      password_confirmation: component.state.new_password_confirmation
+      current_password: form_value(params, "current_password"),
+      password: form_value(params, "new_password"),
+      password_confirmation: form_value(params, "new_password_confirmation")
     })
   end
 
@@ -250,73 +311,239 @@ defmodule ScrawlyWeb.Pages.ProfilePage do
     component
     |> put_state(:password_message, message)
     |> put_state(:password_error, nil)
-    |> put_state(:current_password, "")
-    |> put_state(:new_password, "")
-    |> put_state(:new_password_confirmation, "")
+    |> clear_secret_fields()
   end
 
   def action(:password_failed, %{message: message}, component) do
     component
     |> put_state(:password_error, message)
     |> put_state(:password_message, nil)
+    |> clear_secret_fields()
+  end
+
+  # A denied command (ScrawlyWeb.Auth.deny/3) changes nothing here.
+  def action(:command_denied, _params, component), do: component
+
+  # ── Recovery code actions ───────────────────────────────────────────
+
+  def action(:regenerate_recovery_code, params, component) do
+    component
+    |> put_state(:recovery_error, nil)
+    |> put_state(:recovery_message, nil)
+    |> put_command(:regenerate_recovery_code, %{
+      current_password: form_value(params, "recovery_current_password")
+    })
+  end
+
+  def action(:recovery_code_failed, %{message: message}, component) do
+    component
+    |> put_state(:recovery_error, message)
+    |> put_state(:recovery_message, nil)
+    |> clear_secret_fields()
+  end
+
+  def action(:show_recovery_code, %{code: code} = params, component) do
+    component
+    |> clear_secret_fields()
+    |> put_state(:recovery_status, :active)
+    |> put_state(:recovery_generated_label, Map.get(params, :generated_label, ""))
+    |> put_state(:recovery_code, code)
+    |> put_state(:recovery_code_saved, false)
+    |> put_state(:recovery_code_copied, false)
+  end
+
+  def action(:copy_recovery_code, _params, component) do
+    JS.call(:copyRecoveryCode, [component.state.recovery_code])
+    put_state(component, :recovery_code_copied, true)
+  end
+
+  def action(:download_recovery_code, _params, component) do
+    JS.call(:downloadRecoveryCode, [component.state.recovery_code])
+    component
+  end
+
+  def action(:set_recovery_code_saved, %{event: %{value: saved}}, component) do
+    put_state(component, :recovery_code_saved, saved == true)
+  end
+
+  def action(:close_recovery_code, _params, component) do
+    component
+    |> put_state(:recovery_code, nil)
+    |> put_state(:recovery_code_saved, false)
+    |> put_state(:recovery_code_copied, false)
+    |> put_state(:recovery_message, "recovery code saved. any older code no longer works.")
+  end
+
+  # ── Back/Forward ────────────────────────────────────────────────────
+  # The inline script dispatches :page_shown whenever this page instance's
+  # markup is inserted. The second time is a Back/Forward restore: the server
+  # still holds the subscriptions of the page shown before (the lobby, a
+  # room), which go now (ScrawlyWeb.RoomSubscriptions).
+
+  def action(:page_shown, _params, component) do
+    # Hologram 0.12.8 keeps the put_page/2 that left this page in the
+    # component it saves (only next_action and next_command are cleared), so
+    # after a restore the first action to return it would navigate there again
+    # (Back from a game page bounced straight back to it). Drop it.
+    component = %{component | next_page: nil}
+
+    if component.state.page_shown? do
+      stale_rooms = JS.call(:takeStaleRoomChannels, [nil])
+
+      put_command(component, :drop_stale_subscriptions,
+        stale_rooms: if(is_list(stale_rooms), do: stale_rooms, else: [])
+      )
+    else
+      put_state(component, :page_shown?, true)
+    end
+  end
+
+  # ── Other pages' broadcasts ─────────────────────────────────────────
+  # HomePage's `:lobby` and GamePage's room actions, which reach this page
+  # after a Back/Forward restore until :drop_stale_subscriptions lands.
+  # Explicit clauses, no catch-all: a new broadcast action needs one here.
+
+  def action(:lobby_room_changed, _params, component), do: component
+  def action(:lobby_room_removed, _params, component), do: component
+  def action(:lobby_chat_received, _params, component), do: component
+  def action(:lobby_chat_cleared, _params, component), do: component
+  def action(:room_delta, _params, component), do: component
+  def action(:chat_appended, _params, component), do: component
+  def action(:stroke_completed, _params, component), do: component
+  def action(:drawing_cleared, _params, component), do: component
+  def action(:drawing_undone, _params, component), do: component
+  def action(:private_state, _params, component), do: component
+
+  # A field of a $submit event (string keys: the browser's form data).
+  defp form_value(params, name) do
+    event = if is_map(params), do: Map.get(params, :event)
+    value = if is_map(event), do: Map.get(event, name)
+    if is_binary(value), do: value, else: ""
+  end
+
+  # Empties the password inputs (`data-secret`): they are not synchronized.
+  defp clear_secret_fields(component) do
+    ~JS"""
+    document.querySelectorAll("input[data-secret]").forEach(function (el) { el.value = ""; });
+    """
+
+    component
   end
 
   # ── Commands ────────────────────────────────────────────────────────
+  # Params are read through ScrawlyWeb.CommandParams; malformed ones and
+  # unknown names are denied. Error replies are fixed texts: never Ash's
+  # messages, which can quote the submitted values (passwords included).
+
+  def command(:regenerate_recovery_code, params, server) when is_map(params) do
+    ScrawlyWeb.Recovery.regenerate(params, server)
+  end
 
   def command(:save_profile, params, server) do
-    user_id = get_session(server, :user_id)
+    with {:ok, input} <- CommandParams.strings(params, [:username, :avatar_id, :avatar_color]),
+         {:ok, user} <- Auth.current_user(server) do
+      case Scrawly.Accounts.update_profile(user, input) do
+        {:ok, updated} ->
+          put_action(server, :profile_saved,
+            message: "profile updated.",
+            username: updated.username,
+            avatar_id: updated.avatar_id,
+            avatar_color: updated.avatar_color
+          )
 
-    with {:ok, user} <- Ash.get(Scrawly.Accounts.User, user_id),
-         {:ok, updated} <-
-           Scrawly.Accounts.update_profile(user, %{
-             username: params.username,
-             avatar_id: params.avatar_id,
-             avatar_color: params.avatar_color
-           }) do
-      put_action(server, :profile_saved,
-        message: "profile updated.",
-        username: updated.username,
-        avatar_id: updated.avatar_id,
-        avatar_color: updated.avatar_color
-      )
-    else
-      {:error, %Ash.Error.Invalid{errors: errors}} ->
-        put_action(server, :profile_failed, message: format_errors(errors))
-
-      _ ->
-        put_action(server, :profile_failed, message: "could not update profile.")
-    end
-  end
-
-  def command(:save_password, params, server) do
-    user_id = get_session(server, :user_id)
-
-    with {:ok, user} <- Ash.get(Scrawly.Accounts.User, user_id),
-         {:ok, _updated} <-
-           Scrawly.Accounts.change_password(user, %{
-             current_password: params.current_password,
-             password: params.password,
-             password_confirmation: params.password_confirmation
-           }) do
-      put_action(server, :password_saved, message: "password changed.")
-    else
-      {:error, %Ash.Error.Invalid{errors: errors}} ->
-        put_action(server, :password_failed, message: format_errors(errors))
-
-      _ ->
-        put_action(server, :password_failed, message: "could not change password.")
-    end
-  end
-
-  defp format_errors(errors) do
-    errors
-    |> Enum.map(fn err ->
-      cond do
-        is_exception(err) -> Exception.message(err)
-        is_binary(err) -> err
-        true -> inspect(err)
+        {:error, error} ->
+          put_action(server, :profile_failed, message: profile_error_message(error, input))
       end
-    end)
-    |> Enum.join(" · ")
+    else
+      :error -> CommandParams.deny_invalid(server, :save_profile)
+      {:error, :unauthenticated} -> Auth.deny(server, :save_profile, :unauthenticated)
+    end
   end
+
+  # :change_password revokes every stored token of the account, this
+  # session's included, so other browsers are signed out on their next
+  # request (and their sockets told to reconnect). A token minted after the
+  # action keeps this browser signed in.
+  def command(:save_password, params, server) do
+    with {:ok, input} <-
+           CommandParams.strings(params, [:current_password, :password, :password_confirmation]),
+         {:ok, user} <- Auth.current_user(server) do
+      case Scrawly.Accounts.change_password(user, input) do
+        {:ok, updated} ->
+          Auth.disconnect_sockets(updated.id)
+
+          case Auth.put_fresh_token(server, updated) do
+            {:ok, server} ->
+              put_action(server, :password_saved,
+                message: "password changed. other devices have been signed out."
+              )
+
+            :error ->
+              put_action(server, :password_saved, message: "password changed. sign in again.")
+          end
+
+        {:error, error} ->
+          put_action(server, :password_failed, message: password_error_message(error))
+      end
+    else
+      :error -> CommandParams.deny_invalid(server, :save_password)
+      {:error, :unauthenticated} -> Auth.deny(server, :save_password, :unauthenticated)
+    end
+  end
+
+  # After a Back/Forward restore (:page_shown).
+  def command(:drop_stale_subscriptions, params, server),
+    do: RoomSubscriptions.drop_stale(server, params)
+
+  def command(name, _params, server), do: CommandParams.deny_unknown(server, name)
+
+  # Fixed texts chosen from the input (what was wrong with it), not from the
+  # errors' wording.
+  defp profile_error_message(error, %{username: username}) do
+    cond do
+      on_field?(error, :username) and NotReservedUsername.reserved?(username) ->
+        "that username is reserved. pick another one."
+
+      on_field?(error, :username) ->
+        "use a username of 2 to 20 characters."
+
+      on_field?(error, :avatar_id) or on_field?(error, :avatar_color) ->
+        "pick an avatar and a tile color from the lists."
+
+      true ->
+        "could not update profile."
+    end
+  end
+
+  defp password_error_message(%Ash.Error.Forbidden{}), do: "current password is incorrect."
+
+  defp password_error_message(error) do
+    cond do
+      Enum.any?(errors_of(error), &match?(%Ash.Error.Changes.Required{}, &1)) ->
+        "fill in all three password fields."
+
+      on_field?(error, :is_guest) ->
+        "register an account to set a password."
+
+      on_field?(error, :hashed_password) ->
+        "this account has no password to change."
+
+      # A too-short password fails its constraint and then the confirmation
+      # (the argument is dropped), so length is checked first.
+      on_field?(error, :password) ->
+        "use a new password of at least 8 characters."
+
+      on_field?(error, :password_confirmation) ->
+        "the new passwords don't match."
+
+      true ->
+        "could not change password."
+    end
+  end
+
+  defp errors_of(%{errors: errors}) when is_list(errors), do: errors
+  defp errors_of(error), do: [error]
+
+  defp on_field?(error, field),
+    do: Enum.any?(errors_of(error), &(Map.get(&1, :field) == field))
 end

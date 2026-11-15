@@ -7,7 +7,8 @@ defmodule ScrawlyWeb.Components.Avatar do
 
   prop :avatar_id, :string, default: "a-mushroom"
   prop :color, :string, default: "3"
-  prop :size, :string, default: "md"
+  # One of the .avatar-size-* rules in app.css.
+  prop :size, :string, values: ["xs", "sm", "md", "lg", "xl"], default: "md"
   prop :class, :string, default: ""
 
   def template do
@@ -17,4 +18,8 @@ defmodule ScrawlyWeb.Components.Avatar do
     </span>
     """
   end
+
+  # No commands here. A forged one (the module is named in the request) is
+  # denied instead of raising (see ScrawlyWeb.CommandParams).
+  def command(name, _params, server), do: ScrawlyWeb.CommandParams.deny_unknown(server, name)
 end

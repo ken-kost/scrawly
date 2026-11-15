@@ -3,12 +3,7 @@ defmodule ScrawlyWeb.Components.ScoreBoard do
 
   alias ScrawlyWeb.Components.Avatar
 
-  prop :players, :list, default: []
-  prop :current_round, :integer, default: 1
-  prop :total_rounds, :integer, default: 3
-  prop :current_word, :string, default: nil
-  prop :time_left, :integer, default: 0
-  prop :game_status, :atom, default: :lobby
+  prop :players, :list, required: true
 
   def template do
     ~HOLO"""
@@ -33,4 +28,8 @@ defmodule ScrawlyWeb.Components.ScoreBoard do
   defp sorted_players(players) do
     Enum.sort_by(players, &(&1.score || 0), :desc)
   end
+
+  # No commands here. A forged one (the module is named in the request) is
+  # denied instead of raising (see ScrawlyWeb.CommandParams).
+  def command(name, _params, server), do: ScrawlyWeb.CommandParams.deny_unknown(server, name)
 end

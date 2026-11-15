@@ -229,19 +229,16 @@ defmodule Scrawly.Integration.ScoreLeaderboardTest do
       # Scores should be in descending order
       assert scores_only == Enum.sort(scores_only, :desc)
 
-      # Verify specific totals
-      _score_map = Map.new(final_scores)
-      {_p1_name, p1_total} = Enum.find(final_scores, fn {name, _} -> name == p1.username end)
-      # 750
-      assert p1_total == 150 + 400 + 200
+      # Verify specific totals by reading each player by id (these test users
+      # have no username, so finding by name is ambiguous).
+      {:ok, final_p1} = Ash.get(User, p1.id)
+      assert final_p1.score == 150 + 400 + 200
 
-      {_p2_name, p2_total} = Enum.find(final_scores, fn {name, _} -> name == p2.username end)
-      # 550
-      assert p2_total == 450 + 100
+      {:ok, final_p2} = Ash.get(User, p2.id)
+      assert final_p2.score == 450 + 100
 
-      {_p4_name, p4_total} = Enum.find(final_scores, fn {name, _} -> name == p4.username end)
-      # 700
-      assert p4_total == 200 + 500
+      {:ok, final_p4} = Ash.get(User, p4.id)
+      assert final_p4.score == 200 + 500
     end
 
     test "score resets when player leaves room", %{
