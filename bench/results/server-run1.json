@@ -1,0 +1,361 @@
+{
+  "memory": {
+    "demo": {
+      "0": {
+        "process_bytes": 2760,
+        "heap_bytes": 1864,
+        "binary_bytes": 0,
+        "binary_count": 0,
+        "total_bytes": 2760
+      },
+      "100": {
+        "process_bytes": 34376,
+        "heap_bytes": 33480,
+        "binary_bytes": 114506,
+        "binary_count": 100,
+        "total_bytes": 148882
+      },
+      "300": {
+        "process_bytes": 88560,
+        "heap_bytes": 87664,
+        "binary_bytes": 362541,
+        "binary_count": 300,
+        "total_bytes": 451101
+      },
+      "500": {
+        "process_bytes": 142744,
+        "heap_bytes": 141848,
+        "binary_bytes": 615283,
+        "binary_count": 500,
+        "total_bytes": 758027
+      }
+    },
+    "room": {
+      "0": {
+        "process_bytes": 8952,
+        "heap_bytes": 7896,
+        "binary_bytes": 0,
+        "binary_count": 0,
+        "total_bytes": 8952
+      },
+      "100": {
+        "process_bytes": 34536,
+        "heap_bytes": 33480,
+        "binary_bytes": 114087,
+        "binary_count": 100,
+        "total_bytes": 148623
+      },
+      "300": {
+        "process_bytes": 142904,
+        "heap_bytes": 141848,
+        "binary_bytes": 346723,
+        "binary_count": 300,
+        "total_bytes": 489627
+      },
+      "500": {
+        "process_bytes": 230576,
+        "heap_bytes": 229520,
+        "binary_bytes": 620488,
+        "binary_count": 500,
+        "total_bytes": 851064
+      }
+    }
+  },
+  "meta": {
+    "date": "2026-11-15T18:21:24Z",
+    "otp": "28",
+    "schedulers": 16,
+    "elixir": "1.19.7",
+    "iterations": 400,
+    "probe_stroke_bytes": 1758,
+    "fixture_path_bytes": 620488,
+    "duration_s": 31
+  },
+  "join": {
+    "room_view_500": {
+      "build": {
+        "n": 400,
+        "median_us": 53.339,
+        "p95_us": 66.978,
+        "min_us": 28.137,
+        "max_us": 115.74
+      },
+      "external_bytes": 653824,
+      "strokes_json_bytes": 650155,
+      "strokes_hologram_state_bytes": 716665,
+      "strokes_hologram_state_encode": {
+        "n": 100,
+        "median_us": 5273.779,
+        "p95_us": 6333.063,
+        "min_us": 4367.136,
+        "max_us": 7070.883
+      }
+    },
+    "demo_snapshot_500": {
+      "build": {
+        "n": 100,
+        "median_us": 1688.219,
+        "p95_us": 1916.597,
+        "min_us": 1461.439,
+        "max_us": 2473.145
+      },
+      "bytes": 648288
+    },
+    "demo_snapshot_500_x_7999": {
+      "build": {
+        "n": 20,
+        "median_us": 9109.426,
+        "p95_us": 9666.822,
+        "min_us": 8425.041,
+        "max_us": 9882.552
+      },
+      "bytes": 4030439
+    },
+    "room_view_at_byte_cap": {
+      "build": {
+        "n": 50,
+        "median_us": 28.91,
+        "p95_us": 59.742,
+        "min_us": 16.579,
+        "max_us": 164.291
+      },
+      "strokes": 250,
+      "external_bytes": 2016088,
+      "strokes_hologram_state_bytes": 2046653
+    },
+    "sse_stroke_completed": {
+      "long": {
+        "encode": {
+          "n": 200,
+          "median_us": 37.94,
+          "p95_us": 45.773,
+          "min_us": 36.398,
+          "max_us": 58.755
+        },
+        "path_bytes": 6867,
+        "event_bytes": 7271
+      },
+      "medium": {
+        "encode": {
+          "n": 200,
+          "median_us": 16.682,
+          "p95_us": 28.767,
+          "min_us": 15.063,
+          "max_us": 63.643
+        },
+        "path_bytes": 1758,
+        "event_bytes": 2162
+      }
+    }
+  },
+  "commit": {
+    "0": {
+      "demo": {
+        "n": 400,
+        "median_us": 3.213,
+        "p95_us": 5.538,
+        "min_us": 3.079,
+        "max_us": 44.785
+      },
+      "room": {
+        "n": 400,
+        "median_us": 11.646,
+        "p95_us": 17.794,
+        "min_us": 11.065,
+        "max_us": 49.636
+      },
+      "room_check_append": {
+        "n": 400,
+        "median_us": 5.879,
+        "p95_us": 7.775,
+        "min_us": 5.131,
+        "max_us": 78.557
+      },
+      "room_list_append": {
+        "n": 400,
+        "median_us": 0.027,
+        "p95_us": 0.032,
+        "min_us": 0.025,
+        "max_us": 0.337
+      }
+    },
+    "100": {
+      "demo": {
+        "n": 400,
+        "median_us": 3.618,
+        "p95_us": 3.775,
+        "min_us": 3.461,
+        "max_us": 12.166
+      },
+      "room": {
+        "n": 400,
+        "median_us": 14.282,
+        "p95_us": 19.594,
+        "min_us": 13.298,
+        "max_us": 43.797
+      },
+      "room_check_append": {
+        "n": 400,
+        "median_us": 7.079,
+        "p95_us": 10.956,
+        "min_us": 6.362,
+        "max_us": 106.316
+      },
+      "room_list_append": {
+        "n": 400,
+        "median_us": 0.168,
+        "p95_us": 1.114,
+        "min_us": 0.151,
+        "max_us": 10.919
+      }
+    },
+    "300": {
+      "demo": {
+        "n": 400,
+        "median_us": 4.528,
+        "p95_us": 7.321,
+        "min_us": 3.772,
+        "max_us": 21.617
+      },
+      "room": {
+        "n": 400,
+        "median_us": 20.634,
+        "p95_us": 32.035,
+        "min_us": 17.922,
+        "max_us": 189.758
+      },
+      "room_check_append": {
+        "n": 400,
+        "median_us": 8.809,
+        "p95_us": 9.733,
+        "min_us": 8.04,
+        "max_us": 106.549
+      },
+      "room_list_append": {
+        "n": 400,
+        "median_us": 0.411,
+        "p95_us": 0.508,
+        "min_us": 0.393,
+        "max_us": 32.35
+      }
+    },
+    "499": {
+      "demo": {
+        "n": 400,
+        "median_us": 4.934,
+        "p95_us": 9.28,
+        "min_us": 4.619,
+        "max_us": 33.567
+      },
+      "room": {
+        "n": 400,
+        "median_us": 27.073,
+        "p95_us": 40.864,
+        "min_us": 25.105,
+        "max_us": 90.326
+      },
+      "room_check_append": {
+        "n": 400,
+        "median_us": 10.579,
+        "p95_us": 11.712,
+        "min_us": 9.793,
+        "max_us": 84.496
+      },
+      "room_list_append": {
+        "n": 400,
+        "median_us": 0.658,
+        "p95_us": 3.475,
+        "min_us": 0.638,
+        "max_us": 15.585
+      }
+    },
+    "demo_barrier_round_trip": {
+      "n": 400,
+      "median_us": 1.176,
+      "p95_us": 1.244,
+      "min_us": 1.153,
+      "max_us": 8.219
+    }
+  },
+  "at_500": {
+    "demo_clear": {
+      "n": 400,
+      "median_us": 3.179,
+      "p95_us": 6.168,
+      "min_us": 2.976,
+      "max_us": 33.238
+    },
+    "room_undo": {
+      "n": 400,
+      "median_us": 16.664,
+      "p95_us": 25.779,
+      "min_us": 15.849,
+      "max_us": 61.882
+    },
+    "room_clear": {
+      "n": 400,
+      "median_us": 5.858,
+      "p95_us": 16.066,
+      "min_us": 5.207,
+      "max_us": 52.063
+    }
+  },
+  "fanout": {
+    "send_ms": 6000,
+    "chunk_interval_ms": 50,
+    "delta_bytes_avg": 145,
+    "runs": {
+      "10": {
+        "subscribers": 10,
+        "chunks_sent": 118,
+        "chunks_delivered": 1180,
+        "delivered_ratio": 1.0,
+        "scheduler_utilization_idle_pct": 0.12,
+        "scheduler_utilization_pct": 0.15,
+        "server_us_per_delivered_chunk": 20.9,
+        "longest_message_queue": 1,
+        "longest_message_queue_owner": "{Bandit.DelegatingHandler, :init, 1}",
+        "longest_message_queue_idle": 0,
+        "delivery_latency_ms": {
+          "max": 2.078,
+          "median": 1.446,
+          "p95": 1.798
+        }
+      },
+      "50": {
+        "subscribers": 50,
+        "chunks_sent": 118,
+        "chunks_delivered": 5900,
+        "delivered_ratio": 1.0,
+        "scheduler_utilization_idle_pct": 0.13,
+        "scheduler_utilization_pct": 0.23,
+        "server_us_per_delivered_chunk": 17.63,
+        "longest_message_queue": 1,
+        "longest_message_queue_owner": "{Bandit.DelegatingHandler, :init, 1}",
+        "longest_message_queue_idle": 0,
+        "delivery_latency_ms": {
+          "max": 2.634,
+          "median": 1.73,
+          "p95": 2.156
+        }
+      },
+      "200": {
+        "subscribers": 200,
+        "chunks_sent": 118,
+        "chunks_delivered": 23600,
+        "delivered_ratio": 1.0,
+        "scheduler_utilization_idle_pct": 0.13,
+        "scheduler_utilization_pct": 0.72,
+        "server_us_per_delivered_chunk": 23.97,
+        "longest_message_queue": 1,
+        "longest_message_queue_owner": "{ScrawlyWeb.DemoBoardChannel, :join, 3}",
+        "longest_message_queue_idle": 0,
+        "delivery_latency_ms": {
+          "max": 5.376,
+          "median": 2.53,
+          "p95": 3.455
+        }
+      }
+    }
+  }
+}

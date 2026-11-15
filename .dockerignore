@@ -49,6 +49,7 @@ erl_crash.dump
 /android/
 **/*.apk
 /mob.exs
+/bench/
 /notes/
 /designs/
 /.holo_dev/
