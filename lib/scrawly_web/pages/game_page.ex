@@ -32,6 +32,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :noteRoomChannel, from: "./room_channels.mjs"
   js_import :takeStaleRoomChannels, from: "./room_channels.mjs"
 
+  js_import :copyInviteLink, from: "./room_links.mjs"
+  js_import :selectInviteLink, from: "./room_links.mjs"
+
   route "/game/:room_id"
   param :room_id, :string
 
@@ -59,6 +62,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # A start request with no answer after this long (the AI call's own
   # timeout is 60 s) gives the start button back.
   @start_game_timeout_ms 90_000
+  # How long the invite button reads "copied".
+  @invite_copied_ms 2_000
 
   @room_commands ~w(resync_room join_room join_as_watcher leave_watcher start_game leave_room
                     submit_guess choose_word complete_stroke clear_drawing_cmd undo_drawing_cmd)a
@@ -172,6 +177,13 @@ defmodule ScrawlyWeb.Pages.GamePage do
               # AI call for a themed room) hasn't been answered yet.
               |> put_state(:starting_game?, false)
               |> put_state(:start_game_attempt, 0)
+              # "Copy invite link": :idle, :copied (for @invite_copied_ms,
+              # `invite_copy_gen` names the latest copy) or :manual (the
+              # browser refused, `invite_link` is shown to copy by hand). The
+              # link is only ever built in the browser (room_links.mjs).
+              |> put_state(:invite_copy, :idle)
+              |> put_state(:invite_copy_gen, 0)
+              |> put_state(:invite_link, nil)
               # A socket-only token (ScrawlyWeb.SocketToken), never the
               # session's sign-in token: state is rendered into the HTML and
               # snapshotted for Back/Forward. Refreshed by every snapshot
@@ -251,6 +263,15 @@ defmodule ScrawlyWeb.Pages.GamePage do
     put_action(component, name: :mounted, params: [join: join])
   end
 
+  # A Back/Forward restore drops the pending :reset_invite_copy, so a
+  # "copied" button goes back to idle (a shown link stays).
+  defp restored_invite_copy(state) do
+    case Map.get(state, :invite_copy) do
+      :manual -> :manual
+      _copied_or_idle -> :idle
+    end
+  end
+
   # First action after every fresh page load, once the DOM exists. Restores the
   # drawer's canvas from the room's strokes (independent of the game socket),
   # turns the stroke engine on or off (can_draw?/1), anchors init's
@@ -327,6 +348,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
         component
         |> put_state(:restoring?, true)
+        |> put_state(:invite_copy, restored_invite_copy(state))
         |> put_state(:last_tick_at, nil)
         |> put_state(:zero_since, nil)
         |> put_state(:resync_requested_at, nil)
@@ -649,6 +671,48 @@ defmodule ScrawlyWeb.Pages.GamePage do
       if command == :start_game, do: put_state(component, :starting_game?, false), else: component
 
     request_resync(component)
+  end
+
+  # ── Invite link ──────────────────────────────────────────────────────
+  # room_links.mjs builds `<origin>/r/<code>` from window.location.origin
+  # (never from the request's Host header), copies it and answers with
+  # :invite_link_copied.
+
+  def action(:copy_invite_link, _params, component) do
+    code = component.state.room_code
+    if is_binary(code), do: JS.call(:copyInviteLink, [code])
+    component
+  end
+
+  def action(:invite_link_copied, %{copied: true}, component) do
+    gen = component.state.invite_copy_gen + 1
+
+    component
+    |> put_state(:invite_copy, :copied)
+    |> put_state(:invite_copy_gen, gen)
+    |> put_state(:invite_link, nil)
+    |> put_action(name: :reset_invite_copy, params: %{gen: gen}, delay: @invite_copied_ms)
+  end
+
+  # Nothing could copy (no Clipboard API on plain http, a refused permission,
+  # no execCommand): the link is shown, selected, to copy by hand.
+  def action(:invite_link_copied, %{link: link}, component) when is_binary(link) do
+    JS.call(:selectInviteLink, ["invite-link"])
+
+    component
+    |> put_state(:invite_copy, :manual)
+    |> put_state(:invite_link, link)
+  end
+
+  def action(:invite_link_copied, _params, component), do: component
+
+  # Only the latest copy's: an earlier timer must not cut a later "copied" short.
+  def action(:reset_invite_copy, %{gen: gen}, component) do
+    state = component.state
+
+    if state.invite_copy == :copied and gen == state.invite_copy_gen,
+      do: put_state(component, :invite_copy, :idle),
+      else: component
   end
 
   # The start button. It reads "preparing words…" until the game starts (a
@@ -1612,9 +1676,21 @@ defmodule ScrawlyWeb.Pages.GamePage do
             <span class="chip chip-strong">lobby</span>
           </div>
 
-          <div class="lobby-code" style="margin-bottom: 24px;">
-            <span class="label">code</span>
-            <span class="code">{@room_code}</span>
+          <div class="lobby-invite">
+            <div class="lobby-code">
+              <span class="label">code</span>
+              <span class="code">{@room_code}</span>
+              <button type="button" class="app-btn app-btn-sm" $click="copy_invite_link">
+                {%if @invite_copy == :copied}copied{%else}copy invite link{/if}
+              </button>
+            </div>
+            {%if @invite_copy == :manual}
+              <div class="invite-manual">
+                <label class="field-label" for="invite-link">copy this link</label>
+                <input class="app-input mono" id="invite-link" type="text" readonly={true} value={@invite_link} />
+                <div class="field-hint">your browser didn't let us copy it. select the link and copy it.</div>
+              </div>
+            {/if}
           </div>
 
           <div class="section-label" style="margin-bottom: 10px;">players · {length(@players)}/{@max_players}</div>
@@ -1661,7 +1737,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
             <div class="mono" style="font-size: 12px; color: var(--danger); margin-top: 10px; text-align: center;">{@join_notice}</div>
           {/if}
           <div class="mono" style="font-size: 11px; color: var(--muted); margin-top: 10px; text-align: center;">
-            share the code to invite friends
+            send the link or the code to your friends
           </div>
         </div>
 

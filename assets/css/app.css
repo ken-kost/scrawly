@@ -569,6 +569,19 @@ html, body {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+/* Home's "have a code?" field, in the open rooms header. The negative margin
+   keeps the header as tall as its neighbour's (the demo's), which has text only. */
+.code-join { display: flex; align-items: center; gap: 6px; margin: -6px 0; }
+.code-join .app-input {
+  width: 128px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.code-join .app-input::placeholder { text-transform: none; letter-spacing: normal; }
+.code-join-error { margin: 0 0 10px; text-align: right; }
 .room-list {
   border-top: 1px solid var(--hairline);
 }
@@ -706,6 +719,7 @@ html, body {
 .lobby-sub { color: var(--muted); font-size: 13px; }
 .lobby-code {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
@@ -715,6 +729,10 @@ html, body {
 }
 .lobby-code .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 .lobby-code .code { font-family: 'Geist Mono', ui-monospace, monospace; font-size: 22px; letter-spacing: 0.12em; }
+.lobby-code .app-btn { margin-left: 4px; }
+/* The code, its copy button and, when the browser refused to copy, the link. */
+.lobby-invite { margin-bottom: 24px; }
+.invite-manual { margin-top: 12px; max-width: 460px; }
 
 .player-list {
   display: flex; flex-direction: column;

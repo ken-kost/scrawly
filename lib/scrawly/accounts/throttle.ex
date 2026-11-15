@@ -1,7 +1,8 @@
 defmodule Scrawly.Accounts.Throttle do
   @moduledoc """
   In-memory sliding-window limits on the attempts that cost a bcrypt check or
-  create rows: password sign-in, recovery-code resets and guest accounts.
+  create rows (password sign-in, recovery-code resets, guest accounts) or that
+  could be repeated to guess something (room codes).
 
   An attempt is counted *before* it runs: `reserve/2` checks every bucket the
   attempt touches and records it in all of them in one call to this process,
@@ -10,13 +11,14 @@ defmodule Scrawly.Accounts.Throttle do
   slots back (`release/1`); failed attempts keep theirs until they leave the
   window.
 
-  | policy            | key                  | limit           |
-  | ----------------- | -------------------- | --------------- |
-  | `:sign_in_email`  | `email_key/1`        | 10 per 15 min   |
-  | `:sign_in_ip`     | client IP            | 50 per 15 min   |
-  | `:recovery_email` | `email_key/1`        | 5 per 15 min    |
-  | `:recovery_ip`    | client IP            | 20 per 15 min   |
-  | `:guest_ip`       | client IP            | 20 per 10 min   |
+  | policy            | key                           | limit         |
+  | ----------------- | ----------------------------- | ------------- |
+  | `:sign_in_email`  | `email_key/1`                 | 10 per 15 min |
+  | `:sign_in_ip`     | client IP                     | 50 per 15 min |
+  | `:recovery_email` | `email_key/1`                 | 5 per 15 min  |
+  | `:recovery_ip`    | client IP                     | 20 per 15 min |
+  | `:guest_ip`       | client IP                     | 20 per 10 min |
+  | `:room_code`      | `ScrawlyWeb.Auth.actor_key/1` | 10 per min    |
 
   Email buckets are keyed by the database's own lowercasing (`email_key/1`):
   the `email` column is citext, so every spelling the account lookup treats as
@@ -38,10 +40,12 @@ defmodule Scrawly.Accounts.Throttle do
     sign_in_ip: {50, :timer.minutes(15)},
     recovery_email: {5, :timer.minutes(15)},
     recovery_ip: {20, :timer.minutes(15)},
-    guest_ip: {20, :timer.minutes(10)}
+    guest_ip: {20, :timer.minutes(10)},
+    room_code: {10, :timer.minutes(1)}
   }
 
-  @type policy :: :sign_in_email | :sign_in_ip | :recovery_email | :recovery_ip | :guest_ip
+  @type policy ::
+          :sign_in_email | :sign_in_ip | :recovery_email | :recovery_ip | :guest_ip | :room_code
   @type bucket :: {policy, term}
   @typedoc "The slots one attempt took, for `release/1`."
   @opaque ticket :: [{bucket, integer}]

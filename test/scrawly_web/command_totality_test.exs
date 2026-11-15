@@ -21,7 +21,15 @@ defmodule ScrawlyWeb.CommandTotalityTest do
   alias Hologram.Server
   alias Scrawly.Accounts
   alias ScrawlyWeb.Layouts.AppLayout
-  alias ScrawlyWeb.Pages.{GamePage, GameScorePage, HomePage, PastGamesPage, ProfilePage}
+
+  alias ScrawlyWeb.Pages.{
+    GamePage,
+    GameScorePage,
+    HomePage,
+    PastGamesPage,
+    ProfilePage,
+    RoomLinkPage
+  }
 
   alias ScrawlyWeb.Components.{
     Avatar,
@@ -42,6 +50,7 @@ defmodule ScrawlyWeb.CommandTotalityTest do
     GameScorePage,
     ProfilePage,
     PastGamesPage,
+    RoomLinkPage,
     Avatar,
     AvatarDefs,
     ChatBox,
@@ -56,7 +65,8 @@ defmodule ScrawlyWeb.CommandTotalityTest do
   @param_keys ~w(room_id email password password_confirmation current_password recovery_code
                  username avatar_id avatar_color dark_mode accent resync resubscribe word text
                  stroke_id path color width op_epoch op_seq gen message name max_players
-                 answer_kind word_source prompt round_duration round_multiplier ai_tone)a
+                 answer_kind word_source prompt round_duration round_multiplier ai_tone
+                 code)a
 
   @wrong_values [123, [1], %{a: 1}, nil, :atom, -1.5, {1, 2}, String.duplicate("é", 3000)]
 
@@ -129,6 +139,8 @@ defmodule ScrawlyWeb.CommandTotalityTest do
     assert :login in command_names(AppLayout)
     assert :sign_out in command_names(AppLayout)
     assert :create_room in command_names(HomePage)
+    assert :join_by_code in command_names(HomePage)
+    assert command_names(RoomLinkPage) == []
     assert :complete_stroke in command_names(GamePage)
     assert :refresh_socket_token in command_names(GamePage)
     assert :leave_room in command_names(GameScorePage)

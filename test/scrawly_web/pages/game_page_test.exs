@@ -689,7 +689,10 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       creator_name: "Alice",
       ai_tone: :fun,
       chat_notice: nil,
-      chat_notice_gen: 0
+      chat_notice_gen: 0,
+      invite_copy: :idle,
+      invite_copy_gen: 0,
+      invite_link: nil
     ]
 
     defp lobby_delta(seq, players),

@@ -14,11 +14,13 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   js_import :takeStaleRoomChannels, from: "./room_channels.mjs"
 
+  js_import :openPath, from: "./room_links.mjs"
+
   route "/"
 
   alias Scrawly.Games.{LobbyChatServer, RoomServer}
   alias Scrawly.Games.RoomServer.Broadcasts
-  alias ScrawlyWeb.{CommandParams, RoomSettings, RoomSubscriptions}
+  alias ScrawlyWeb.{CommandParams, RoomCodes, RoomSettings, RoomSubscriptions}
   alias ScrawlyWeb.Components.RoomList
   alias ScrawlyWeb.Components.RoomSettingsForm
   alias ScrawlyWeb.Components.GameDemo
@@ -30,15 +32,23 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # A create-room request with no reply after this long gives the form back.
   @create_room_timeout_ms 20_000
 
+  # Same for a "have a code?" lookup.
+  @join_by_code_timeout_ms 10_000
+
   # The room list and the lobby chat are pushed on the `:lobby` Realtime
   # channel (see "Lobby broadcasts" below); init loads the current ones and
   # subscribes.
+  #
+  # A short link (`/r/:code`, RoomLinkPage) that found no room redirects here
+  # with a notice in the session, shown under the code field.
   def init(_params, component, server) do
     {authenticated, is_guest, username} =
       case ScrawlyWeb.Auth.current_user(server) do
         {:ok, user} -> {true, user.is_guest, user.username}
         {:error, :unauthenticated} -> {false, false, nil}
       end
+
+    {server, code_notice} = RoomCodes.take_notice(server)
 
     component =
       component
@@ -58,6 +68,12 @@ defmodule ScrawlyWeb.Pages.HomePage do
       |> put_state(:create_room_attempt, 0)
       |> put_state(:create_room_errors, %{})
       |> put_state(:default_room_name, RoomSettings.default_name(username))
+      # "Have a code?" (:join_by_code). Counts the lookups sent, so a late
+      # timeout can't end a newer one.
+      |> put_state(:room_code_input, (code_notice && code_notice.code) || "")
+      |> put_state(:room_code_error, code_notice && code_notice.message)
+      |> put_state(:joining_by_code?, false)
+      |> put_state(:room_code_attempt, 0)
       |> put_state(:authenticated, authenticated)
       |> put_state(:is_guest, is_guest)
       |> put_state(:show_login_modal, false)
@@ -131,8 +147,19 @@ defmodule ScrawlyWeb.Pages.HomePage do
         <div class="home-rooms">
           <div class="section-header">
             <h2>open rooms</h2>
-            <span class="mono" style="font-size: 11px; color: var(--muted);">live</span>
+            <form class="code-join" $submit="join_by_code" $key_down.n.stop_propagation="noop">
+              <input class="app-input mono" type="text" name="room_code" id="room-code-input"
+                     aria-label="room code" placeholder="have a code?" maxlength="16"
+                     autocomplete="off" autocapitalize="characters" spellcheck="false"
+                     value={@room_code_input} $change={:update_room_code} />
+              <button type="submit" class="app-btn app-btn-sm" disabled={@joining_by_code?}>
+                {%if @joining_by_code?}joining…{%else}join{/if}
+              </button>
+            </form>
           </div>
+          {%if @room_code_error}
+            <div class="field-error code-join-error" role="alert">{@room_code_error}</div>
+          {/if}
           <RoomList rooms={@rooms} />
 
           <div class="lobby-chat">
@@ -548,6 +575,73 @@ defmodule ScrawlyWeb.Pages.HomePage do
     put_action(component, :join_room_with_user, room_id: room_id)
   end
 
+  # ── Have a code? ──────────────────────────────────────────────────
+  # The input is checked here first (empty, length, alphabet:
+  # RoomCodes.check/1), then the server looks the code up (:join_by_code):
+  # :join_room_with_user or :open_room_as_guest when found, else
+  # :room_code_failed with the line shown under the field.
+
+  def action(:update_room_code, %{event: %{value: value}}, component) do
+    component
+    |> put_state(:room_code_input, value)
+    |> put_state(:room_code_error, nil)
+  end
+
+  def action(:join_by_code, _params, %{state: %{joining_by_code?: true}} = component),
+    do: component
+
+  def action(:join_by_code, _params, component) do
+    code = RoomCodes.normalize(component.state.room_code_input)
+
+    case RoomCodes.check(code) do
+      :ok ->
+        attempt = component.state.room_code_attempt + 1
+
+        component
+        |> put_state(:joining_by_code?, true)
+        |> put_state(:room_code_attempt, attempt)
+        |> put_state(:room_code_error, nil)
+        |> put_command(:join_by_code, code: code)
+        |> put_action(
+          name: :join_by_code_timed_out,
+          params: %{attempt: attempt},
+          delay: @join_by_code_timeout_ms
+        )
+
+      {:error, reason} ->
+        put_state(component, :room_code_error, RoomCodes.message(reason))
+    end
+  end
+
+  def action(:room_code_failed, params, component) do
+    component
+    |> put_state(:joining_by_code?, false)
+    |> put_state(:room_code_error, Map.get(params, :message) || RoomCodes.message(:not_found))
+  end
+
+  # Only for the lookup still waiting.
+  def action(:join_by_code_timed_out, %{attempt: attempt}, component) do
+    state = component.state
+
+    if state.joining_by_code? and attempt == state.room_code_attempt do
+      component
+      |> put_state(:joining_by_code?, false)
+      |> put_state(:room_code_error, "no answer from the server, try again")
+    else
+      component
+    end
+  end
+
+  # A signed-out visitor becomes a guest on the way in (`/guest`, a full page
+  # load). The field is reset first: Back may restore this page as it was.
+  def action(:open_room_as_guest, %{path: path}, component) do
+    JS.call(:openPath, [path])
+
+    component
+    |> put_state(:joining_by_code?, false)
+    |> put_state(:room_code_input, "")
+  end
+
   # ── Demo board tools ──────────────────────────────────────────────
   # Pointer input is native (stroke_engine.mjs via demo_board.mjs); only the
   # tool state lives here and reaches JS through these calls.
@@ -618,14 +712,17 @@ defmodule ScrawlyWeb.Pages.HomePage do
     end
   end
 
-  # Also the create-room reply: the form closes here, so Back to this page
-  # doesn't bring it back "creating…".
+  # Also the create-room and the code lookup's reply: the form closes (and
+  # the code field resets) here, so Back to this page doesn't bring it back
+  # "creating…" or "joining…".
   def action(:join_room_with_user, %{room_id: room_id}, component) do
     JS.call(:disconnectDemoBoard, [])
 
     component
     |> put_state(:show_create_room, false)
     |> put_state(:creating_room?, false)
+    |> put_state(:joining_by_code?, false)
+    |> put_state(:room_code_input, "")
     |> put_page(ScrawlyWeb.Pages.GamePage, room_id: room_id)
   end
 
@@ -815,6 +912,30 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   def command(:send_lobby_chat, params, server) when is_map(params) do
     ScrawlyWeb.LobbyChat.send_message(params, server)
+  end
+
+  # "Have a code?": the same lookup and per-visitor cap as the short link
+  # `/r/:code` (RoomCodes.lookup/2). A signed-in visitor (a guest too) goes
+  # straight to the game page; a signed-out one through `/guest`.
+  def command(:join_by_code, params, server) do
+    case CommandParams.string(params, :code) do
+      nil ->
+        CommandParams.deny_invalid(server, :join_by_code)
+
+      code ->
+        case RoomCodes.lookup(server, code) do
+          {:ok, room_id} ->
+            if ScrawlyWeb.Auth.user_id(server),
+              do: put_action(server, :join_room_with_user, room_id: room_id),
+              else:
+                put_action(server, :open_room_as_guest,
+                  path: RoomCodes.entry_path(server, room_id)
+                )
+
+          {:error, reason} ->
+            put_action(server, :room_code_failed, message: RoomCodes.message(reason))
+        end
+    end
   end
 
   # After a Back/Forward restore (:page_shown): the current lists, the

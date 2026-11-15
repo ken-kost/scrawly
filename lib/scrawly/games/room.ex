@@ -49,7 +49,7 @@ defmodule Scrawly.Games.Room do
       end
 
       change fn changeset, _context ->
-        Ash.Changeset.force_change_attribute(changeset, :code, generate_room_code())
+        Ash.Changeset.force_change_attribute(changeset, :code, generate_code())
       end
     end
 
@@ -342,7 +342,13 @@ defmodule Scrawly.Games.Room do
     identity :unique_code, [:code]
   end
 
-  defp generate_room_code do
+  @doc """
+  A new room code: 6 characters of the RFC 4648 base32 alphabet (A-Z and
+  2-7, so never 0, 1, 8 or 9). `ScrawlyWeb.RoomCodes` checks typed codes
+  against the same alphabet.
+  """
+  @spec generate_code() :: String.t()
+  def generate_code do
     :crypto.strong_rand_bytes(4)
     |> Base.encode32(case: :upper, padding: false)
     |> String.slice(0, 6)
