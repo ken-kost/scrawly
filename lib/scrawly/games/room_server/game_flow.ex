@@ -31,7 +31,18 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   """
 
   alias Scrawly.Games
-  alias Scrawly.Games.{AiWords, AnswerKind, Guess, StrokeRules, Word, WordHints, WordList}
+
+  alias Scrawly.Games.{
+    AiWords,
+    AnswerKind,
+    Guess,
+    StrokeRules,
+    Word,
+    WordHints,
+    WordList,
+    WordStats
+  }
+
   alias Scrawly.Games.RoomServer.Broadcasts
 
   @typedoc "A word's difficulty (`Scrawly.Games.WordList.difficulties/0`)."
@@ -121,6 +132,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
             hint_stage: 0,
             round_active: false,
             correct_guessers: [],
+            guess_times: %{},
             drawing_strokes: [],
             stroke_op: nil,
             round_guesser_points: [],
@@ -159,14 +171,19 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   @doc """
   Set `phase: :choosing`, populate `word_choices`, set `choice_deadline`, and
   schedule the `choice_duration/0` timeout (`schedule_timeout_fn` returns its
-  ref, which joins the turn's timers).
+  ref, which joins the turn's timers). The choices count as offered in the
+  word stats (`WordStats.offered/1`).
   """
   def enter_word_choice(state, choices, schedule_timeout_fn) when is_list(choices) do
     deadline = System.monotonic_time(:millisecond) + choice_duration_ms()
     ref = schedule_timeout_fn.(state.game_id, state.current_round)
 
-    %{state | phase: :choosing, word_choices: choices, choice_deadline: deadline}
-    |> track_timer(ref)
+    state =
+      %{state | phase: :choosing, word_choices: choices, choice_deadline: deadline}
+      |> track_timer(ref)
+
+    WordStats.offered(state)
+    state
   end
 
   @doc """
@@ -181,8 +198,11 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
   `self()` the round's expiry, `{:round_ended, %{game_id, round, reason:
   :time_up}}` after `round_duration` seconds, and one `{:hint_reveal,
   game_id, round, stage}` per stage of `WordHints.reveal_offsets_ms/2`.
+  A committed choice counts as picked in the word stats
+  (`WordStats.picked/2`).
   """
-  def commit_word_choice(state, %{text: word, difficulty: difficulty}) when is_binary(word) do
+  def commit_word_choice(state, %{text: word, difficulty: difficulty} = choice)
+      when is_binary(word) do
     start_round_opts = %{used_words: state.used_words, override_word: word}
 
     case Games.start_round(state.game_id, state.current_drawer_id, start_round_opts) do
@@ -211,6 +231,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
               hint_stage: 0,
               used_words: Enum.uniq([word | state.used_words]),
               correct_guessers: [],
+              guess_times: %{},
               drawing_strokes: [],
               stroke_op: nil,
               round_guesser_points: []
@@ -220,6 +241,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
           |> schedule_hint_reveals()
           |> add_sys_msg("Round #{state.current_round} — #{drawer_name} is drawing")
 
+        WordStats.picked(new_state, choice)
         {:ok, new_state}
 
       {:error, reason} ->
@@ -276,6 +298,7 @@ defmodule Scrawly.Games.RoomServer.GameFlow do
         choice_deadline: nil,
         round_guesser_points: [],
         correct_guessers: [],
+        guess_times: %{},
         drawing_strokes: [],
         stroke_op: nil,
         round_results: [],

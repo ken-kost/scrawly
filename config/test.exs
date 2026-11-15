@@ -45,3 +45,7 @@ config :scrawly, Scrawly.Games.RoomServer, presence_sweep_ms: false
 # AI answers come from a stand-in that ignores the prompt's rules
 # (test/support/fake_ai_model.ex): no test reaches OpenAI.
 config :scrawly, Scrawly.Games.AiWords, model: Scrawly.FakeAiModel
+
+# Word stats (Scrawly.Games.WordStats) are written in tasks that could
+# outlive a test's sandbox; their tests turn them back on.
+config :scrawly, Scrawly.Games.WordStats, record?: false

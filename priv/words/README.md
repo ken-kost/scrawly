@@ -100,7 +100,7 @@ list was rebuilt, each rating was checked against the rates skribbl.io players
 measured for the words both games share
 (https://github.com/skribbliohints/skribbliohints.github.io). That list was a
 benchmark only: no word was taken from it. Once our own play data exists, it
-replaces the benchmark.
+replaces the benchmark: see [Play stats](#play-stats).
 
 ## Themes
 
@@ -125,6 +125,44 @@ they describe a person. `actions` holds only things a person does. Holiday
 figures are `fantasy` ("santa claus", "easter bunny", "tooth fairy");
 holiday things take the theme of what they are ("christmas tree" is `nature`,
 "easter egg" is `food`).
+
+## Play stats
+
+Rooms that play this list record how each entry plays, in the `word_stats`
+table (`Scrawly.Games.WordStats`): how often it was offered among the drawer's
+choices and how often it was picked, and, for every round played to the end
+(time up or everyone guessed), how many players could have guessed it, how
+many did and how long the first correct guess took. Rows are keyed by the
+entry's text, so the deploy's sync keeps them; a renamed entry starts again
+from zero. AI rooms record nothing, and neither does a turn the drawer left.
+
+The report lists the entries whose numbers disagree with the file:
+
+| List            | Entries                                                        |
+|-----------------|----------------------------------------------------------------|
+| `too_hard`      | labelled `easy`, 20 rounds or more, guessed by fewer than 40%  |
+| `too_easy`      | labelled `hard`, 20 rounds or more, guessed by more than 60%   |
+| `rarely_picked` | offered 30 times or more, picked less than 10% of the time     |
+
+It is CSV. The first three columns are this file's (`text,difficulty,theme`),
+then the list and the numbers: `offered`, `picked`, `pick_rate`, `rounds`,
+`guessers`, `correct`, `guess_rate`, `first_guess_rounds` and
+`first_guess_avg_s`. Fix the difficulty in a line's first three fields (or
+drop the entry) and they are a line of `words.csv` again. With no stats yet it
+prints the header alone.
+
+The report only reads, in a read-only transaction, with only the Repo
+started:
+
+- In development: `mix scrawly.word_report > word_report.csv`.
+- On the production release, from its root (`/app` in the Docker image),
+  where Mix isn't available:
+  `bin/scrawly eval "Scrawly.Release.word_report()"`.
+- Inside the running release node instead:
+  `bin/scrawly rpc "Scrawly.Games.WordStats.report() |> IO.puts()"`.
+
+The thresholds are options: `Scrawly.Release.word_report(min_rounds: 10,
+easy_below: 0.45)` (also `hard_above`, `min_offered`, `picked_below`).
 
 ## Sources
 

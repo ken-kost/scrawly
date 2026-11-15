@@ -65,6 +65,13 @@ defmodule Scrawly.Games do
       define :get_game_results_for_player, action: :for_player, args: [:player_id]
       define :get_game_results_for_game, action: :for_game, args: [:game_id]
     end
+
+    # Play stats of the curated words (Scrawly.Games.WordStats). A list of
+    # inputs records several entries in one upsert.
+    resource Scrawly.Games.WordStat do
+      define :record_word_stats, action: :record
+      define :list_word_stats, action: :read
+    end
   end
 
   # Save game results for all players when a game ends.

@@ -95,10 +95,16 @@ defmodule Scrawly.Games.WordList do
   end
 
   @entries Enum.map(rows, fn {line, number} -> parse_line.(line, number) end)
+  @by_text Map.new(@entries, &{&1.text, &1})
 
   @doc "Every entry of the file, in file order."
   @spec entries() :: [entry]
   def entries, do: @entries
+
+  @doc "The entry whose text is exactly `text`, or `nil`."
+  @spec entry(term) :: entry | nil
+  def entry(text) when is_binary(text), do: Map.get(@by_text, text)
+  def entry(_text), do: nil
 
   @doc "The values of the `difficulty` column."
   @spec difficulties() :: [difficulty]

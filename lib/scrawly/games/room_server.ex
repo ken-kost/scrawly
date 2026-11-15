@@ -21,6 +21,11 @@ defmodule Scrawly.Games.RoomServer do
   or the drawer left; a transition that can't happen ends the game instead
   of leaving the room stuck.
 
+  The curated words' play stats (`Scrawly.Games.WordStats`) are recorded as
+  the turns go: offered and picked choices (`GameFlow`), and every round
+  that ends because time is up or everyone guessed. Their writes run in
+  tasks, so they never hold up or break a round.
+
   The drawer order is the room's `turn_queue`, built when the game starts
   (`total_rounds/2` turns, every player the same number of times); a player
   who leaves mid-game loses their remaining turns, the turn ends at once if
@@ -50,6 +55,7 @@ defmodule Scrawly.Games.RoomServer do
     Scoring,
     StrokeRules,
     WordHints,
+    WordStats,
     RoomServer.Broadcasts,
     RoomServer.GameFlow,
     RoomServer.View
@@ -139,6 +145,9 @@ defmodule Scrawly.Games.RoomServer do
     hint_stage: 0,
     round_active: false,
     correct_guessers: [],
+    # Correct guesser id => ms from the start of the drawing to their guess,
+    # this round (the word stats' first-guess time). Never sent.
+    guess_times: %{},
     last_game_id: nil,
     phase: :idle,
     # The drawer's choices while :choosing (GameFlow.choice/0 maps:
@@ -1240,6 +1249,7 @@ defmodule Scrawly.Games.RoomServer do
       %{
         state
         | correct_guessers: [player_id | state.correct_guessers],
+          guess_times: Map.put(state.guess_times, player_id, drawing_elapsed_ms(state)),
           round_guesser_points: state.round_guesser_points ++ [guess_pts]
       }
       |> add_points(player_id, guess_pts)
@@ -1256,6 +1266,10 @@ defmodule Scrawly.Games.RoomServer do
     {new_state, guess_pts}
   end
 
+  # Ms since the drawing began (its deadline is round_duration after that).
+  defp drawing_elapsed_ms(state),
+    do: max(0, round(state.round_duration * 1000) - round_remaining_ms(state))
+
   # Every player but the drawer has guessed (and there is at least one).
   defp all_guessed?(state) do
     guesser_ids =
@@ -1268,11 +1282,13 @@ defmodule Scrawly.Games.RoomServer do
 
   # Everyone guessed: score the drawer (in the room and on their account),
   # end the round early, advance in @round_end_ms. No :room_delta here.
+  # The round counts in the word stats, as one that times out does.
   defp finish_all_guessed(state) do
     drawer_id = state.current_drawer_id
     drawer_pts = Scoring.drawer_round_points(state.round_guesser_points)
     drawer_name = get_player_name(state.players, drawer_id)
     persist_points(drawer_id, drawer_pts)
+    WordStats.round_played(state)
 
     %{state | round_active: false, phase: :round_end, round_deadline: nil}
     |> GameFlow.cancel_turn_timers()
@@ -1290,6 +1306,7 @@ defmodule Scrawly.Games.RoomServer do
     drawer_pts = Scoring.drawer_round_points(state.round_guesser_points)
     drawer_name = get_player_name(state.players, drawer_id)
     persist_points(drawer_id, drawer_pts)
+    WordStats.round_played(state)
 
     msg =
       if correct_count > 0 do
@@ -1379,7 +1396,8 @@ defmodule Scrawly.Games.RoomServer do
     do: %{state | total_rounds: state.current_round + length(state.turn_queue)}
 
   # The drawer left mid-turn: end it now, without drawer points (a word
-  # being drawn is revealed and the round recorded), and advance.
+  # being drawn is revealed and the round recorded in the game's results,
+  # but not in the word stats), and advance.
   defp drawer_left(state, name) do
     {state, msg} =
       if state.phase == :drawing do
@@ -1599,6 +1617,7 @@ defmodule Scrawly.Games.RoomServer do
         hint_stage: 0,
         round_active: false,
         correct_guessers: [],
+        guess_times: %{},
         drawing_strokes: [],
         stroke_op: nil,
         chat_messages: [],
