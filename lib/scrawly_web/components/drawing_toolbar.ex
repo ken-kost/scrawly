@@ -2,14 +2,14 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   @moduledoc """
   The drawing tools under a canvas, for both canvases: the drawer's in-game
   canvas (GamePage) and the home page's shared board (GameDemo). The colour
-  list, the size range and the tool model are defined here once.
+  presets, the size range and the tool model are defined here once.
 
   The tool model is `%{tool: :brush | :eraser, color: "#rrggbb", size: 1..40}`
-  (`default_tool/0`); the size is one for the brush and the eraser. The page
-  showing the canvas keeps it in its state as `draw_tool`, passes it in as
-  `tool`, changes it with `select_color/2`, `select_size/2`,
-  `select_brush/1` and `toggle_eraser/1`, and pushes every change to the
-  canvas:
+  (`default_tool/0`); the size is one for the brush and the eraser, and the
+  colour any `#rrggbb`. The page showing the canvas keeps it in its state as
+  `draw_tool`, passes it in as `tool`, changes it with `select_color/2`,
+  `select_size/2`, `select_brush/1` and `toggle_eraser/1`, and pushes every
+  change to the canvas:
   `JS.call(:setDrawTool, [js_tool(tool)])` (draw_tools.mjs, which also
   defines the eraser's stroke: white, at the tool's size).
 
@@ -20,9 +20,40 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   state (and the dot and number) along behind, at most ten actions a second
   while dragging, never one per value.
 
+  ## Colours
+
+  * 24 presets (`presets/0`, each with its accessible name), in a grid of 2
+    rows of 12, and the page's saved colours (`saved`, newest first) as a
+    third row, each removable (its x, or Delete on the swatch).
+  * The colour chip (`button[data-color-open]`) always shows the tool's
+    colour, preset or not, and opens the colour panel: a hue and saturation
+    wheel (a `<canvas>`) with a brightness slider, the new colour beside the
+    one the panel opened with, a hex field and "+ save".
+  * The panel's controls are native (color_picker.mjs builds them into
+    `[data-color-pick]`): they write the tool model at once and bring the
+    page's state along with `:color_picked`, throttled; no action per
+    pointer move.
+  * Saved colours live in the browser (localStorage, color_picker.mjs), so
+    they are per-browser and never in server-rendered state: the page loads
+    them after mount (`saved` is `[]` until then), and "+ save" and the
+    removals send the new list (`:saved_colors`).
+  * Wide screens: the grid inline, the panel a popover over the canvas.
+    Phones (app.css, 720 px): the chip alone in the toolbar; it opens one
+    sheet with the presets, the saved colours and the wheel.
+  * The panel (`panel`, the page's `color_panel`) closes on Escape, on a
+    click outside, and with "done" (phones).
+  * The swatch grid is one Tab stop (the first preset); the arrow keys move
+    between the swatches (color_picker.mjs).
+
   Stateless, so its events go to the page, which handles:
 
-    * `:select_color` (`color`): the brush in that colour;
+    * `:select_color` (`color`): the brush in that colour (a preset, a
+      saved colour);
+    * `:color_picked` (`color`): the same, from the panel's native controls,
+      which have already set the model (no push);
+    * `:toggle_color_panel`, `:close_color_panel`;
+    * `:saved_colors` (`colors`): the saved list after "+ save" or a removal
+      (color_picker.mjs has stored it);
     * `:select_size` (`size`, or the slider's `event.value`, see
       `size_param/1`): that size, brush or eraser alike;
     * `:toggle_eraser`, `:undo_drawing`, `:clear_canvas`;
@@ -47,7 +78,38 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   use Hologram.Component
 
   @controls [:colors, :sizes, :eraser, :undo, :clear]
-  @colors ["#0a0a0a", "#d63838", "#2a6df4", "#1f9a4a", "#eab308", "#f97316", "#a855f7", "#ec4899"]
+  # The presets, {colour, accessible name}: the darker row, then the lighter
+  # one, column by column (black over white, dark grey over light grey).
+  @presets [
+    {"#0a0a0a", "black"},
+    {"#525252", "dark grey"},
+    {"#6b3a1e", "brown"},
+    {"#8d5a3b", "dark skin"},
+    {"#dc2626", "dark red"},
+    {"#ea580c", "dark orange"},
+    {"#ca8a04", "dark yellow"},
+    {"#16a34a", "dark green"},
+    {"#0891b2", "dark cyan"},
+    {"#2563eb", "dark blue"},
+    {"#9333ea", "dark purple"},
+    {"#db2777", "dark pink"},
+    {"#ffffff", "white"},
+    {"#d4d4d4", "light grey"},
+    {"#a3a3a3", "grey"},
+    {"#f1c7a5", "light skin"},
+    {"#fca5a5", "light red"},
+    {"#fdba74", "light orange"},
+    {"#fde047", "light yellow"},
+    {"#86efac", "light green"},
+    {"#67e8f9", "light cyan"},
+    {"#93c5fd", "light blue"},
+    {"#d8b4fe", "light purple"},
+    {"#f9a8d4", "light pink"}
+  ]
+  @colors Enum.map(@presets, &elem(&1, 0))
+  @first_color hd(@colors)
+  # MAX_SAVED in colors.mjs.
+  @max_saved 12
   # In canvas units (both canvases are 800 x 450):
   # Scrawly.Games.StrokeRules.valid_width?/1, MIN_SIZE / MAX_SIZE in
   # draw_tools.mjs.
@@ -67,12 +129,22 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   prop :tool, :map, required: true
   prop :controls, :list, default: @controls
   prop :shortcuts, :boolean, default: false
+  # The page's saved colours (color_picker.mjs), and whether its colour
+  # panel is open.
+  prop :saved, :list, default: []
+  prop :panel, :boolean, default: false
 
   @doc "Every control a surface can offer."
   def controls, do: @controls
 
-  @doc "The colour presets."
+  @doc "The colour presets, `{colour, accessible name}`, in the grid's order."
+  def presets, do: @presets
+
+  @doc "The presets' colours."
   def colors, do: @colors
+
+  @doc "How many saved colours are kept (colors.mjs `MAX_SAVED`)."
+  def max_saved, do: @max_saved
 
   @doc "The smallest size, in canvas units."
   def min_size, do: @min_size
@@ -83,11 +155,35 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   @doc "The tool a canvas starts with."
   def default_tool, do: @default_tool
 
-  @doc "The brush in `color` (`#rrggbb`); anything else changes nothing."
-  def select_color(tool, color) when is_binary(color) and byte_size(color) == 7,
-    do: %{tool | tool: :brush, color: color}
+  @doc """
+  The brush in `color`, any `#rrggbb` (either case, as
+  `Scrawly.Games.StrokeRules.valid_color?/1`); anything else changes
+  nothing.
+  """
+  def select_color(tool, color) do
+    if hex_color?(color), do: %{tool | tool: :brush, color: color}, else: tool
+  end
 
-  def select_color(tool, _color), do: tool
+  @doc "Whether `color` is a `#rrggbb` colour, in either case."
+  # String.to_integer/2 is the runtime's binary_to_integer BIF (no Regex on
+  # the client); the "1" in front keeps it from reading a sign.
+  def hex_color?(<<?#, digits::binary-size(6)>>) do
+    is_integer(String.to_integer("1" <> digits, 16))
+  rescue
+    ArgumentError -> false
+  end
+
+  def hex_color?(_color), do: false
+
+  @doc """
+  The saved colours from what color_picker.mjs returned or sent: its
+  `#rrggbb` entries, at most `max_saved/0`; nil when it is no list (on the
+  server `JS.call/2` returns `:ok`), so the page keeps what it shows.
+  """
+  def saved_colors(colors) when is_list(colors),
+    do: colors |> Enum.filter(&hex_color?/1) |> Enum.take(@max_saved)
+
+  def saved_colors(_value), do: nil
 
   @doc """
   The tool at `size`, clamped to the widths the server accepts (1..40). The
@@ -140,12 +236,26 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
     ~HOLO"""
     <div class="toolbar" data-draw-shortcuts={if @shortcuts do shortcut_names(@controls) end}>
       {%if :colors in @controls}
-        <div class="swatches">
-          {%for c <- colors()}
-            <button type="button" class={"swatch" <> active(@tool.tool == :brush and @tool.color == c)}
-                    style={"background: " <> c <> ";"}
-                    $click={:select_color, color: c}></button>
-          {/for}
+        <div class={"color-control" <> open(@panel)} data-color-control $click_outside={if @panel do :close_color_panel end}>
+          <button type="button" class="tool-btn color-chip" data-color-open aria-haspopup="dialog" aria-controls="color-sheet"
+                  aria-expanded={if @panel do "true" else "false" end} aria-label={"colour " <> @tool.color <> ", more colours"}
+                  $click="toggle_color_panel"><span class="color-chip-dot" style={"background: " <> @tool.color <> ";"}></span><span class="color-chip-label">custom</span></button>
+          {%if @panel}<window $key_down.escape="close_color_panel" /><div class="color-backdrop" $click="close_color_panel"></div>{/if}
+          <div class="color-sheet" id="color-sheet" role="dialog" aria-label="colours">
+            <div class="color-sheet-head"><span class="section-label">colours</span><button type="button" class="tool-btn" $click="close_color_panel">done</button></div>
+            <div class="color-grid" data-swatch-grid>
+              <div class="swatches" role="group" aria-label="colours">{%for {c, name} <- presets()}<button type="button"
+                  class={swatch_class(@tool, c)} style={"background: " <> c <> ";"}
+                  aria-label={name} title={name} tabindex={tab_stop(c)}
+                  $click={:select_color, color: c}></button>{/for}</div>
+              <div class="saved-colors" role="group" aria-label="my colours">{%for c <- @saved}<span class="saved-item"><button type="button"
+                  class={swatch_class(@tool, c)} style={"background: " <> c <> ";"}
+                  aria-label={"my colour " <> c} title={c} aria-keyshortcuts="Delete" tabindex="-1" data-saved-color={c}
+                  $click={:select_color, color: c}></button><button type="button" class="saved-remove" tabindex="-1"
+                  aria-label={"remove " <> c} data-color-forget={c}>×</button></span>{/for}</div>
+            </div>
+            <div class="color-panel"><div class="color-pick" data-color-pick></div></div>
+          </div>
         </div>
       {/if}
       {%if :sizes in @controls}
@@ -179,6 +289,18 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
 
   defp active(true), do: " active"
   defp active(_false), do: ""
+
+  defp open(true), do: " open"
+  defp open(_false), do: ""
+
+  # A swatch is marked while the brush draws in its colour.
+  defp swatch_class(%{tool: :brush, color: color}, color), do: "swatch active"
+  defp swatch_class(_tool, _color), do: "swatch"
+
+  # The swatch grid is one Tab stop, the first preset; the arrow keys move
+  # inside it (color_picker.mjs).
+  defp tab_stop(@first_color), do: "0"
+  defp tab_stop(_color), do: "-1"
 
   defp eraser(%{tool: :eraser}), do: " eraser"
   defp eraser(_tool), do: ""

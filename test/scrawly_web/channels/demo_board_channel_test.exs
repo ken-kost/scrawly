@@ -237,8 +237,12 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
           for size <- sizes, do: {"#ffffff", size}
 
       for {{color, width}, i} <- Enum.with_index(styles) do
-        # Stay under the per-second stroke limit.
-        if rem(i, 20) == 19, do: age_rate_events(socket, :stroke_complete, 1_000)
+        # Stay under the per-second stroke and chunk limits (24 colours x 4
+        # sizes is more than a second's worth of either).
+        if rem(i, 20) == 19 do
+          age_rate_events(socket, :stroke_complete, 1_000)
+          age_rate_events(socket, :stroke_chunk, 1_000)
+        end
 
         id = "d-pal-#{i}"
         push(socket, "stroke_chunk", chunk(id, %{"color" => color, "width" => width}))

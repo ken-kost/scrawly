@@ -329,6 +329,8 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
                {:mountCanvas, [42]},
                {:noteRoomChannel, ["test-room"]},
                {:setDrawTool, [%{tool: "brush", color: "#0a0a0a", size: 4}]},
+               # The browser's saved colours (color_picker.mjs).
+               {:savedColors, []},
                {:restoreStrokes, [[@s1]]},
                {:setDrawingEnabled, [true]},
                {:connectGameChannel, ["tok", "ABCD"]}
@@ -437,7 +439,11 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
 
     test "a new round and the game's end turn the drawer's engine off and reset the canvas" do
       in_round =
-        page_component(%{is_drawer: true, current_drawer: %{id: "user-1", username: "You"}})
+        page_component(%{
+          is_drawer: true,
+          current_drawer: %{id: "user-1", username: "You"},
+          color_panel: true
+        })
 
       {next_round, calls} =
         js_calls(fn ->
@@ -452,6 +458,9 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       assert next_round.state.drawing_strokes == []
       assert {:setDrawingPath, [""]} in calls
       assert enabled_calls(calls) == [false]
+      # The colour panel closes with the drawing: the next turn's toolbar
+      # starts closed.
+      assert next_round.state.color_panel == false
 
       {ended, calls} =
         js_calls(fn ->
@@ -465,6 +474,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       assert ended.state.game_started == false
       assert ended.state.drawing_strokes == []
       assert enabled_calls(calls) == [false]
+      assert ended.state.color_panel == false
     end
 
     test "leaving :drawing turns it off and keeps the strokes" do

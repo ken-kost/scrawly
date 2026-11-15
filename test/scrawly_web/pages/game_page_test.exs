@@ -89,6 +89,12 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert state.drawing_strokes == []
       assert state.page_shown? == false
       assert is_integer(state.mount_id)
+      # Every page instance starts with the default tool (a new game resets
+      # it); the browser's saved colours are no server state: the client
+      # loads them after mount (:mounted).
+      assert state.draw_tool == ScrawlyWeb.Components.DrawingToolbar.default_tool()
+      assert state.saved_colors == []
+      assert state.color_panel == false
       # A member: nothing to join, no poll.
       assert component.next_action.name == :mounted
       assert component.next_action.params == %{join: nil}
@@ -1094,7 +1100,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
           last_tick_at: now_ms(),
           resync_requested_at: now_ms(),
           socket_token: "tok",
-          channel_connected: true
+          channel_connected: true,
+          color_panel: true
         )
 
       {shown, shown_calls} =
@@ -1103,15 +1110,18 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert_resync(shown, true)
       # The canvas belongs to this instance again (its queued ops resume),
       # with the tool the restored toolbar shows; the other rooms' channels
-      # the tab may hold go with the resync.
+      # the tab may hold go with the resync; the saved colours are read
+      # again (the home board may have changed them).
       assert [
                {:restoreCanvas, [_mount_id]},
                {:setDrawTool, [%{tool: "brush", color: "#0a0a0a", size: 2}]},
-               {:takeStaleRoomChannels, ["r1"]}
+               {:takeStaleRoomChannels, ["r1"]},
+               {:savedColors, []}
              ] = shown_calls
 
       assert shown.state.restoring? == true
       assert shown.state.last_tick_at == nil
+      assert shown.state.color_panel == false
 
       view = snapshot(@me, seq: 20, current_drawer_id: @me, drawing_strokes: [@stroke])
 

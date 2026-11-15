@@ -50,7 +50,10 @@ export class FakeEl {
   querySelector(sel) {
     return find(this, sel.replace(/^#/, ""));
   }
-  closest() {
+  // Only the stroke engines' and the ring's "svg[id]"; nothing here matches
+  // the colour panel's selectors (color_picker.mjs).
+  closest(sel) {
+    if (sel !== "svg[id]") return null;
     let n = this;
     while (n) {
       if (n.tagName === "svg" && n.attrs.id) return n;

@@ -27,6 +27,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :rejectStrokeOp, from: "./drawing_manager.mjs"
   js_import :applyRejectedStrokes, from: "./drawing_manager.mjs"
   js_import :setDrawTool, from: "./draw_tools.mjs"
+  js_import :savedColors, from: "./color_picker.mjs"
 
   js_import :noteRoomChannel, from: "./room_channels.mjs"
   js_import :takeStaleRoomChannels, from: "./room_channels.mjs"
@@ -182,6 +183,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
               # The drawer's tool (DrawingToolbar's model): every page
               # instance starts with the default one.
               |> put_state(:draw_tool, DrawingToolbar.default_tool())
+              # The browser's saved colours (localStorage): none here, the
+              # client loads them after mount (:mounted, :page_shown).
+              |> put_state(:saved_colors, [])
+              |> put_state(:color_panel, false)
               # On a phone the scores are a one-line strip; tapping it shows
               # the full list over the canvas until the next tap.
               |> put_state(:show_all_scores, false)
@@ -315,6 +320,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     JS.call(:mountCanvas, [Map.get(component.state, :mount_id)])
     JS.call(:noteRoomChannel, [component.props.room_id])
     push_tool(component.state)
+    component = load_saved_colors(component)
 
     if component.state.is_drawer do
       JS.call(:restoreStrokes, [component.state.drawing_strokes])
@@ -380,6 +386,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
         component
         |> close_room_settings()
+        |> put_state(:color_panel, false)
+        |> load_saved_colors()
         |> put_state(:restoring?, true)
         |> put_state(:invite_copy, restored_invite_copy(state))
         |> put_state(:last_tick_at, nil)
@@ -1087,12 +1095,35 @@ defmodule ScrawlyWeb.Pages.GamePage do
     put_state(component, :drawing_strokes, [])
   end
 
+  # A preset or a saved colour.
   def action(:select_color, params, component),
     do:
       put_tool(
         component,
         DrawingToolbar.select_color(draw_tool(component.state), Map.get(params, :color))
       )
+
+  # The colour panel's native controls (color_picker.mjs) have set the
+  # model already; the state follows, throttled, without a push (a push
+  # could put an older colour back over a newer one mid-drag).
+  def action(:color_picked, params, component),
+    do:
+      put_state(
+        component,
+        :draw_tool,
+        DrawingToolbar.select_color(draw_tool(component.state), Map.get(params, :color))
+      )
+
+  def action(:toggle_color_panel, _params, component),
+    do: put_state(component, :color_panel, Map.get(component.state, :color_panel) != true)
+
+  # Escape, a click outside, "done" (phones).
+  def action(:close_color_panel, _params, component),
+    do: put_state(component, :color_panel, false)
+
+  # "+ save" and the removals: color_picker.mjs has stored the new list.
+  def action(:saved_colors, params, component),
+    do: put_saved_colors(component, Map.get(params, :colors))
 
   # The slider's throttled `$change` (`event.value`), or `size`.
   def action(:select_size, params, component),
@@ -1798,7 +1829,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def can_draw?(state),
     do: Map.get(state, :is_drawer) == true and Map.get(state, :phase) == :drawing
 
-  # After the reducer changed is_drawer or the phase.
+  # After the reducer changed is_drawer or the phase. The colour panel
+  # closes with the drawing (it would open again with the next turn's
+  # toolbar).
   defp sync_drawing_enabled(component, old_state) do
     allowed = can_draw?(component.state)
 
@@ -1806,7 +1839,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
       JS.call(:setDrawingEnabled, [allowed])
     end
 
-    component
+    if allowed, do: component, else: put_state(component, :color_panel, false)
   end
 
   # The toolbar's button, and E (draw_controls.mjs dispatches :toggle_eraser).
@@ -1825,6 +1858,19 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # by every page instance; drawing_manager.mjs mountCanvas resets it): on
   # :mounted, after a Back/Forward restore, and on every change.
   defp push_tool(state), do: JS.call(:setDrawTool, [DrawingToolbar.js_tool(draw_tool(state))])
+
+  # The browser's saved colours (color_picker.mjs, localStorage), loaded on
+  # the client after mount and after a restore: never server-rendered.
+  defp load_saved_colors(component), do: put_saved_colors(component, JS.call(:savedColors, []))
+
+  # The list color_picker.mjs returned or sent (on the server JS.call
+  # returns :ok: the state stays as it is).
+  defp put_saved_colors(component, value) do
+    case DrawingToolbar.saved_colors(value) do
+      nil -> component
+      colors -> put_state(component, :saved_colors, colors)
+    end
+  end
 
   defp undo_last_stroke(component) do
     JS.call(:undoStroke, [])
@@ -2217,7 +2263,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
           <DrawingCanvas is_drawer={@is_drawer} strokes={@drawing_strokes} />
 
           {%if @is_drawer}
-            <DrawingToolbar tool={@draw_tool} shortcuts={true} />
+            <DrawingToolbar tool={@draw_tool} saved={@saved_colors} panel={@color_panel} shortcuts={true} />
           {%else}
             <div class="toolbar toolbar-viewer" style="justify-content: space-between;">
               <div class="row" style="gap: 8px;">

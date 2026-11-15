@@ -6,6 +6,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
   js_import :disconnectDemoBoard, from: "./demo_board.mjs"
   js_import :clearBoard, from: "./demo_board.mjs"
   js_import :setDrawTool, from: "./draw_tools.mjs"
+  js_import :savedColors, from: "./color_picker.mjs"
 
   js_import :copyRecoveryCode, from: "../components/recovery_code.mjs"
   js_import :downloadRecoveryCode, from: "../components/recovery_code.mjs"
@@ -85,6 +86,10 @@ defmodule ScrawlyWeb.Pages.HomePage do
       |> put_state(:recovery_code_copied, false)
       # The demo board's tool (DrawingToolbar's model), shown by GameDemo.
       |> put_state(:draw_tool, DrawingToolbar.default_tool())
+      # The browser's saved colours (localStorage): none here, the client
+      # loads them after mount (:connect_lobby, :page_shown).
+      |> put_state(:saved_colors, [])
+      |> put_state(:color_panel, false)
       |> put_action(:connect_lobby)
 
     {component, put_subscription(server, Broadcasts.lobby_channel())}
@@ -195,7 +200,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
             <h2>demo</h2>
             <span class="mono" style="font-size: 11px; color: var(--muted);">one shared board · everyone draws</span>
           </div>
-          <GameDemo tool={@draw_tool} />
+          <GameDemo tool={@draw_tool} saved={@saved_colors} panel={@color_panel} />
           <div style="margin-top: 16px; padding: 16px; border: 1px solid var(--hairline); border-radius: 8px;">
             <div class="section-label">how it works</div>
             <ol style="margin: 12px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.65;">
@@ -649,12 +654,34 @@ defmodule ScrawlyWeb.Pages.HomePage do
     component
   end
 
+  # A preset or a saved colour.
   def action(:select_color, params, component),
     do:
       put_tool(
         component,
         DrawingToolbar.select_color(draw_tool(component.state), Map.get(params, :color))
       )
+
+  # The colour panel's native controls (color_picker.mjs) have set the
+  # model already; the state follows, throttled, without a push.
+  def action(:color_picked, params, component),
+    do:
+      put_state(
+        component,
+        :draw_tool,
+        DrawingToolbar.select_color(draw_tool(component.state), Map.get(params, :color))
+      )
+
+  def action(:toggle_color_panel, _params, component),
+    do: put_state(component, :color_panel, Map.get(component.state, :color_panel) != true)
+
+  # Escape, a click outside, "done" (phones).
+  def action(:close_color_panel, _params, component),
+    do: put_state(component, :color_panel, false)
+
+  # "+ save" and the removals: color_picker.mjs has stored the new list.
+  def action(:saved_colors, params, component),
+    do: put_saved_colors(component, Map.get(params, :colors))
 
   # The slider's throttled `$change` (`event.value`), or `size`.
   def action(:select_size, params, component),
@@ -676,7 +703,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
   def action(:connect_lobby, _params, component) do
     push_tool(component.state)
     JS.call(:connectDemoBoard, [])
-    component
+    load_saved_colors(component)
   end
 
   # Dispatched by the template's inline script each time this page instance's
@@ -700,7 +727,10 @@ defmodule ScrawlyWeb.Pages.HomePage do
       JS.call(:connectDemoBoard, [])
       stale_rooms = JS.call(:takeStaleRoomChannels, [nil])
 
-      put_command(component, :resync_lobby,
+      component
+      |> put_state(:color_panel, false)
+      |> load_saved_colors()
+      |> put_command(:resync_lobby,
         stale_rooms: if(is_list(stale_rooms), do: stale_rooms, else: [])
       )
     else
@@ -835,6 +865,19 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # Into draw_tools.mjs: on connect (after init), after a Back/Forward
   # restore and on every change.
   defp push_tool(state), do: JS.call(:setDrawTool, [DrawingToolbar.js_tool(draw_tool(state))])
+
+  # The browser's saved colours (color_picker.mjs, localStorage), loaded on
+  # the client after mount and after a restore: never server-rendered.
+  defp load_saved_colors(component), do: put_saved_colors(component, JS.call(:savedColors, []))
+
+  # The list color_picker.mjs returned or sent (on the server JS.call
+  # returns :ok: the state stays as it is).
+  defp put_saved_colors(component, value) do
+    case DrawingToolbar.saved_colors(value) do
+      nil -> component
+      colors -> put_state(component, :saved_colors, colors)
+    end
+  end
 
   defp chat_notice(:rate_limited), do: "slow down: at most 4 messages every 5 seconds."
   defp chat_notice(_reason), do: "message not sent. reload the page and try again."

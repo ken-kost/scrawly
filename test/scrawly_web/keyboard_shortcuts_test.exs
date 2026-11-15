@@ -212,7 +212,11 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
     test "no drawing shortcut is a <window> key binding: they all take the guarded path" do
       root = Path.expand("../..", __DIR__)
       toolbar = File.read!(Path.join(root, "lib/scrawly_web/components/drawing_toolbar.ex"))
-      refute toolbar =~ "$key_down"
+      # The one key binding there closes the colour panel (Escape is no
+      # drawing shortcut; draw_controls.mjs ignores it).
+      assert [~s($key_down.escape="close_color_panel")] ==
+               Regex.scan(~r/\$key_down[^ >]*/, toolbar) |> List.flatten()
+
       assert toolbar =~ ~s|data-draw-shortcuts={if @shortcuts do shortcut_names(@controls) end}|
 
       for file <- ["game_page.ex", "home_page.ex"] do

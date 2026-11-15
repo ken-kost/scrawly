@@ -291,11 +291,13 @@ defmodule ScrawlyWeb.Pages.HomePageLobbyTest do
 
       # Server-side, JS.call returns :ok (no stale rooms list).
       assert %{name: :resync_lobby, params: %{stale_rooms: []}} = again.next_command
-      # The demo board gets the tool the restored toolbar shows.
+      # The demo board gets the tool the restored toolbar shows; the saved
+      # colours are read again (the game page may have changed them).
       assert calls == [
                setDrawTool: [%{tool: "brush", color: "#0a0a0a", size: 4}],
                connectDemoBoard: [],
-               takeStaleRoomChannels: [nil]
+               takeStaleRoomChannels: [nil],
+               savedColors: []
              ]
 
       red_eraser = %{

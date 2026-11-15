@@ -10,7 +10,8 @@ defmodule ScrawlyWeb.Components.GameDemo do
   a size draws as thick, relative to the canvas, on both. Its tools are the
   game's DrawingToolbar without undo, with its shortcuts (`[` / `]`, B, E;
   draw_controls.mjs ignores them while the user types in the lobby chat,
-  the code field or any other field); `tool` is HomePage's `draw_tool`.
+  the code field or any other field); `tool` is HomePage's `draw_tool`,
+  `saved` and `panel` its saved colours and colour panel flag.
 
   The svg's layers, bottom to top: the JS-owned `#demo-board-strokes` and
   `#demo-board-overlay` groups (JS only inserts into these), then
@@ -24,6 +25,9 @@ defmodule ScrawlyWeb.Components.GameDemo do
   alias ScrawlyWeb.Components.DrawingToolbar
 
   prop :tool, :map, required: true
+  # HomePage's saved colours and colour panel flag (DrawingToolbar).
+  prop :saved, :list, default: []
+  prop :panel, :boolean, default: false
 
   def template do
     ~HOLO"""
@@ -51,7 +55,8 @@ defmodule ScrawlyWeb.Components.GameDemo do
         </svg>
       </div>
 
-      <DrawingToolbar tool={@tool} controls={[:colors, :sizes, :eraser, :clear]} shortcuts={true} />
+      <DrawingToolbar tool={@tool} saved={@saved} panel={@panel}
+        controls={[:colors, :sizes, :eraser, :clear]} shortcuts={true} />
     </div>
     """
   end

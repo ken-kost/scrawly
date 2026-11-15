@@ -1,10 +1,11 @@
 defmodule ScrawlyWeb.Components.DrawingToolbarTest do
   @moduledoc """
   The drawing toolbar shared by the game (the drawer's tools) and the home
-  page's board (draw-toolbar, brush-size): one colour list, one size slider
-  (1..40, one size for the brush and the eraser) and one tool model; the
-  controls and shortcuts each surface turns on; the pages' tool actions,
-  which push the tool to draw_tools.mjs; the two canvases' common
+  page's board (draw-toolbar, brush-size, colors): one colour list (24
+  presets, the colour chip, the saved colours, the colour panel), one size
+  slider (1..40, one size for the brush and the eraser) and one tool model;
+  the controls and shortcuts each surface turns on; the pages' tool
+  actions, which push the tool to draw_tools.mjs; the two canvases' common
   coordinates, and the size ring beside each canvas.
 
   `JS.call` is a server-side no-op; `js_calls/1` traces it to see which JS
@@ -21,7 +22,10 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
   alias ScrawlyWeb.Pages.{GamePage, HomePage}
 
   @root Path.expand("../../..", __DIR__)
-  @brush %{tool: :brush, color: "#2a6df4", size: 10}
+  # A preset (dark blue).
+  @brush %{tool: :brush, color: "#2563eb", size: 10}
+  # Not a preset.
+  @custom %{tool: :brush, color: "#123456", size: 10}
   @eraser %{@brush | tool: :eraser}
 
   defp render_dom(node) do
@@ -30,7 +34,7 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
   end
 
   defp toolbar(props) do
-    %{controls: DrawingToolbar.controls(), shortcuts: false}
+    %{controls: DrawingToolbar.controls(), shortcuts: false, saved: [], panel: false}
     |> Map.merge(props)
     |> then(&DrawingToolbar.template().(&1))
     |> render_dom()
@@ -39,7 +43,8 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
   # The game's toolbar as GamePage renders it for the drawer.
   defp game_toolbar(tool), do: toolbar(%{tool: tool, shortcuts: true})
 
-  defp board(tool), do: render_dom(GameDemo.template().(%{tool: tool}))
+  defp board(tool, saved \\ []),
+    do: render_dom(GameDemo.template().(%{tool: tool, saved: saved, panel: false}))
 
   defp canvas, do: render_dom(DrawingCanvas.template().(%{is_drawer: true, strokes: []}))
 
@@ -64,6 +69,15 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
 
   defp toolbar_tag(html), do: hd(Regex.run(~r/<div class="toolbar"[^>]*>/, html))
 
+  defp names, do: Enum.map(DrawingToolbar.presets(), &elem(&1, 1))
+
+  # A page action on GamePage and on HomePage, with the JS each would call.
+  defp both(name, params, state) do
+    for page <- [GamePage, HomePage] do
+      js_calls(fn -> page.action(name, params, %Component{state: state}) end)
+    end
+  end
+
   describe "one toolbar for both canvases" do
     test "the game and the board show the same colours and the same size slider" do
       game = game_toolbar(DrawingToolbar.default_tool())
@@ -83,14 +97,14 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
         assert attr(slider, "aria-label") == "size"
         refute html =~ ~s(class="tool-btn"><span class="size-dot")
 
-        assert html =~ ~s(<div class="swatches">)
+        assert html =~ ~s(<div class="swatches" role="group" aria-label="colours">)
         assert html =~ ">erase</button>"
         assert html =~ ">clear</button>"
       end
     end
 
-    test "8 colours, sizes 1 to 40, the brush in the first colour at 4" do
-      assert length(DrawingToolbar.colors()) == 8
+    test "24 colours, sizes 1 to 40, the brush in the first colour at 4" do
+      assert length(DrawingToolbar.colors()) == 24
       assert DrawingToolbar.colors() == Enum.uniq(DrawingToolbar.colors())
       assert Enum.all?(DrawingToolbar.colors(), &Scrawly.Games.StrokeRules.valid_color?/1)
 
@@ -119,6 +133,9 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
 
       assert js =~ "export const MIN_SIZE = #{DrawingToolbar.min_size()};"
       assert js =~ "export const MAX_SIZE = #{DrawingToolbar.max_size()};"
+
+      colors_js = File.read!(Path.join(@root, "lib/scrawly_web/pages/colors.mjs"))
+      assert colors_js =~ "export const MAX_SAVED = #{DrawingToolbar.max_saved()};"
     end
   end
 
@@ -169,8 +186,12 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
     test "the brush marks its colour" do
       html = toolbar(%{tool: @brush})
       assert [[_swatch, ""]] = active(html)
-      assert html =~ ~s(class="swatch active" style="background: #2a6df4;")
+      assert html =~ ~s(class="swatch active" style="background: #2563eb;")
       refute html =~ ~s(class="tool-btn active">erase)
+    end
+
+    test "a colour that is no preset marks no swatch" do
+      assert active(toolbar(%{tool: @custom})) == []
     end
 
     test "the eraser marks only itself" do
@@ -286,7 +307,7 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
     end
 
     test "JS gets the tool's name as a string" do
-      assert DrawingToolbar.js_tool(@eraser) == %{tool: "eraser", color: "#2a6df4", size: 10}
+      assert DrawingToolbar.js_tool(@eraser) == %{tool: "eraser", color: "#2563eb", size: 10}
     end
   end
 
@@ -316,14 +337,18 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
       assert calls == [{:clearBoard, []}]
     end
 
-    test "the home page pushes its tool before it connects the board" do
-      component = %Component{state: %{draw_tool: @eraser}}
-      {_result, calls} = js_calls(fn -> HomePage.action(:connect_lobby, %{}, component) end)
+    test "the home page pushes its tool before it connects the board, then loads saved colours" do
+      component = %Component{state: %{draw_tool: @eraser, saved_colors: []}}
+      {result, calls} = js_calls(fn -> HomePage.action(:connect_lobby, %{}, component) end)
 
       assert calls == [
-               {:setDrawTool, [%{tool: "eraser", color: "#2a6df4", size: 10}]},
-               {:connectDemoBoard, []}
+               {:setDrawTool, [%{tool: "eraser", color: "#2563eb", size: 10}]},
+               {:connectDemoBoard, []},
+               {:savedColors, []}
              ]
+
+      # On the server JS.call returns :ok: the state keeps its (empty) list.
+      assert result.state.saved_colors == []
     end
 
     test "the game's and the board's actions do the same to the tool" do
@@ -339,6 +364,244 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
         game = GamePage.action(name, params, %Component{state: %{draw_tool: tool}})
         home = HomePage.action(name, params, %Component{state: %{draw_tool: tool}})
         assert game.state.draw_tool == home.state.draw_tool, "#{name} from #{inspect(tool)}"
+      end
+    end
+  end
+
+  describe "colours" do
+    test "24 presets in 2 rows of 12, darker over lighter, each valid, distinct and named" do
+      presets = DrawingToolbar.presets()
+      assert length(presets) == 24
+      assert Enum.map(presets, &elem(&1, 0)) == DrawingToolbar.colors()
+      assert Enum.all?(DrawingToolbar.colors(), &Scrawly.Games.StrokeRules.valid_color?/1)
+      assert Enum.all?(DrawingToolbar.colors(), &(&1 == String.downcase(&1)))
+      assert names() == Enum.uniq(names())
+
+      {dark, light} = Enum.split(names(), 12)
+      hues = ~w(red orange yellow green cyan blue purple pink)
+      assert Enum.take(dark, 4) == ["black", "dark grey", "brown", "dark skin"]
+      assert Enum.take(light, 4) == ["white", "light grey", "grey", "light skin"]
+      assert Enum.drop(dark, 4) == Enum.map(hues, &("dark " <> &1))
+      assert Enum.drop(light, 4) == Enum.map(hues, &("light " <> &1))
+
+      # Each dark shade is darker than the light one under it.
+      luma = fn "#" <> hex ->
+        <<r::8, g::8, b::8>> = Base.decode16!(hex, case: :lower)
+        0.2126 * r + 0.7152 * g + 0.0722 * b
+      end
+
+      for {d, l} <-
+            Enum.zip(
+              Enum.take(DrawingToolbar.colors(), 12),
+              Enum.drop(DrawingToolbar.colors(), 12)
+            ),
+          d != "#6b3a1e" do
+        assert luma.(d) < luma.(l), "#{d} over #{l}"
+      end
+    end
+
+    test "every preset is a button named for screen readers; the grid is one Tab stop" do
+      html = toolbar(%{tool: @custom})
+
+      for {color, name} <- DrawingToolbar.presets() do
+        assert html =~
+                 ~s(class="swatch" style="background: #{color};" aria-label="#{name}" title="#{name}")
+      end
+
+      assert [[first]] =
+               Regex.scan(~r/style="background: (#[0-9a-f]{6});"[^>]*tabindex="0"/, html,
+                 capture: :all_but_first
+               )
+
+      assert first == hd(DrawingToolbar.colors())
+      assert length(Regex.scan(~r/class="swatch[^"]*"[^>]*tabindex="-1"/, html)) == 23
+      assert html =~ ~s(<div class="color-grid" data-swatch-grid>)
+    end
+
+    test "the chip shows the tool's colour, a preset or not, the eraser's too" do
+      for tool <- [@custom, %{@custom | tool: :eraser}, @brush] do
+        html = toolbar(%{tool: tool})
+
+        assert html =~
+                 ~s(aria-label="colour #{tool.color}, more colours")
+
+        assert html =~ ~s(<span class="color-chip-dot" style="background: #{tool.color};"></span>)
+      end
+    end
+
+    test "saved colours: a third row after the presets, each selectable and removable" do
+      saved = ["#123456", "#abcdef"]
+      html = toolbar(%{tool: @custom, saved: saved})
+
+      assert swatches(html) == Enum.map(DrawingToolbar.colors() ++ saved, &[&1])
+
+      for c <- saved do
+        assert html =~
+                 ~s(aria-label="my colour #{c}" title="#{c}" aria-keyshortcuts="Delete" tabindex="-1" data-saved-color="#{c}")
+
+        assert html =~
+                 ~s(<button type="button" class="saved-remove" tabindex="-1" aria-label="remove #{c}" data-color-forget="#{c}">×</button>)
+      end
+
+      # The tool's colour, saved: marked like a preset.
+      assert [[_, ""]] = active(html)
+      assert html =~ ~s(class="swatch active" style="background: #123456;")
+
+      # None saved (the server never renders any): an empty row.
+      assert toolbar(%{tool: @custom}) =~
+               ~s(<div class="saved-colors" role="group" aria-label="my colours"></div>)
+
+      # The board shows them too.
+      assert swatches(board(@custom, saved)) == Enum.map(DrawingToolbar.colors() ++ saved, &[&1])
+    end
+
+    test "the panel: closed until the page opens it; Escape and a backdrop only while open" do
+      closed = toolbar(%{tool: @custom})
+      assert closed =~ ~s(<div class="color-control" data-color-control>)
+      assert closed =~ ~s(aria-expanded="false")
+      refute closed =~ "color-backdrop"
+
+      opened = toolbar(%{tool: @custom, panel: true})
+      assert opened =~ ~s(<div class="color-control open" data-color-control>)
+      assert opened =~ ~s(aria-expanded="true")
+      assert opened =~ ~s(<div class="color-backdrop"></div>)
+
+      assert opened =~
+               ~s(<div class="color-sheet" id="color-sheet" role="dialog" aria-label="colours">)
+
+      source = File.read!(Path.join(@root, "lib/scrawly_web/components/drawing_toolbar.ex"))
+      assert source =~ ~s|$click_outside={if @panel do :close_color_panel end}|
+      assert source =~ ~s|{%if @panel}<window $key_down.escape="close_color_panel" />|
+    end
+
+    test "the panel's controls are color_picker.mjs's: an empty container, no state in markup" do
+      for html <- [toolbar(%{tool: @custom, panel: true}), board(@custom)] do
+        assert html =~
+                 ~s(<div class="color-panel"><div class="color-pick" data-color-pick></div></div>)
+      end
+
+      # Its wheel's CSS size is the one the module falls back on.
+      js = File.read!(Path.join(@root, "lib/scrawly_web/pages/color_picker.mjs"))
+      css = File.read!(Path.join(@root, "assets/css/app.css"))
+      [size] = Regex.run(~r/export const WHEEL_SIZE = (\d+);/, js, capture: :all_but_first)
+      [rule] = Regex.run(~r/\n\.color-wheel \{([^}]*)\}/, css, capture: :all_but_first)
+      assert rule =~ "width: #{size}px; height: #{size}px;"
+    end
+
+    test "a colour is any #rrggbb, in either case; anything else changes nothing" do
+      for color <- ["#123456", "#ABCDEF", "#aBcDeF", "#000000", "#ffffff"] do
+        assert DrawingToolbar.hex_color?(color)
+        assert DrawingToolbar.select_color(@eraser, color) == %{@brush | color: color}
+      end
+
+      for color <- [
+            "#12345",
+            "#1234567",
+            "123456",
+            "#12345g",
+            "#+12345",
+            "#-12345",
+            " #123456",
+            "#",
+            "",
+            nil,
+            3,
+            :red
+          ] do
+        refute DrawingToolbar.hex_color?(color), inspect(color)
+        assert DrawingToolbar.select_color(@eraser, color) == @eraser
+      end
+    end
+
+    test "saved colours from JS: its #rrggbb entries, at most 12; nil for no list" do
+      assert DrawingToolbar.saved_colors(["#123456", "junk", 7, nil, "#ABCDEF"]) == [
+               "#123456",
+               "#ABCDEF"
+             ]
+
+      many = for i <- 1..20, do: "#0000" <> String.pad_leading(Integer.to_string(i, 16), 2, "0")
+      assert DrawingToolbar.saved_colors(many) == Enum.take(many, 12)
+      assert DrawingToolbar.saved_colors([]) == []
+
+      for value <- [:ok, nil, "#123456", %{}] do
+        assert DrawingToolbar.saved_colors(value) == nil
+      end
+    end
+  end
+
+  describe "the pages' colour actions" do
+    test "a colour from the panel's native controls changes the state without a push" do
+      for {result, calls} <- both(:color_picked, %{color: "#123456"}, %{draw_tool: @eraser}) do
+        assert result.state.draw_tool == %{@eraser | tool: :brush, color: "#123456"}
+        assert calls == []
+      end
+
+      for {result, _calls} <- both(:color_picked, %{color: "red"}, %{draw_tool: @eraser}) do
+        assert result.state.draw_tool == @eraser
+      end
+    end
+
+    test "a preset or saved colour (no preset) is the brush in it, pushed" do
+      for {result, calls} <- both(:select_color, %{color: "#123456"}, %{draw_tool: @eraser}) do
+        assert result.state.draw_tool == %{@brush | color: "#123456"}
+        assert calls == [{:setDrawTool, [%{tool: "brush", color: "#123456", size: 10}]}]
+      end
+    end
+
+    test "the chip opens and closes the panel; Escape, a click outside and done close it" do
+      for {opened, []} <- both(:toggle_color_panel, %{}, %{color_panel: false}) do
+        assert opened.state.color_panel == true
+        assert opened.next_command == nil
+      end
+
+      for {closed, []} <- both(:toggle_color_panel, %{}, %{color_panel: true}) do
+        assert closed.state.color_panel == false
+      end
+
+      for state <- [%{color_panel: true}, %{color_panel: false}],
+          {closed, []} <- both(:close_color_panel, %{event: %{}}, state) do
+        assert closed.state.color_panel == false
+      end
+
+      # A state from before the flag opens it.
+      for {opened, []} <- both(:toggle_color_panel, %{}, %{}) do
+        assert opened.state.color_panel == true
+      end
+    end
+
+    test "+ save and the removals put the list JS stored; anything else keeps the list" do
+      state = %{saved_colors: ["#111111"]}
+
+      for {result, []} <- both(:saved_colors, %{colors: ["#222222", "#111111"]}, state) do
+        assert result.state.saved_colors == ["#222222", "#111111"]
+      end
+
+      for {result, []} <- both(:saved_colors, %{colors: []}, state) do
+        assert result.state.saved_colors == []
+      end
+
+      for params <- [%{}, %{colors: "#222222"}],
+          {result, []} <- both(:saved_colors, params, state) do
+        assert result.state.saved_colors == ["#111111"]
+      end
+    end
+
+    test "the client loads the saved colours JS returns" do
+      component = %Component{state: %{draw_tool: @brush, saved_colors: []}}
+      previous = Application.get_env(:hologram, :__server_pass_through__)
+
+      try do
+        # What JS.call returns in the browser: the stored list.
+        Application.put_env(:hologram, :__server_pass_through__, ["#123456", "#abcdef"])
+
+        assert HomePage.action(:connect_lobby, %{}, component).state.saved_colors == [
+                 "#123456",
+                 "#abcdef"
+               ]
+      after
+        if previous == nil,
+          do: Application.delete_env(:hologram, :__server_pass_through__),
+          else: Application.put_env(:hologram, :__server_pass_through__, previous)
       end
     end
   end

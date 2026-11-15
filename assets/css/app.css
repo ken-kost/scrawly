@@ -1022,9 +1022,9 @@ svg[data-size-ring] { cursor: crosshair; }
   border-top: 1px solid var(--hairline);
   background: var(--bg);
 }
-.toolbar .swatches { display: flex; gap: 6px; align-items: center; }
 .swatch {
-  width: 22px; height: 22px;
+  width: 20px; height: 20px;
+  padding: 0;
   border-radius: 999px;
   border: 1px solid var(--hairline-2);
   cursor: pointer;
@@ -1038,6 +1038,9 @@ svg[data-size-ring] { cursor: crosshair; }
   border: 1px solid var(--ink);
 }
 .tool-group { display: flex; gap: 4px; padding-left: 10px; border-left: 1px solid var(--hairline); }
+/* The home board's toolbar is narrow and always wraps after the colours, so
+   a divider would start its second row: no dividers there. */
+.demo-canvas + .toolbar .tool-group { padding-left: 0; border-left: 0; }
 .tool-btn {
   height: 26px;
   padding: 0 8px;
@@ -1077,6 +1080,151 @@ svg[data-size-ring] { cursor: crosshair; }
 .size-dot.eraser { background: var(--canvas); border: 1px dashed var(--ink); }
 .size-value { min-width: 2ch; font-size: 11px; color: var(--muted); }
 .toolbar-hint { margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+/* Colours (DrawingToolbar): the chip with the tool's colour, the presets in
+   2 rows of 12 with the saved colours as a third row (each removable: its x
+   shows on hover and focus), and the colour panel, a popover over the
+   canvas. Phones get one sheet instead (see "Play on phones"). */
+.color-control { position: relative; display: flex; align-items: center; gap: 8px; }
+.color-sheet { display: contents; }
+.color-sheet-head,
+.color-backdrop { display: none; }
+.color-chip { gap: 6px; }
+.color-chip-dot {
+  width: 14px; height: 14px;
+  flex: none;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-2);
+}
+.color-grid { display: flex; flex-direction: column; gap: 4px; }
+.toolbar .swatches,
+.saved-colors { display: grid; grid-template-columns: repeat(12, 20px); gap: 4px; }
+.saved-colors:empty { display: none; }
+.saved-item { position: relative; display: inline-flex; }
+.saved-remove {
+  position: absolute;
+  top: -5px; right: -5px;
+  width: 13px; height: 13px;
+  padding: 0;
+  display: grid; place-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-2);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.saved-item:not(:hover):not(:focus-within) .saved-remove { visibility: hidden; }
+.color-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 10px);
+  z-index: 30;
+  width: 292px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.28);
+  visibility: hidden;
+  /* Its own layer: dragging on the wheel repaints the panel, never the
+     strokes under it. */
+  will-change: transform;
+}
+.color-control.open .color-panel { visibility: visible; }
+/* The panel's controls, built by color_picker.mjs (PICK_HTML). */
+.color-pick { display: flex; flex-direction: column; gap: 10px; }
+.color-pick-row { display: flex; gap: 12px; align-items: flex-start; }
+/* 152 px: WHEEL_SIZE in color_picker.mjs. */
+.color-wheel {
+  position: relative;
+  flex: none;
+  width: 152px; height: 152px;
+  border-radius: 999px;
+  touch-action: none;
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.color-wheel-canvas { display: block; width: 100%; height: 100%; border-radius: 999px; }
+/* Brightness: black over the wheel at opacity 1 - v (color_picker.mjs). */
+.color-wheel-shade {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+}
+.color-wheel-marker {
+  position: absolute;
+  left: 0; top: 0;
+  width: 14px; height: 14px;
+  margin: -7px 0 0 -7px;
+  box-sizing: border-box;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  will-change: transform;
+}
+.color-side { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+/* The new colour beside the one the panel opened with (a button: back to it). */
+.color-compare {
+  display: flex;
+  height: 36px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.color-now,
+.color-was { flex: 1 1 0; margin: 0; padding: 0; border: 0; }
+.color-was { cursor: pointer; }
+.color-hex { height: 32px; padding: 0 8px; font-size: 13px; }
+.color-hex[aria-invalid="true"] { border-color: var(--danger); }
+.color-save { justify-content: center; }
+.color-value {
+  --color-value-top: #ffffff;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.color-value::-webkit-slider-runnable-track {
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-2);
+  background: linear-gradient(to right, #000, var(--color-value-top));
+}
+.color-value::-moz-range-track {
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-2);
+  background: linear-gradient(to right, #000, var(--color-value-top));
+}
+.color-value::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px; height: 16px;
+  margin-top: -4px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+.color-value::-moz-range-thumb {
+  width: 14px; height: 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  background: #fff;
+}
 
 /* ─── Chat ───────────────────────────────────────────────────────── */
 .chat-panel { padding: 0; }
@@ -1360,7 +1508,6 @@ svg[data-size-ring] { cursor: crosshair; }
   .canvas-head .row { white-space: nowrap; }
 
   .toolbar { flex-wrap: wrap; gap: 8px; }
-  .toolbar .swatches { flex-wrap: wrap; }
   .toolbar > .mono { display: none; }
 
   .accent-popover { top: 56px; right: 12px; }
@@ -1783,11 +1930,10 @@ svg[data-size-ring] { cursor: crosshair; }
   .canvas-head,
   .toolbar-viewer { display: none; }
 
-  /* The drawer's tools: the colours on one row, sizes and erase / undo /
-     clear on the next, with finger-sized targets. */
+  /* The drawer's tools: the colour chip, the size and erase / undo / clear,
+     wrapping onto a second row when they don't fit, with finger-sized
+     targets. */
   .toolbar { padding: 8px 10px; gap: 8px 10px; }
-  .toolbar .swatches { flex: 1 1 100%; flex-wrap: nowrap; justify-content: space-between; }
-  .swatch { width: 28px; height: 28px; }
   .tool-group { padding-left: 0; border-left: 0; }
   .tool-group:last-of-type { margin-left: auto; }
   .tool-btn { height: 32px; min-width: 32px; justify-content: center; }
@@ -1795,6 +1941,64 @@ svg[data-size-ring] { cursor: crosshair; }
      breaks only below its minimum), with a finger-high target. */
   .size-control { flex: 1 1 0; min-width: 108px; }
   .size-slider { flex: 1 1 0; min-width: 56px; width: auto; height: 32px; }
+
+  /* Colours: the chip alone; it opens one sheet from the bottom of the
+     screen with the presets, the saved colours (with "+ save" and remove)
+     and the wheel. The backdrop takes the tap that closes it, so that tap
+     never draws. */
+  .color-chip { width: 32px; padding: 0; }
+  .color-chip-dot { width: 18px; height: 18px; }
+  .color-chip-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .color-control:not(.open) .color-sheet { display: none; }
+  .color-control.open .color-sheet {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 41;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: calc(100dvh - 56px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 12px 12px calc(16px + env(safe-area-inset-bottom));
+    background: var(--surface);
+    border-top: 1px solid var(--hairline-2);
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -16px 40px rgba(0, 0, 0, 0.22);
+  }
+  .color-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(0, 0, 0, 0.3);
+  }
+  .color-sheet-head { display: flex; align-items: center; justify-content: space-between; }
+  .color-grid { gap: 12px; }
+  .toolbar .swatches { grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 4px; }
+  .toolbar .swatches .swatch { width: 100%; height: auto; aspect-ratio: 1; }
+  .saved-colors { display: flex; flex-wrap: wrap; gap: 10px; }
+  .saved-colors .swatch { width: 30px; height: 30px; }
+  .saved-item:not(:hover):not(:focus-within) .saved-remove { visibility: visible; }
+  .saved-remove { top: -6px; right: -6px; width: 18px; height: 18px; font-size: 12px; }
+  .color-panel {
+    position: static;
+    width: auto;
+    padding: 0;
+    border: 0;
+    background: none;
+    box-shadow: none;
+    visibility: visible;
+    will-change: auto;
+  }
+  .color-hex { font-size: 16px; }
 
   /* Chat: the input first, then the private notes, then the lines newest
      first (column-reverse; chat_scroll.js keeps the newest in view). */
