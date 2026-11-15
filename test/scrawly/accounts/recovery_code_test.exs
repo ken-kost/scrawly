@@ -7,7 +7,7 @@ defmodule Scrawly.Accounts.RecoveryCodeTest do
   require Ash.Query
 
   alias Scrawly.Accounts
-  alias Scrawly.Accounts.{RecoveryCode, RecoveryThrottle, Token, User}
+  alias Scrawly.Accounts.{RecoveryCode, Throttle, Token, User}
   alias Scrawly.Accounts.Errors.RecoveryRejected
 
   @code_format ~r/^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){4}$/
@@ -289,7 +289,7 @@ defmodule Scrawly.Accounts.RecoveryCodeTest do
       assert bcrypt_ops == 0
       assert RecoveryRejected.text(rejection(result)) =~ "too many attempts"
 
-      # Sign-in is not throttled, and the password did not change.
+      # Sign-in has buckets of its own, and the password did not change.
       assert {:ok, _} = Accounts.sign_in_with_password(email, "old-password-1")
 
       # Other emails are unaffected.
@@ -324,7 +324,7 @@ defmodule Scrawly.Accounts.RecoveryCodeTest do
       assert {:error, %Ash.Error.Invalid{}} = result
       assert bcrypt_ops == 0
       assert {:error, %Ash.Error.Invalid{}} = reset(email, code, "short")
-      assert RecoveryThrottle.allowed?(email)
+      assert Throttle.attempts(:recovery_email, Throttle.email_key(email)) == 0
 
       assert {:ok, _} = Accounts.sign_in_with_password(email, "old-password-1")
       assert {:ok, _} = reset(email, code)
@@ -377,46 +377,6 @@ defmodule Scrawly.Accounts.RecoveryCodeTest do
       {:ok, regenerated} = Accounts.regenerate_recovery_code(reload!(user), "old-password-1")
 
       assert {:ok, _} = reset(email, regenerated.__metadata__.recovery_code)
-    end
-  end
-
-  describe "RecoveryThrottle" do
-    test "keys are trimmed and lowercased" do
-      email = unique_email()
-      now = System.monotonic_time(:millisecond)
-
-      for _ <- 1..5, do: RecoveryThrottle.record_failure("  " <> String.upcase(email), now)
-
-      refute RecoveryThrottle.allowed?(email, now)
-      RecoveryThrottle.clear(email)
-      assert RecoveryThrottle.allowed?(email, now)
-    end
-
-    test "failures expire after the window and are swept" do
-      email = unique_email()
-      t0 = System.monotonic_time(:millisecond)
-      window = RecoveryThrottle.window_ms()
-
-      for _ <- 1..5, do: RecoveryThrottle.record_failure(email, t0)
-
-      refute RecoveryThrottle.allowed?(email, t0 + window - 1)
-      assert RecoveryThrottle.allowed?(email, t0 + window)
-
-      assert RecoveryThrottle.sweep(t0 + window) >= 1
-      assert :ets.lookup(RecoveryThrottle, RecoveryThrottle.key(email)) == []
-    end
-
-    test "the window slides: old failures stop counting one by one" do
-      email = unique_email()
-      t0 = System.monotonic_time(:millisecond)
-      window = RecoveryThrottle.window_ms()
-
-      for i <- 0..4, do: RecoveryThrottle.record_failure(email, t0 + i * 1000)
-
-      refute RecoveryThrottle.allowed?(email, t0 + 4000)
-      assert RecoveryThrottle.allowed?(email, t0 + window)
-      RecoveryThrottle.record_failure(email, t0 + window)
-      refute RecoveryThrottle.allowed?(email, t0 + window)
     end
   end
 

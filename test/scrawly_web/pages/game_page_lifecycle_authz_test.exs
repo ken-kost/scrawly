@@ -40,10 +40,11 @@ defmodule ScrawlyWeb.Pages.GamePageLifecycleAuthzTest do
       refute function_exported?(Commands, :end_game, 2)
       refute function_exported?(Commands, :fetch_past_games, 2)
 
+      # Denied as unknown names (the catch-all clause), never raised on.
       for name <- [:end_game, :fetch_past_games] do
-        assert_raise FunctionClauseError, fn ->
-          GamePage.command(name, %{room_id: "x", game_id: "y"}, %Hologram.Server{})
-        end
+        result = GamePage.command(name, %{room_id: "x", game_id: "y"}, %Hologram.Server{})
+        assert result.next_action.name == :command_denied
+        assert result.next_action.params.reason == :unknown_command
       end
     end
   end

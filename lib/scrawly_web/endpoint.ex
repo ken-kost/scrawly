@@ -8,7 +8,10 @@ defmodule ScrawlyWeb.Endpoint do
     store: :cookie,
     key: "_scrawly_key",
     signing_salt: "hvqvlU6S",
-    same_site: "Lax"
+    same_site: "Lax",
+    # HTTPS-only in prod (config/prod.exs: the proxy terminates TLS and the
+    # browser only ever sees https), so the cookie never travels in clear.
+    secure: Application.compile_env(:scrawly, :secure_session_cookie, false)
   ]
 
   socket "/live", Phoenix.LiveView.Socket,

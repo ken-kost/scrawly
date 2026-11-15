@@ -275,10 +275,10 @@ defmodule ScrawlyWeb.Pages.GamePageGuessTest do
 
       assert_result(guess(room, server_for(guesser), "   "), :empty)
 
-      assert_result(
-        GamePage.command(:submit_guess, %{room_id: room.id}, server_for(guesser)),
-        :empty
-      )
+      # No text at all is a malformed request: denied before the room is asked.
+      result = GamePage.command(:submit_guess, %{room_id: room.id}, server_for(guesser))
+      assert result.next_action.name == :command_denied
+      assert result.next_action.params.reason == :invalid_params
 
       assert snapshot(room) == before
     end
@@ -299,10 +299,11 @@ defmodule ScrawlyWeb.Pages.GamePageGuessTest do
         message: %{type: :system, player_name: "System", message: "forged"}
       }
 
+      # Denied as unknown names (the catch-all clause), never raised on.
       for name <- [:record_correct_guess, :send_chat_message] do
-        assert_raise FunctionClauseError, fn ->
-          GamePage.command(name, old, server_for(guesser))
-        end
+        result = GamePage.command(name, old, server_for(guesser))
+        assert result.next_action.name == :command_denied
+        assert result.next_action.params.reason == :unknown_command
       end
 
       assert db_score(guesser) == 0

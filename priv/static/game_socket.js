@@ -13,13 +13,28 @@
   var socket = null;
   var channel = null;
   var currentRoomCode = null;
+  var serverCloseHandler = null;
 
   window.gameSocket = {
+    // `token` is a socket-only token (ScrawlyWeb.SocketToken), never the
+    // session's sign-in token.
     connect: function(token) {
       if (socket) { this.disconnect(); }
-      socket = new Phoenix.Socket("/socket", { params: { token: token } });
-      socket.connect();
+      var s = new Phoenix.Socket("/socket", { params: { token: token } });
+      socket = s;
+      // The server closes a socket with code 1000 when the user's tokens were
+      // revoked (a "disconnect" broadcast), and Phoenix never retries such a
+      // close. Our own disconnect() drops `socket` first, so it doesn't count.
+      s.onClose(function(event) {
+        if (socket === s && event && event.code === 1000 && serverCloseHandler) {
+          serverCloseHandler();
+        }
+      });
+      s.connect();
     },
+
+    // Called (once per close) when the server closed the socket for good.
+    onServerClose: function(handler) { serverCloseHandler = handler; },
 
     joinRoom: function(roomCode) {
       if (!socket) { return { receive: function() { return this; } }; }
@@ -35,7 +50,7 @@
 
     disconnect: function() {
       this.leaveRoom();
-      if (socket) { socket.disconnect(); socket = null; }
+      if (socket) { var s = socket; socket = null; s.disconnect(); }
     },
 
     sendDrawingStrokeChunk: function(strokeId, seq, delta, color, width) {

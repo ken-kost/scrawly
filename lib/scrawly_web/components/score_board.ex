@@ -28,4 +28,8 @@ defmodule ScrawlyWeb.Components.ScoreBoard do
   defp sorted_players(players) do
     Enum.sort_by(players, &(&1.score || 0), :desc)
   end
+
+  # No commands here. A forged one (the module is named in the request) is
+  # denied instead of raising (see ScrawlyWeb.CommandParams).
+  def command(name, _params, server), do: ScrawlyWeb.CommandParams.deny_unknown(server, name)
 end

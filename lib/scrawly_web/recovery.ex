@@ -29,7 +29,9 @@ defmodule ScrawlyWeb.Recovery do
   Resets the password with an email + recovery code. On success the session
   is signed in with the token the reset minted (as `:sign_in` / `:login` do).
   The reset revoked every older token, so other browsers signed in to the
-  account are signed out on their next request.
+  account are signed out on their next request, and its sockets are told to
+  reconnect. Attempts are throttled per email and per client IP
+  (`Scrawly.Accounts.Throttle`).
   """
   @spec reset_password(map, Server.t()) :: Server.t()
   def reset_password(params, %Server{} = server) do
@@ -38,11 +40,14 @@ defmodule ScrawlyWeb.Recovery do
         string_param(params, :email),
         string_param(params, :recovery_code),
         string_param(params, :password),
-        string_param(params, :password_confirmation)
+        string_param(params, :password_confirmation),
+        context: %{client_ip: ScrawlyWeb.ClientIp.from_server(server)}
       )
 
     case result do
       {:ok, user} ->
+        ScrawlyWeb.Auth.disconnect_sockets(user.id)
+
         server
         |> ScrawlyWeb.Auth.put_session_user(user, user.__metadata__.token)
         |> Server.put_session(:dark_mode, user.dark_mode)
@@ -95,12 +100,7 @@ defmodule ScrawlyWeb.Recovery do
   def status(%{hashed_recovery_code: hash}) when is_binary(hash), do: :active
   def status(_user), do: :missing
 
-  defp string_param(params, key) do
-    case Map.get(params, key) do
-      value when is_binary(value) -> value
-      _ -> nil
-    end
-  end
+  defp string_param(params, key), do: ScrawlyWeb.CommandParams.string(params, key)
 
   defp reset_error_message(error) do
     errors = errors_of(error)
@@ -112,11 +112,13 @@ defmodule ScrawlyWeb.Recovery do
       Enum.any?(errors, &match?(%Ash.Error.Changes.Required{}, &1)) ->
         "fill in your email, recovery code and new password"
 
-      on_field?(errors, :password_confirmation) ->
-        "the new passwords don't match"
-
+      # A too-short password also fails the confirmation (the argument is
+      # dropped), so length is checked first.
       on_field?(errors, :password) ->
         "use a new password of at least 8 characters"
+
+      on_field?(errors, :password_confirmation) ->
+        "the new passwords don't match"
 
       on_field?(errors, :recovery_code) ->
         RecoveryRejected.text(RecoveryRejected.exception([]))
@@ -132,6 +134,10 @@ defmodule ScrawlyWeb.Recovery do
     errors = errors_of(error)
 
     cond do
+      # Another request changed the code meanwhile (RequireUnchangedRecoveryCode).
+      Enum.any?(errors, &match?(%Ash.Error.Changes.StaleRecord{}, &1)) ->
+        "your code was just changed elsewhere. reload the page to see it."
+
       Enum.any?(errors, &match?(%Ash.Error.Changes.Required{}, &1)) ->
         "enter your current password"
 

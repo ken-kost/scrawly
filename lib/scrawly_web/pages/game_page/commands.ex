@@ -23,7 +23,37 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   alias Scrawly.{Accounts, Games}
   alias Scrawly.Games.{RoomServer, StrokeRules}
   alias Scrawly.Games.RoomServer.{Broadcasts, GameFlow}
-  alias ScrawlyWeb.Auth
+  alias ScrawlyWeb.{Auth, CommandParams, SocketToken}
+
+  @doc """
+  The shape check in front of every room command (GamePage.command/3; the
+  score page's `leave_room` / `dissolve_room` too): params must be a map with
+  a UUID `room_id`, plus a string `word` for `:choose_word` and a string
+  `text` for `:submit_guess`. The other fields stay optional and are
+  validated where they are used (`StrokeRules`, the room process).
+  `:error` means deny (`CommandParams.deny_invalid/2`).
+  """
+  @spec valid_params(atom, term) :: {:ok, map} | :error
+  def valid_params(command, params) do
+    with {:ok, room_id} <- CommandParams.uuid(params, :room_id),
+         :ok <- required_string(command, params) do
+      {:ok, Map.put(params, :room_id, room_id)}
+    end
+  end
+
+  defp required_string(:choose_word, params), do: present(CommandParams.string(params, :word))
+  defp required_string(:submit_guess, params), do: present(CommandParams.string(params, :text))
+  defp required_string(_command, _params), do: :ok
+
+  defp present(nil), do: :error
+  defp present(_string), do: :ok
+
+  @doc """
+  Replies `:socket_token_refreshed` with a fresh socket token for the session
+  (`""` without a valid session), for a page whose game socket was refused.
+  """
+  def refresh_socket_token(server),
+    do: put_action(server, :socket_token_refreshed, token: SocketToken.mint(server) || "")
 
   @doc """
   Replies `:room_resynced` with the session user's snapshot of the room
@@ -397,11 +427,16 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   end
 
   # A full snapshot, built in one room call so its seq, chat and strokes
-  # belong together: the only kind of reply that carries a seq.
+  # belong together: the only kind of reply that carries a seq. It also
+  # carries a fresh socket token (a snapshot is what a reconnecting or newly
+  # joined page acts on).
   defp reply_with_snapshot(server, room_id) do
     case RoomServer.get_view(room_id, Auth.user_id(server)) do
-      {:ok, view} -> put_action(server, :room_resynced, view)
-      {:error, :not_found} -> put_action(server, :room_dissolved)
+      {:ok, view} ->
+        put_action(server, :room_resynced, Map.put(view, :socket_token, SocketToken.mint(server)))
+
+      {:error, :not_found} ->
+        put_action(server, :room_dissolved)
     end
   end
 

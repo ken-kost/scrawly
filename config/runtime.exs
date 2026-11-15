@@ -55,6 +55,15 @@ if config_env() == :prod do
 
   config :scrawly, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
+  # Behind Fly's proxy every request comes from the proxy: per-client limits
+  # (sign-in, recovery, guest accounts) read the real address from the header
+  # the proxy sets. Set CLIENT_IP_HEADER="" when not behind a proxy that
+  # overwrites it (clients can send any header).
+  case System.get_env("CLIENT_IP_HEADER", "fly-client-ip") do
+    "" -> :ok
+    header -> config :scrawly, ScrawlyWeb.ClientIp, header: String.downcase(header)
+  end
+
   config :scrawly, ScrawlyWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [

@@ -64,10 +64,23 @@ defmodule Scrawly.Accounts.User do
 
       argument :password_confirmation, :string, sensitive?: true, allow_nil?: false
 
+      # Guests have no hashed_password, and PasswordValidation crashes on nil
+      # (a FunctionClauseError whose report carried the typed passwords), so
+      # these run first and the password check only on a valid changeset.
+      validate attribute_equals(:is_guest, false) do
+        message "register an account to set a password"
+      end
+
+      validate present(:hashed_password) do
+        message "this account has no password"
+      end
+
       validate confirm(:password, :password_confirmation)
 
       validate {AshAuthentication.Strategy.Password.PasswordValidation,
-                strategy_name: :password, password_argument: :current_password}
+                strategy_name: :password, password_argument: :current_password} do
+        only_when_valid? true
+      end
 
       change {AshAuthentication.Strategy.Password.HashPasswordChange, strategy_name: :password}
 
@@ -151,6 +164,10 @@ defmodule Scrawly.Accounts.User do
 
       change set_attribute(:is_guest, false)
       change {AshAuthentication.Strategy.Password.HashPasswordChange, strategy_name: :password}
+
+      # Revokes the guest's stored tokens (after_action, in the transaction),
+      # before the next change mints the account's new one.
+      change AshAuthentication.AddOn.LogOutEverywhere.OnPasswordChange
 
       change fn changeset, _context ->
         Ash.Changeset.after_action(changeset, fn _changeset, user ->
@@ -241,6 +258,9 @@ defmodule Scrawly.Accounts.User do
         only_when_valid? true
       end
 
+      # Single use under concurrency: of two requests that loaded the same
+      # code, only one stores a new one (the other gets a StaleRecord error).
+      change Scrawly.Accounts.User.Changes.RequireUnchangedRecoveryCode
       change Scrawly.Accounts.User.Changes.GenerateRecoveryCode
 
       metadata :recovery_code, :string do
@@ -252,6 +272,33 @@ defmodule Scrawly.Accounts.User do
       accept [:email, :username]
       primary? true
       validate NotReservedUsername
+    end
+
+    # The password strategy's sign-in action, declared here (instead of
+    # generated) for the throttle. ThrottleSignIn goes after
+    # SignInPreparation: see its moduledoc.
+    read :sign_in_with_password do
+      description "Attempt to sign in using an email and password."
+      get? true
+
+      argument :email, :ci_string do
+        description "The email to use for retrieving the user."
+        allow_nil? false
+      end
+
+      argument :password, :string do
+        description "The password to check for the matching user."
+        allow_nil? false
+        sensitive? true
+      end
+
+      prepare AshAuthentication.Strategy.Password.SignInPreparation
+      prepare Scrawly.Accounts.User.Preparations.ThrottleSignIn
+
+      metadata :token, :string do
+        description "A JWT which the user can use to authenticate to the API."
+        allow_nil? false
+      end
     end
 
     read :get_by_subject do

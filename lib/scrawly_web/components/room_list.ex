@@ -55,4 +55,8 @@ defmodule ScrawlyWeb.Components.RoomList do
     </div>
     """
   end
+
+  # No commands here. A forged one (the module is named in the request) is
+  # denied instead of raising (see ScrawlyWeb.CommandParams).
+  def command(name, _params, server), do: ScrawlyWeb.CommandParams.deny_unknown(server, name)
 end

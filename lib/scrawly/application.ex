@@ -7,6 +7,8 @@ defmodule Scrawly.Application do
 
   @impl true
   def start(_type, _args) do
+    ScrawlyWeb.LogRedactor.install()
+
     children = [
       ScrawlyWeb.Telemetry,
       Scrawly.Repo,
@@ -15,8 +17,8 @@ defmodule Scrawly.Application do
       # Registry and DynamicSupervisor for RoomServer processes
       {Registry, keys: :unique, name: Scrawly.RoomRegistry},
       {DynamicSupervisor, strategy: :one_for_one, name: Scrawly.RoomSupervisor},
-      # Failed recovery-code attempts per email (in memory)
-      Scrawly.Accounts.RecoveryThrottle,
+      # Sign-in, recovery-reset and guest-creation attempts (in memory)
+      Scrawly.Accounts.Throttle,
       # Distinct visitors seen in the last 45 s (the header's "N online")
       ScrawlyWeb.OnlineTracker,
       # Round timer for game flow management

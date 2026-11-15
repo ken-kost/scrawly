@@ -16,6 +16,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   alias Scrawly.Games.{LobbyChatServer, RoomServer}
   alias Scrawly.Games.RoomServer.Broadcasts
+  alias ScrawlyWeb.CommandParams
   alias ScrawlyWeb.Components.RoomList
   alias ScrawlyWeb.Components.GameDemo
   alias ScrawlyWeb.Components.RecoveryCodePanel
@@ -55,8 +56,9 @@ defmodule ScrawlyWeb.Pages.HomePage do
       |> put_state(:is_guest, is_guest)
       |> put_state(:show_login_modal, false)
       |> put_state(:login_email, "")
-      |> put_state(:login_password, "")
       |> put_state(:login_error, "")
+      # Which of the register modal's two submit buttons was pressed.
+      |> put_state(:auth_intent, :register)
       |> put_reset_defaults()
       |> put_state(:recovery_code, nil)
       |> put_state(:recovery_code_saved, false)
@@ -258,7 +260,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
       {%if @show_login_modal}
         <window $key_down.escape="hide_login" />
         <div class="scrim">
-          <form class="app-modal" $submit="submit_register" $key_down.n.stop_propagation="noop">
+          <form class="app-modal" $submit="submit_auth" $key_down.n.stop_propagation="noop">
             <div class="app-modal-head">
               <div>
                 <h3>create an account</h3>
@@ -281,14 +283,13 @@ defmodule ScrawlyWeb.Pages.HomePage do
               <div>
                 <label class="field-label">password</label>
                 <input class="app-input" type="password" name="password" autocomplete="current-password"
-                       placeholder="at least 8 characters"
-                       value={@login_password} $change={:update_login_password} />
+                       placeholder="at least 8 characters" data-secret="1" />
               </div>
             </div>
             <div class="app-modal-foot">
               <button type="button" class="app-btn app-btn-ghost" style="margin-right: auto;" $click={:show_reset}>forgot password?</button>
-              <button type="button" class="app-btn app-btn-ghost" $click={:submit_sign_in}>sign in</button>
-              <button type="submit" class="app-btn app-btn-primary">create account</button>
+              <button type="submit" class="app-btn app-btn-primary" style="order: 1;" $click={:set_auth_intent, intent: :register}>create account</button>
+              <button type="submit" class="app-btn app-btn-ghost" $click={:set_auth_intent, intent: :sign_in}>sign in</button>
             </div>
           </form>
         </div>
@@ -320,20 +321,17 @@ defmodule ScrawlyWeb.Pages.HomePage do
               <div>
                 <label class="field-label">recovery code</label>
                 <input class="app-input mono" type="text" name="recovery_code" autocomplete="off"
-                       spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"
-                       value={@reset_code} $change={:update_reset_code} />
+                       spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" data-secret="1" />
               </div>
               <div>
                 <label class="field-label">new password</label>
                 <input class="app-input" type="password" name="new_password" autocomplete="new-password"
-                       placeholder="at least 8 characters"
-                       value={@reset_password} $change={:update_reset_password} />
+                       placeholder="at least 8 characters" data-secret="1" />
               </div>
               <div>
                 <label class="field-label">confirm new password</label>
                 <input class="app-input" type="password" name="new_password_confirmation" autocomplete="new-password"
-                       placeholder="repeat new password"
-                       value={@reset_password_confirmation} $change={:update_reset_password_confirmation} />
+                       placeholder="repeat new password" data-secret="1" />
               </div>
             </div>
             <div class="app-modal-foot">
@@ -366,14 +364,30 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_state(:login_error, "")
   end
 
+  # Passwords and recovery codes never enter the state (it is rendered into the
+  # HTML and snapshotted for Back/Forward): those inputs are not synchronized,
+  # the $submit actions read them from the event, and every failure, hide and
+  # switch empties them in the DOM (clear_secret_fields/1).
   defp put_reset_defaults(component) do
     component
     |> put_state(:show_reset_modal, false)
     |> put_state(:reset_email, "")
-    |> put_state(:reset_code, "")
-    |> put_state(:reset_password, "")
-    |> put_state(:reset_password_confirmation, "")
     |> put_state(:reset_error, "")
+  end
+
+  # A field of a $submit event (string keys: the browser's form data).
+  defp form_value(params, name) do
+    event = if is_map(params), do: Map.get(params, :event)
+    value = if is_map(event), do: Map.get(event, name)
+    if is_binary(value), do: value, else: ""
+  end
+
+  defp clear_secret_fields(component) do
+    ~JS"""
+    document.querySelectorAll("input[data-secret]").forEach(function (el) { el.value = ""; });
+    """
+
+    component
   end
 
   # ── Keyboard: N for new ────────────────────────────────────────────
@@ -422,34 +436,44 @@ defmodule ScrawlyWeb.Pages.HomePage do
   def action(:show_login, _params, component), do: open_sign_in(component)
 
   def action(:hide_login, _params, component) do
-    put_state(component, :show_login_modal, false)
+    component
+    |> put_state(:show_login_modal, false)
+    |> put_state(:auth_intent, :register)
+    |> clear_secret_fields()
   end
 
   def action(:update_login_email, %{event: %{value: val}}, component) do
     put_state(component, :login_email, val)
   end
 
-  def action(:update_login_password, %{event: %{value: val}}, component) do
-    put_state(component, :login_password, val)
+  # Both buttons of the register modal submit its form (so the password comes
+  # from the submit event); each first records which one it was. A click on a
+  # submit button runs before the form's submit event, and Enter in a field
+  # "clicks" the form's default button, the first submit button in the markup
+  # ("create account", shown last through `order`).
+  def action(:set_auth_intent, %{intent: intent}, component) do
+    put_state(component, :auth_intent, if(intent == :sign_in, do: :sign_in, else: :register))
   end
 
-  def action(:submit_register, _params, component) do
-    put_command(component, :register,
-      email: component.state.login_email,
-      password: component.state.login_password
-    )
-  end
+  def action(:submit_auth, params, component) do
+    command = if component.state.auth_intent == :sign_in, do: :sign_in, else: :register
 
-  def action(:submit_sign_in, _params, component) do
-    put_command(component, :sign_in,
+    component
+    |> put_state(:auth_intent, :register)
+    |> put_command(command,
       email: component.state.login_email,
-      password: component.state.login_password
+      password: form_value(params, "password")
     )
   end
 
   def action(:login_failed, %{message: message}, component) do
-    put_state(component, :login_error, message)
+    component
+    |> put_state(:login_error, message)
+    |> clear_secret_fields()
   end
+
+  # A denied command (ScrawlyWeb.Auth.deny/3) changes nothing here.
+  def action(:command_denied, _params, component), do: component
 
   # ── Forgot password (recovery code) ────────────────────────────────
 
@@ -459,41 +483,34 @@ defmodule ScrawlyWeb.Pages.HomePage do
     |> put_state(:show_login_modal, false)
     |> put_state(:show_reset_modal, true)
     |> put_state(:reset_email, component.state.login_email)
+    |> clear_secret_fields()
   end
 
   def action(:hide_reset, _params, component) do
-    put_reset_defaults(component)
+    component
+    |> put_reset_defaults()
+    |> clear_secret_fields()
   end
 
   def action(:update_reset_email, %{event: %{value: val}}, component) do
     put_state(component, :reset_email, val)
   end
 
-  def action(:update_reset_code, %{event: %{value: val}}, component) do
-    put_state(component, :reset_code, val)
-  end
-
-  def action(:update_reset_password, %{event: %{value: val}}, component) do
-    put_state(component, :reset_password, val)
-  end
-
-  def action(:update_reset_password_confirmation, %{event: %{value: val}}, component) do
-    put_state(component, :reset_password_confirmation, val)
-  end
-
-  def action(:submit_reset, _params, component) do
+  def action(:submit_reset, params, component) do
     component
     |> put_state(:reset_error, "")
     |> put_command(:reset_password,
       email: component.state.reset_email,
-      recovery_code: component.state.reset_code,
-      password: component.state.reset_password,
-      password_confirmation: component.state.reset_password_confirmation
+      recovery_code: form_value(params, "recovery_code"),
+      password: form_value(params, "new_password"),
+      password_confirmation: form_value(params, "new_password_confirmation")
     )
   end
 
   def action(:recovery_reset_failed, %{message: message}, component) do
-    put_state(component, :reset_error, message)
+    component
+    |> put_state(:reset_error, message)
+    |> clear_secret_fields()
   end
 
   # ── Recovery code panel (after register or reset) ──────────────────
@@ -502,9 +519,9 @@ defmodule ScrawlyWeb.Pages.HomePage do
     component
     |> put_reset_defaults()
     |> put_state(:show_login_modal, false)
-    |> put_state(:login_password, "")
     |> put_state(:recovery_code, code)
     |> put_state(:recovery_code_saved, false)
+    |> clear_secret_fields()
   end
 
   def action(:copy_recovery_code, _params, component) do
@@ -792,9 +809,13 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   defp ai_tone(tone), do: Map.get(@ai_tones, tone, tone)
 
+  # Every clause reads its params through ScrawlyWeb.CommandParams (or Map.get
+  # behind an is_map/1 guard) and the last one denies unknown names: a forged
+  # command gets :command_denied, never an exception.
+
   # Non-guest authenticated user creates room — they become creator and auto-join.
   # Guests are rejected here (the UI also hides the button for them).
-  def command(:create_room, params, server) do
+  def command(:create_room, params, server) when is_map(params) do
     with {:ok, %{is_guest: false, id: user_id}} <- ScrawlyWeb.Auth.current_user(server),
          attrs = Map.put(room_attrs(params), :creator_id, user_id),
          {:ok, room} <- Scrawly.Games.create_room(attrs),
@@ -807,24 +828,18 @@ defmodule ScrawlyWeb.Pages.HomePage do
     end
   end
 
-  def command(:register, %{email: email, password: password}, server) do
-    result =
-      case ScrawlyWeb.Auth.current_user(server) do
-        {:ok, %{is_guest: true} = guest} ->
-          Scrawly.Accounts.upgrade_guest(guest, %{email: email, password: password})
-
-        _ ->
-          Scrawly.Accounts.register_with_password(email, password)
-      end
-
-    case result do
-      {:ok, user} ->
-        # The page reloads only after the user has seen the code (:close_recovery_code).
-        server
-        |> ScrawlyWeb.Auth.put_session_user(user, user.__metadata__.token)
-        |> put_action(:show_recovery_code, code: user.__metadata__[:recovery_code])
-
-      {:error, _} ->
+  # Upgrading a guest revokes the guest's tokens (:upgrade_guest), so its
+  # sockets are told to reconnect.
+  def command(:register, params, server) do
+    with {:ok, %{email: email, password: password}} <-
+           CommandParams.strings(params, [:email, :password]),
+         {:ok, user} <- register_or_upgrade(server, email, password) do
+      # The page reloads only after the user has seen the code (:close_recovery_code).
+      server
+      |> ScrawlyWeb.Auth.put_session_user(user, user.__metadata__.token)
+      |> put_action(:show_recovery_code, code: user.__metadata__[:recovery_code])
+    else
+      _error ->
         put_action(server, :login_failed,
           message:
             "could not create account — use a valid email and a password of at least 8 characters"
@@ -832,30 +847,45 @@ defmodule ScrawlyWeb.Pages.HomePage do
     end
   end
 
-  def command(:reset_password, params, server) do
+  def command(:reset_password, params, server) when is_map(params) do
     ScrawlyWeb.Recovery.reset_password(params, server)
   end
 
-  def command(:sign_in, %{email: email, password: password}, server) do
-    case Scrawly.Accounts.sign_in_with_password(email, password) do
-      {:ok, user} ->
-        server
-        |> ScrawlyWeb.Auth.put_session_user(user, user.__metadata__.token)
-        |> put_action(:reload_home)
+  # Throttled per email and per client IP inside the sign-in action
+  # (ScrawlyWeb.Auth.sign_in/3, shared with AppLayout :login).
+  def command(:sign_in, params, server) do
+    case ScrawlyWeb.Auth.sign_in(
+           server,
+           CommandParams.string(params, :email),
+           CommandParams.string(params, :password)
+         ) do
+      {:ok, _user, server} ->
+        put_action(server, :reload_home)
 
-      {:error, _} ->
+      {:error, :throttled} ->
+        put_action(server, :login_failed,
+          message: "too many sign-in attempts — try again in a few minutes"
+        )
+
+      {:error, :invalid} ->
         put_action(server, :login_failed, message: "incorrect email or password")
     end
   end
 
   # Set watch_mode flag in session, then navigate to game page
-  def command(:enter_watch_mode, %{room_id: room_id}, server) do
-    server
-    |> put_session(:watch_mode, "yes")
-    |> put_action(:join_room_with_user, room_id: room_id)
+  def command(:enter_watch_mode, params, server) do
+    case CommandParams.uuid(params, :room_id) do
+      {:ok, room_id} ->
+        server
+        |> put_session(:watch_mode, "yes")
+        |> put_action(:join_room_with_user, room_id: room_id)
+
+      :error ->
+        CommandParams.deny_invalid(server, :enter_watch_mode)
+    end
   end
 
-  def command(:send_lobby_chat, params, server) do
+  def command(:send_lobby_chat, params, server) when is_map(params) do
     ScrawlyWeb.LobbyChat.send_message(params, server)
   end
 
@@ -868,5 +898,21 @@ defmodule ScrawlyWeb.Pages.HomePage do
       rooms: RoomServer.list_lobby_rooms(),
       messages: recent_chat_lines()
     )
+  end
+
+  def command(name, _params, server), do: CommandParams.deny_unknown(server, name)
+
+  defp register_or_upgrade(server, email, password) do
+    case ScrawlyWeb.Auth.current_user(server) do
+      {:ok, %{is_guest: true} = guest} ->
+        with {:ok, user} <-
+               Scrawly.Accounts.upgrade_guest(guest, %{email: email, password: password}) do
+          ScrawlyWeb.Auth.disconnect_sockets(guest.id)
+          {:ok, user}
+        end
+
+      _ ->
+        Scrawly.Accounts.register_with_password(email, password)
+    end
   end
 end

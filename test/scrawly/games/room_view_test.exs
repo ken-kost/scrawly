@@ -156,7 +156,9 @@ defmodule Scrawly.Games.RoomViewTest do
 
       remaining = View.public(post_game).post_game_remaining_ms
       assert remaining > 11_000 and remaining <= 12_000
-      assert View.for_viewer(post_game, @p1).post_game_remaining_ms == remaining
+      # Computed a moment later, so it may be a few ms lower, never higher.
+      viewer_remaining = View.for_viewer(post_game, @p1).post_game_remaining_ms
+      assert viewer_remaining <= remaining and viewer_remaining > remaining - 1_000
 
       overdue = %{post_game | post_game_deadline: now - 500}
       assert View.public(overdue).post_game_remaining_ms == 0

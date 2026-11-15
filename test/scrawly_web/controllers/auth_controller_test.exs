@@ -15,24 +15,34 @@ defmodule ScrawlyWeb.AuthControllerTest do
 
   defp user_count, do: Accounts.User |> Ash.count!(authorize?: false)
 
-  describe "password sign-in (AuthController.success/4)" do
-    test "leaves a session the pages accept", %{conn: conn} do
+  describe "removed ash_authentication routes" do
+    # Nothing in the app used them; they bypassed the sign-in throttle, and a
+    # GET sign-out could be triggered cross-site. Signing in, registering and
+    # signing out are Hologram commands now.
+    test "password register, sign-in, sign-in-with-token and GET /sign-out are gone", %{
+      conn: conn
+    } do
       email = "authctl-#{System.unique_integer([:positive])}@example.com"
       {:ok, user} = Accounts.register_with_password(email, "password123")
+      token = mint_token!(user)
+      creds = %{"user" => %{"email" => email, "password" => "password123"}}
 
-      conn =
-        conn
-        |> init_test_session(%{})
-        |> post(~p"/auth/user/password/sign_in", %{
-          "user" => %{"email" => email, "password" => "password123"}
-        })
+      for {method, path, params} <- [
+            {:post, "/auth/user/password/sign_in", creds},
+            {:post, "/auth/user/password/register", creds},
+            {:get, "/auth/user/password/sign_in_with_token", %{"token" => token}},
+            {:get, "/sign-out", %{}}
+          ] do
+        conn =
+          conn
+          |> init_test_session(%{user_id: user.id, user_token: token})
+          |> dispatch(@endpoint, method, path, params)
 
-      assert redirected_to(conn) == "/"
-      assert get_session(conn, :user_id) == user.id
-      assert token_valid?(user, get_session(conn, :user_token))
+        assert conn.status == 404, "#{method} #{path} answered #{conn.status}"
+      end
 
-      server = LoadCurrentUser.call(%Hologram.Server{session: get_session(conn)}, [])
-      assert server.user_id == user.id
+      # The GET didn't sign anyone out.
+      assert token_valid?(user, token)
     end
   end
 

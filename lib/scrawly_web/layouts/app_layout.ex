@@ -7,6 +7,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
 
   alias Hologram.UI.Runtime
   alias Hologram.UI.Link
+  alias ScrawlyWeb.CommandParams
   alias ScrawlyWeb.Components.{Avatar, AvatarDefs, RecoveryCodePanel}
   alias ScrawlyWeb.OnlineTracker
 
@@ -99,15 +100,18 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
 
   defp accent_or_default(_), do: :purple
 
+  # Passwords and recovery codes never enter the state (it is rendered into the
+  # HTML and snapshotted for Back/Forward): those inputs are not synchronized
+  # (no value binding, no $change), the $submit action reads them from the
+  # event, and every failure, hide and switch empties them in the DOM
+  # (clear_secret_fields/1).
   defp put_auth_defaults(component) do
     component
     |> put_state(:show_login_modal, false)
     |> put_state(:show_register_modal, false)
     |> put_state(:show_accent_picker, false)
     |> put_state(:login_email, "")
-    |> put_state(:login_password, "")
     |> put_state(:register_email, "")
-    |> put_state(:register_password, "")
     |> put_state(:auth_error, nil)
     |> put_reset_defaults()
     |> put_state(:recovery_code, nil)
@@ -119,9 +123,6 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     component
     |> put_state(:show_reset_modal, false)
     |> put_state(:reset_email, "")
-    |> put_state(:reset_code, "")
-    |> put_state(:reset_password, "")
-    |> put_state(:reset_password_confirmation, "")
     |> put_state(:reset_error, nil)
   end
 
@@ -255,7 +256,11 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                     <span>{@username}</span>
                   </span>
                 </Link>
-                <a href="/sign-out" class="header-link" title="Sign out">sign out</a>
+                <button
+                  type="button"
+                  class="header-link"
+                  title="Sign out"
+                  $click={action: :sign_out, target: "layout"}>sign out</button>
               {%else}
                 <button class="app-btn app-btn-ghost app-btn-sm" $click={action: :show_login, target: "layout"}>log in</button>
                 <button class="app-btn app-btn-ink app-btn-sm" $click={action: :show_register, target: "layout"}>register</button>
@@ -300,10 +305,10 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                   <input
                     type="password"
                     name="password"
+                    autocomplete="current-password"
                     placeholder="••••••••"
                     class="app-input"
-                    value={@login_password}
-                    $change={action: :update_login_password, target: "layout"} />
+                    data-secret="1" />
                 </div>
               </div>
               <div class="app-modal-foot" style="flex-direction: column; align-items: stretch;">
@@ -360,8 +365,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                     spellcheck="false"
                     placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"
                     class="app-input mono"
-                    value={@reset_code}
-                    $change={action: :update_reset_code, target: "layout"} />
+                    data-secret="1" />
                 </div>
                 <div>
                   <label class="field-label">new password</label>
@@ -371,8 +375,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                     autocomplete="new-password"
                     placeholder="at least 8 characters"
                     class="app-input"
-                    value={@reset_password}
-                    $change={action: :update_reset_password, target: "layout"} />
+                    data-secret="1" />
                 </div>
                 <div>
                   <label class="field-label">confirm new password</label>
@@ -382,8 +385,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                     autocomplete="new-password"
                     placeholder="repeat new password"
                     class="app-input"
-                    value={@reset_password_confirmation}
-                    $change={action: :update_reset_password_confirmation, target: "layout"} />
+                    data-secret="1" />
                 </div>
               </div>
               <div class="app-modal-foot" style="flex-direction: column; align-items: stretch;">
@@ -438,10 +440,10 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
                   <input
                     type="password"
                     name="password"
+                    autocomplete="new-password"
                     placeholder="••••••••"
                     class="app-input"
-                    value={@register_password}
-                    $change={action: :update_register_password, target: "layout"} />
+                    data-secret="1" />
                 </div>
               </div>
               <div class="app-modal-foot" style="flex-direction: column; align-items: stretch;">
@@ -597,11 +599,10 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     |> put_state(:show_login_modal, false)
     |> put_state(:show_register_modal, false)
     |> put_state(:login_email, "")
-    |> put_state(:login_password, "")
     |> put_state(:register_email, "")
-    |> put_state(:register_password, "")
     |> put_state(:auth_error, nil)
     |> put_reset_defaults()
+    |> clear_secret_fields()
   end
 
   def action(:switch_to_register, _params, component) do
@@ -609,6 +610,7 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     |> put_state(:show_login_modal, false)
     |> put_state(:show_register_modal, true)
     |> put_state(:auth_error, nil)
+    |> clear_secret_fields()
   end
 
   def action(:switch_to_login, _params, component) do
@@ -617,35 +619,29 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     |> put_state(:show_register_modal, false)
     |> put_state(:show_login_modal, true)
     |> put_state(:auth_error, nil)
+    |> clear_secret_fields()
   end
 
   def action(:update_login_email, %{event: %{value: val}}, component) do
     put_state(component, :login_email, val)
   end
 
-  def action(:update_login_password, %{event: %{value: val}}, component) do
-    put_state(component, :login_password, val)
-  end
-
   def action(:update_register_email, %{event: %{value: val}}, component) do
     put_state(component, :register_email, val)
   end
 
-  def action(:update_register_password, %{event: %{value: val}}, component) do
-    put_state(component, :register_password, val)
-  end
-
-  def action(:submit_login, _params, component) do
+  # The password comes from the submit event (see put_auth_defaults/1).
+  def action(:submit_login, params, component) do
     put_command(component, :login, %{
       email: component.state.login_email,
-      password: component.state.login_password
+      password: form_value(params, "password")
     })
   end
 
-  def action(:submit_register, _params, component) do
+  def action(:submit_register, params, component) do
     put_command(component, :register, %{
       email: component.state.register_email,
-      password: component.state.register_password
+      password: form_value(params, "password")
     })
   end
 
@@ -658,16 +654,31 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     |> put_state(:show_login_modal, false)
     |> put_state(:show_register_modal, false)
     |> put_state(:login_email, "")
-    |> put_state(:login_password, "")
     |> put_state(:register_email, "")
-    |> put_state(:register_password, "")
     |> put_state(:auth_error, nil)
     |> put_page(ScrawlyWeb.Pages.HomePage)
   end
 
   def action(:auth_error, %{message: message}, component) do
-    put_state(component, :auth_error, message)
+    component
+    |> put_state(:auth_error, message)
+    |> clear_secret_fields()
   end
+
+  # The header's "sign out" (a command, so no other site can trigger it the
+  # way it could a GET link). Its reply loads the home page afresh.
+  def action(:sign_out, _params, component), do: put_command(component, :sign_out)
+
+  def action(:signed_out, _params, component) do
+    ~JS"""
+    if (window.location.pathname === "/") { window.location.reload(); } else { window.location.assign("/"); }
+    """
+
+    component
+  end
+
+  # A denied layout command (ScrawlyWeb.Auth.deny/3) changes nothing here.
+  def action(:command_denied, _params, component), do: component
 
   # ── Forgot password (recovery code) ────────────────────────────
 
@@ -678,39 +689,29 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     |> put_state(:show_register_modal, false)
     |> put_state(:show_reset_modal, true)
     |> put_state(:reset_email, component.state.login_email)
-    |> put_state(:login_password, "")
     |> put_state(:auth_error, nil)
+    |> clear_secret_fields()
   end
 
   def action(:update_reset_email, %{event: %{value: val}}, component) do
     put_state(component, :reset_email, val)
   end
 
-  def action(:update_reset_code, %{event: %{value: val}}, component) do
-    put_state(component, :reset_code, val)
-  end
-
-  def action(:update_reset_password, %{event: %{value: val}}, component) do
-    put_state(component, :reset_password, val)
-  end
-
-  def action(:update_reset_password_confirmation, %{event: %{value: val}}, component) do
-    put_state(component, :reset_password_confirmation, val)
-  end
-
-  def action(:submit_reset, _params, component) do
+  def action(:submit_reset, params, component) do
     component
     |> put_state(:reset_error, nil)
     |> put_command(:reset_password, %{
       email: component.state.reset_email,
-      recovery_code: component.state.reset_code,
-      password: component.state.reset_password,
-      password_confirmation: component.state.reset_password_confirmation
+      recovery_code: form_value(params, "recovery_code"),
+      password: form_value(params, "new_password"),
+      password_confirmation: form_value(params, "new_password_confirmation")
     })
   end
 
   def action(:recovery_reset_failed, %{message: message}, component) do
-    put_state(component, :reset_error, message)
+    component
+    |> put_state(:reset_error, message)
+    |> clear_secret_fields()
   end
 
   # ── Recovery code panel (after register or reset) ───────────────
@@ -763,6 +764,23 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
     |> put_state(:avatar_color, Map.get(params, :avatar_color) || component.state.avatar_color)
   end
 
+  # A field of a $submit event (string keys: the browser's form data).
+  defp form_value(params, name) do
+    event = if is_map(params), do: Map.get(params, :event)
+    value = if is_map(event), do: Map.get(event, name)
+    if is_binary(value), do: value, else: ""
+  end
+
+  # Empties every password / recovery-code input on the page (`data-secret`):
+  # they are not synchronized, so the state can't do it.
+  defp clear_secret_fields(component) do
+    ~JS"""
+    document.querySelectorAll("input[data-secret]").forEach(function (el) { el.value = ""; });
+    """
+
+    component
+  end
+
   # Pings now and schedules the next ping of chain `gen`, which becomes the
   # current one. `resync: true` asks the command to reply with the count.
   defp ping(component, gen, params \\ []) do
@@ -775,46 +793,63 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
 
   # ── Commands ─────────────────────────────────────────────────────
 
+  # Every clause reads its params through ScrawlyWeb.CommandParams (or a
+  # matching case) and the last one denies unknown names: a forged command
+  # gets :command_denied, never an exception.
   def command(:presence_ping, params, server) do
     OnlineTracker.touch(ScrawlyWeb.Auth.actor_key(server))
 
-    if Map.get(params, :resync) == true,
+    if is_map(params) and Map.get(params, :resync) == true,
       do: put_action(server, :online_count_updated, count: OnlineTracker.count()),
       else: server
   end
 
   # The layout's LoadCurrentUser has checked the session (a revoked cookie
   # can't write to the account); Auth loads the user from the stashed id.
-  def command(:save_theme, %{dark_mode: dark_mode}, server) do
-    server = put_session(server, :dark_mode, dark_mode)
+  def command(:save_theme, params, server) do
+    case params do
+      %{dark_mode: dark_mode} when is_boolean(dark_mode) ->
+        server = put_session(server, :dark_mode, dark_mode)
 
-    case ScrawlyWeb.Auth.current_user(server) do
-      {:ok, user} -> Scrawly.Accounts.update_dark_mode(user, dark_mode)
-      {:error, :unauthenticated} -> :ok
-    end
+        case ScrawlyWeb.Auth.current_user(server) do
+          {:ok, user} -> Scrawly.Accounts.update_dark_mode(user, dark_mode)
+          {:error, :unauthenticated} -> :ok
+        end
 
-    server
-  end
-
-  def command(:save_accent, %{accent: accent}, server) do
-    atom = String.to_existing_atom(accent)
-    server = put_session(server, :accent_color, accent)
-
-    case ScrawlyWeb.Auth.current_user(server) do
-      {:ok, user} -> Scrawly.Accounts.update_accent_color(user, atom)
-      {:error, :unauthenticated} -> :ok
-    end
-
-    server
-  end
-
-  def command(:login, %{email: email, password: password}, server) do
-    strategy = AshAuthentication.Info.strategy!(Scrawly.Accounts.User, :password)
-
-    case AshAuthentication.Strategy.action(strategy, :sign_in, %{email: email, password: password}) do
-      {:ok, user} ->
         server
-        |> ScrawlyWeb.Auth.put_session_user(user, user.__metadata__.token)
+
+      _ ->
+        CommandParams.deny_invalid(server, :save_theme)
+    end
+  end
+
+  def command(:save_accent, params, server) do
+    case Enum.find(@accents, &(Atom.to_string(&1) == CommandParams.string(params, :accent))) do
+      nil ->
+        CommandParams.deny_invalid(server, :save_accent)
+
+      accent ->
+        server = put_session(server, :accent_color, Atom.to_string(accent))
+
+        case ScrawlyWeb.Auth.current_user(server) do
+          {:ok, user} -> Scrawly.Accounts.update_accent_color(user, accent)
+          {:error, :unauthenticated} -> :ok
+        end
+
+        server
+    end
+  end
+
+  # Throttled per email and per client IP inside the sign-in action
+  # (ScrawlyWeb.Auth.sign_in/3, shared with HomePage :sign_in).
+  def command(:login, params, server) do
+    case ScrawlyWeb.Auth.sign_in(
+           server,
+           CommandParams.string(params, :email),
+           CommandParams.string(params, :password)
+         ) do
+      {:ok, user, server} ->
+        server
         |> put_session(:dark_mode, user.dark_mode)
         |> put_session(:accent_color, to_string(user.accent_color || :purple))
         |> put_action(:auth_success,
@@ -823,37 +858,46 @@ defmodule ScrawlyWeb.Layouts.AppLayout do
           avatar_color: user.avatar_color
         )
 
-      {:error, _} ->
+      {:error, :throttled} ->
+        put_action(server, :auth_error,
+          message: "Too many sign-in attempts. Try again in a few minutes."
+        )
+
+      {:error, :invalid} ->
         put_action(server, :auth_error, message: "Incorrect email or password")
     end
   end
 
-  def command(:register, %{email: email, password: password}, server) do
-    strategy = AshAuthentication.Info.strategy!(Scrawly.Accounts.User, :password)
-
-    case AshAuthentication.Strategy.action(strategy, :register, %{
-           email: email,
-           password: password
-         }) do
-      {:ok, user} ->
-        # :auth_success follows once the code has been seen (:close_recovery_code).
-        server
-        |> ScrawlyWeb.Auth.put_session_user(user, user.__metadata__.token)
-        |> put_action(:show_recovery_code,
-          code: user.__metadata__.recovery_code,
-          username: user.username,
-          avatar_id: user.avatar_id,
-          avatar_color: user.avatar_color
-        )
-
-      {:error, _} ->
+  def command(:register, params, server) do
+    with {:ok, %{email: email, password: password}} <-
+           CommandParams.strings(params, [:email, :password]),
+         {:ok, user} <- Scrawly.Accounts.register_with_password(email, password) do
+      # :auth_success follows once the code has been seen (:close_recovery_code).
+      server
+      |> ScrawlyWeb.Auth.put_session_user(user, user.__metadata__.token)
+      |> put_action(:show_recovery_code,
+        code: user.__metadata__.recovery_code,
+        username: user.username,
+        avatar_id: user.avatar_id,
+        avatar_color: user.avatar_color
+      )
+    else
+      _error ->
         put_action(server, :auth_error,
           message: "Registration failed. Email may already be in use."
         )
     end
   end
 
-  def command(:reset_password, params, server) do
+  def command(:reset_password, params, server) when is_map(params) do
     ScrawlyWeb.Recovery.reset_password(params, server)
   end
+
+  def command(:sign_out, _params, server) do
+    server
+    |> ScrawlyWeb.Auth.sign_out()
+    |> put_action(:signed_out)
+  end
+
+  def command(name, _params, server), do: CommandParams.deny_unknown(server, name)
 end

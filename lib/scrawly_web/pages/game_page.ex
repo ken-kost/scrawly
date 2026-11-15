@@ -44,6 +44,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # be retried (there is no command-failure callback).
   @resync_guard_ms 5_000
   @max_chat 50
+  # A refused game socket asks for a fresh socket token at most this often.
+  @token_refresh_ms 30_000
+
+  @room_commands ~w(resync_room join_room join_as_watcher leave_watcher start_game leave_room
+                    submit_guess choose_word complete_stroke clear_drawing_cmd undo_drawing_cmd)a
 
   # Page state is serialized into the HTML, so it is built from the session
   # user's own view of the room: only the drawer's view carries the word and
@@ -152,7 +157,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:round_duration, rs.round_duration || 60)
               |> put_state(:round_multiplier, rs.round_multiplier || 1)
               |> put_state(:ai_tone, rs.ai_tone || :fun)
-              |> put_state(:socket_token, get_session(server, :user_token) || "")
+              # A socket-only token (ScrawlyWeb.SocketToken), never the
+              # session's sign-in token: state is rendered into the HTML and
+              # snapshotted for Back/Forward. Refreshed by every snapshot
+              # reply and after a refused connect (:game_channel_refused).
+              |> put_state(:socket_token, ScrawlyWeb.SocketToken.mint(server) || "")
+              |> put_state(:token_refresh_at, nil)
               |> put_state(:channel_connected, false)
               |> put_state(:channel_connecting, false)
               |> put_state(:past_games, rs.past_games || [])
@@ -454,6 +464,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
         component
         |> put_state(:resync_requested_at, nil)
         |> put_state(:last_seq, max_seq(state.last_seq, seq))
+        |> put_state(:socket_token, snapshot_socket_token(view, state))
         |> put_state(
           :chat_messages,
           merge_chat(view.chat_messages || [], state.chat_messages, seq)
@@ -650,20 +661,56 @@ defmodule ScrawlyWeb.Pages.GamePage do
     |> put_state(:channel_connecting, false)
   end
 
+  # Dispatched by game_channel.mjs when the game channel refuses the join
+  # (also what a socket that reconnected with an expired or revoked socket
+  # token gets: it connects anonymously) or when the server closed the socket
+  # (a "disconnect" broadcast after the user's tokens were revoked).
+  # game_channel.mjs has closed the socket; a member asks once per
+  # @token_refresh_ms for a fresh token and connects again with it. A session
+  # that was signed out gets "" and stays disconnected.
+  def action(:game_channel_refused, _params, component) do
+    now = System.monotonic_time(:millisecond)
+    at = Map.get(component.state, :token_refresh_at)
+
+    component =
+      component
+      |> put_state(:channel_connected, false)
+      |> put_state(:channel_connecting, false)
+
+    cond do
+      component.state.leaving? or not member?(component.state) -> component
+      is_integer(at) and now >= at and now - at < @token_refresh_ms -> component
+      true -> component |> put_state(:token_refresh_at, now) |> put_command(:refresh_socket_token)
+    end
+  end
+
+  def action(:socket_token_refreshed, %{token: token}, component) do
+    component
+    |> put_state(:socket_token, token)
+    |> maybe_connect_member_channel()
+  end
+
   # The head of the drawer's op queue (drawing_manager.mjs), one op at a time.
-  def action(:send_stroke_op, %{kind: kind} = op, component) do
-    base = [room_id: component.props.room_id, op_epoch: op.op_epoch, op_seq: op.op_seq]
+  # An op without its tag (not from drawing_manager.mjs) is ignored.
+  def action(:send_stroke_op, %{kind: kind, op_epoch: op_epoch, op_seq: op_seq} = op, component) do
+    base = [room_id: component.props.room_id, op_epoch: op_epoch, op_seq: op_seq]
 
     case kind do
       "commit" ->
         put_command(
           component,
           :complete_stroke,
-          base ++ [stroke_id: op.stroke_id, path: op.path, color: op.color, width: op.width]
+          base ++
+            [
+              stroke_id: Map.get(op, :stroke_id),
+              path: Map.get(op, :path),
+              color: Map.get(op, :color),
+              width: Map.get(op, :width)
+            ]
         )
 
       "undo" ->
-        put_command(component, :undo_drawing_cmd, base ++ [stroke_id: op.stroke_id])
+        put_command(component, :undo_drawing_cmd, base ++ [stroke_id: Map.get(op, :stroke_id)])
 
       "clear" ->
         put_command(component, :clear_drawing_cmd, base)
@@ -672,6 +719,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
         component
     end
   end
+
+  def action(:send_stroke_op, _params, component), do: component
 
   # Reply to every stroke op the room applied or ignored as a duplicate. It
   # carries no seq: the room's broadcast of the op does.
@@ -735,19 +784,41 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   def action(:shortcut_undo, _params, component), do: component
 
-  def command(:resync_room, params, server), do: Commands.resync_room(params, server)
-  def command(:join_room, params, server), do: Commands.join_room(params, server)
-  def command(:join_as_watcher, params, server), do: Commands.join_as_watcher(params, server)
-  def command(:leave_watcher, params, server), do: Commands.leave_watcher(params, server)
-  def command(:start_game, params, server), do: Commands.start_game(params, server)
-  def command(:leave_room, params, server), do: Commands.leave_room(params, server)
-  def command(:submit_guess, params, server), do: Commands.submit_guess(params, server)
+  # Every room command needs a UUID `room_id` (plus `word` / `text` strings
+  # where noted); Commands.valid_params/2 checks the shape and anything else
+  # is denied (:invalid_params), as is an unknown name, so a forged request
+  # never raises.
+  def command(:refresh_socket_token, _params, server), do: Commands.refresh_socket_token(server)
 
-  def command(:choose_word, params, server), do: Commands.choose_word(params, server)
+  def command(name, params, server) when name in @room_commands do
+    case Commands.valid_params(name, params) do
+      {:ok, params} -> room_command(name, params, server)
+      :error -> ScrawlyWeb.CommandParams.deny_invalid(server, name)
+    end
+  end
 
-  def command(:complete_stroke, params, server), do: Commands.complete_stroke(params, server)
-  def command(:clear_drawing_cmd, params, server), do: Commands.clear_drawing_cmd(params, server)
-  def command(:undo_drawing_cmd, params, server), do: Commands.undo_drawing_cmd(params, server)
+  def command(name, _params, server), do: ScrawlyWeb.CommandParams.deny_unknown(server, name)
+
+  defp room_command(:resync_room, params, server), do: Commands.resync_room(params, server)
+  defp room_command(:join_room, params, server), do: Commands.join_room(params, server)
+
+  defp room_command(:join_as_watcher, params, server),
+    do: Commands.join_as_watcher(params, server)
+
+  defp room_command(:leave_watcher, params, server), do: Commands.leave_watcher(params, server)
+  defp room_command(:start_game, params, server), do: Commands.start_game(params, server)
+  defp room_command(:leave_room, params, server), do: Commands.leave_room(params, server)
+  defp room_command(:submit_guess, params, server), do: Commands.submit_guess(params, server)
+  defp room_command(:choose_word, params, server), do: Commands.choose_word(params, server)
+
+  defp room_command(:complete_stroke, params, server),
+    do: Commands.complete_stroke(params, server)
+
+  defp room_command(:clear_drawing_cmd, params, server),
+    do: Commands.clear_drawing_cmd(params, server)
+
+  defp room_command(:undo_drawing_cmd, params, server),
+    do: Commands.undo_drawing_cmd(params, server)
 
   # ── Sequencing and resync ──────────────────────────────────────────
 
@@ -828,6 +899,15 @@ defmodule ScrawlyWeb.Pages.GamePage do
       request_resync(component)
     else
       put_state(component, :resync_owed_seq, nil)
+    end
+  end
+
+  # Snapshot replies carry a fresh socket token ("" once signed out).
+  defp snapshot_socket_token(view, state) do
+    case Map.fetch(view, :socket_token) do
+      {:ok, token} when is_binary(token) -> token
+      {:ok, _none} -> ""
+      :error -> state.socket_token
     end
   end
 

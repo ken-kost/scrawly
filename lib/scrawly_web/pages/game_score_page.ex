@@ -312,7 +312,7 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
   # the room has left :post_game (normally for :lobby), :recheck_countdown
   # (after @recheck_delay_ms) while it is still in :post_game, and :room_gone
   # when it is ended or not running. Every reply carries the tick's gen.
-  def command(:countdown_finished, params, server) do
+  def command(:countdown_finished, params, server) when is_map(params) do
     gen = Map.get(params, :gen)
 
     case RoomServer.get_state(Map.get(params, :room_id)) do
@@ -334,11 +334,22 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
     end
   end
 
-  def command(:leave_room, params, server),
-    do: Commands.leave_room(params, server, :left_room)
+  # Shape-checked like GamePage's room commands; malformed params and unknown
+  # names are denied, never raised on.
+  def command(name, params, server) when name in [:leave_room, :dissolve_room] do
+    case Commands.valid_params(name, params) do
+      {:ok, params} when name == :leave_room ->
+        Commands.leave_room(params, server, :left_room)
 
-  def command(:dissolve_room, params, server),
-    do: Commands.dissolve_room(params, server, :room_dissolved_confirmed)
+      {:ok, params} ->
+        Commands.dissolve_room(params, server, :room_dissolved_confirmed)
+
+      :error ->
+        ScrawlyWeb.CommandParams.deny_invalid(server, name)
+    end
+  end
+
+  def command(name, _params, server), do: ScrawlyWeb.CommandParams.deny_unknown(server, name)
 
   def template do
     ~HOLO"""
