@@ -8,7 +8,8 @@ defmodule Scrawly.FakeAiModel do
   answer kind, `reply/0` mixes words and phrases with duplicates, entries
   that are too long or too many words, punctuation, digits and things that
   aren't strings. A theme starting with "TEST fail" gets
-  `{:error, :fake_model_down}`.
+  `{:error, :fake_model_down}`; one starting with "TEST raise" raises, like
+  the real model without an API key.
   """
 
   @words ~w(octopus jellyfish starfish seahorse dolphin shark whale crab lobster
@@ -53,6 +54,7 @@ defmodule Scrawly.FakeAiModel do
   ]
 
   def ask(%{arguments: %{prompt: "TEST fail" <> _}}, _context), do: {:error, :fake_model_down}
+  def ask(%{arguments: %{prompt: "TEST raise" <> _}}, _context), do: raise("fake model crashed")
   def ask(_input, _context), do: {:ok, reply()}
 
   @doc "The reply, in the order the model sends it."

@@ -16,27 +16,28 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   route "/"
 
-  alias Scrawly.Games.{AnswerKind, LobbyChatServer, RoomServer}
+  alias Scrawly.Games.{LobbyChatServer, RoomServer}
   alias Scrawly.Games.RoomServer.Broadcasts
-  alias ScrawlyWeb.{CommandParams, RoomSubscriptions}
+  alias ScrawlyWeb.{CommandParams, RoomSettings, RoomSubscriptions}
   alias ScrawlyWeb.Components.RoomList
+  alias ScrawlyWeb.Components.RoomSettingsForm
   alias ScrawlyWeb.Components.GameDemo
   alias ScrawlyWeb.Components.RecoveryCodePanel
 
   # The lobby chat keeps this many lines (newest first in state).
   @chat_lines 100
 
-  # The answer kind the create form starts on.
-  @default_answer_kind Atom.to_string(AnswerKind.default())
+  # A create-room request with no reply after this long gives the form back.
+  @create_room_timeout_ms 20_000
 
   # The room list and the lobby chat are pushed on the `:lobby` Realtime
   # channel (see "Lobby broadcasts" below); init loads the current ones and
   # subscribes.
   def init(_params, component, server) do
-    {authenticated, is_guest} =
+    {authenticated, is_guest, username} =
       case ScrawlyWeb.Auth.current_user(server) do
-        {:ok, user} -> {true, user.is_guest}
-        {:error, :unauthenticated} -> {false, false}
+        {:ok, user} -> {true, user.is_guest, user.username}
+        {:error, :unauthenticated} -> {false, false, nil}
       end
 
     component =
@@ -48,15 +49,15 @@ defmodule ScrawlyWeb.Pages.HomePage do
       |> put_state(:lobby_chat_notice_gen, 0)
       |> put_state(:mount_id, System.unique_integer([:positive]))
       |> put_state(:page_shown?, false)
+      # The create-room form (RoomSettingsForm). Each opening gets a new cid
+      # (`create_room_form` counts them), so it starts from the defaults.
       |> put_state(:show_create_room, false)
-      |> put_state(:new_room_name, "")
-      |> put_state(:new_max_players, "8")
-      |> put_state(:new_answer_kind, @default_answer_kind)
-      |> put_state(:new_word_source, "local")
-      |> put_state(:new_prompt, "")
-      |> put_state(:new_round_duration, "60")
-      |> put_state(:new_round_multiplier, "1")
-      |> put_state(:new_ai_tone, "fun")
+      |> put_state(:create_room_form, 0)
+      |> put_state(:creating_room?, false)
+      # Counts the requests sent, so a late timeout can't end a newer one.
+      |> put_state(:create_room_attempt, 0)
+      |> put_state(:create_room_errors, %{})
+      |> put_state(:default_room_name, RoomSettings.default_name(username))
       |> put_state(:authenticated, authenticated)
       |> put_state(:is_guest, is_guest)
       |> put_state(:show_login_modal, false)
@@ -184,82 +185,11 @@ defmodule ScrawlyWeb.Pages.HomePage do
       </div>
 
       {%if @show_create_room}
-        <window $key_down.escape="hide_create_room" />
         <div class="scrim">
-          <form class="app-modal" $submit="create_room" $key_down.n.stop_propagation="noop">
-            <div class="app-modal-head">
-              <div>
-                <h3>new room</h3>
-                <div class="sub">configure how the round runs.</div>
-              </div>
-              <button type="button" class="icon-btn" $click={:hide_create_room}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="18" height="18"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg>
-              </button>
-            </div>
-            <div class="app-modal-body">
-              <div>
-                <label class="field-label">name</label>
-                <input class="app-input" placeholder="e.g. late night doodles" name="room_name" maxlength="40" value={@new_room_name} $change={:update_room_name} />
-              </div>
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-                <div>
-                  <label class="field-label">max players</label>
-                  <input class="app-input mono" type="number" min="2" max="12" name="max_players" value={@new_max_players} $change={:update_max_players} />
-                </div>
-                <div>
-                  <label class="field-label">answers</label>
-                  <div class="seg">
-                    {%for kind <- ["words", "phrases", "mixed"]}
-                      <button type="button" class={if(@new_answer_kind == kind, do: "active", else: "")} $click={:set_answer_kind, value: kind}>{kind}</button>
-                    {/for}
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label class="field-label">word source</label>
-                <div class="seg">
-                  <button type="button" class={if(@new_word_source == "local", do: "active", else: "")} $click={:set_word_source, value: "local"}>local list</button>
-                  <button type="button" class={if(@new_word_source == "ai", do: "active", else: "")} $click={:set_word_source, value: "ai"}>ai generated</button>
-                </div>
-              </div>
-              {%if @new_word_source == "ai"}
-                <div>
-                  <label class="field-label">theme prompt</label>
-                  <input class="app-input" placeholder="ocean animals, things in a kitchen..." maxlength="200" value={@new_prompt} $change={:update_prompt} />
-                </div>
-                <div>
-                  <label class="field-label">tone</label>
-                  <div class="seg">
-                    {%for t <- ["fun", "creative", "weird"]}
-                      <button type="button" class={if(@new_ai_tone == t, do: "active", else: "")} $click={:set_ai_tone, value: t}>{t}</button>
-                    {/for}
-                  </div>
-                </div>
-              {/if}
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-                <div>
-                  <label class="field-label">rounds / player</label>
-                  <div class="seg">
-                    {%for r <- ["1", "2", "3", "5"]}
-                      <button type="button" class={if(@new_round_multiplier == r, do: "active", else: "")} $click={:set_round_multiplier, value: r}>{r}×</button>
-                    {/for}
-                  </div>
-                </div>
-                <div>
-                  <label class="field-label">duration</label>
-                  <div class="seg">
-                    {%for {dur, lbl} <- [{"60", "60s"}, {"120", "2m"}, {"300", "5m"}]}
-                      <button type="button" class={if(@new_round_duration == dur, do: "active", else: "")} $click={:set_round_duration, value: dur}>{lbl}</button>
-                    {/for}
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="app-modal-foot">
-              <button type="button" class="app-btn app-btn-ghost" $click={:hide_create_room}>cancel</button>
-              <button type="submit" class="app-btn app-btn-primary">create room</button>
-            </div>
-          </form>
+          <RoomSettingsForm cid={"create-room-" <> Integer.to_string(@create_room_form)}
+                            on_submit={:create_room} on_cancel={:hide_create_room}
+                            busy={@creating_room?} errors={@create_room_errors}
+                            name_placeholder={@default_room_name} />
         </div>
       {/if}
 
@@ -360,7 +290,13 @@ defmodule ScrawlyWeb.Pages.HomePage do
       state.recovery_code != nil
   end
 
-  defp open_create_room(component), do: put_state(component, :show_create_room, true)
+  defp open_create_room(component) do
+    component
+    |> put_state(:show_create_room, true)
+    |> put_state(:create_room_form, component.state.create_room_form + 1)
+    |> put_state(:creating_room?, false)
+    |> put_state(:create_room_errors, %{})
+  end
 
   # The page's register / sign-in modal (also what guests get: :register
   # upgrades them).
@@ -422,19 +358,62 @@ defmodule ScrawlyWeb.Pages.HomePage do
   def action(:noop, _params, component), do: component
 
   # ── Create-room modal actions ──────────────────────────────────────
+  # The form (RoomSettingsForm) holds the values; this page sends them and
+  # shows the outcome. The form stays open, "creating…", until the server
+  # answers: :join_room_with_user on success, :create_room_failed (the values
+  # stay in the form) otherwise. A reply that never comes (the command
+  # crashed, the network dropped it) gives the form back after
+  # @create_room_timeout_ms.
 
   def action(:show_create_room, _params, component), do: open_create_room(component)
 
+  # Cancel, the close button, Escape. A request already sent still runs: if
+  # it succeeds, its reply takes the user into the new room.
   def action(:hide_create_room, _params, component) do
     component
     |> put_state(:show_create_room, false)
-    |> put_state(:new_max_players, "8")
-    |> put_state(:new_answer_kind, @default_answer_kind)
-    |> put_state(:new_word_source, "local")
-    |> put_state(:new_prompt, "")
-    |> put_state(:new_round_duration, "60")
-    |> put_state(:new_round_multiplier, "1")
-    |> put_state(:new_ai_tone, "fun")
+    |> put_state(:creating_room?, false)
+    |> put_state(:create_room_errors, %{})
+  end
+
+  def action(:create_room, %{values: values}, component) when is_map(values) do
+    if component.state.creating_room? do
+      component
+    else
+      attempt = component.state.create_room_attempt + 1
+
+      component
+      |> put_state(:creating_room?, true)
+      |> put_state(:create_room_attempt, attempt)
+      |> put_state(:create_room_errors, %{})
+      |> put_command(:create_room, values)
+      |> put_action(
+        name: :create_room_timed_out,
+        params: %{attempt: attempt},
+        delay: @create_room_timeout_ms
+      )
+    end
+  end
+
+  def action(:create_room_failed, params, component) do
+    field = Map.get(params, :field) || :form
+
+    component
+    |> put_state(:creating_room?, false)
+    |> put_state(:create_room_errors, %{field => Map.get(params, :message)})
+  end
+
+  # Only for the request still waiting.
+  def action(:create_room_timed_out, %{attempt: attempt}, component) do
+    state = component.state
+
+    if state.show_create_room and state.creating_room? and attempt == state.create_room_attempt do
+      component
+      |> put_state(:creating_room?, false)
+      |> put_state(:create_room_errors, %{form: "no answer from the server, try again"})
+    else
+      component
+    end
   end
 
   # ── Login / register modal actions ─────────────────────────────────
@@ -565,57 +544,6 @@ defmodule ScrawlyWeb.Pages.HomePage do
     component
   end
 
-  def action(:update_room_name, %{event: %{value: name}}, component) do
-    put_state(component, :new_room_name, name)
-  end
-
-  def action(:update_max_players, %{event: %{value: val}}, component) do
-    put_state(component, :new_max_players, val)
-  end
-
-  def action(:set_answer_kind, %{value: val}, component) do
-    put_state(component, :new_answer_kind, val)
-  end
-
-  def action(:set_word_source, %{value: val}, component) do
-    component
-    |> put_state(:new_word_source, val)
-    |> then(fn c -> if val == "local", do: put_state(c, :new_prompt, ""), else: c end)
-  end
-
-  def action(:update_prompt, %{event: %{value: val}}, component) do
-    put_state(component, :new_prompt, val)
-  end
-
-  def action(:set_round_duration, %{value: val}, component) do
-    put_state(component, :new_round_duration, val)
-  end
-
-  def action(:set_round_multiplier, %{value: val}, component) do
-    put_state(component, :new_round_multiplier, val)
-  end
-
-  def action(:set_ai_tone, %{value: val}, component) do
-    put_state(component, :new_ai_tone, val)
-  end
-
-  def action(:create_room, _params, component) do
-    params = %{
-      name: component.state.new_room_name,
-      max_players: component.state.new_max_players,
-      answer_kind: component.state.new_answer_kind,
-      word_source: component.state.new_word_source,
-      prompt: component.state.new_prompt,
-      round_duration: component.state.new_round_duration,
-      round_multiplier: component.state.new_round_multiplier,
-      ai_tone: component.state.new_ai_tone
-    }
-
-    component
-    |> put_state(:show_create_room, false)
-    |> put_command(:create_room, params)
-  end
-
   def action(:join_room, %{room_id: room_id}, component) do
     put_action(component, :join_room_with_user, room_id: room_id)
   end
@@ -690,9 +618,15 @@ defmodule ScrawlyWeb.Pages.HomePage do
     end
   end
 
+  # Also the create-room reply: the form closes here, so Back to this page
+  # doesn't bring it back "creating…".
   def action(:join_room_with_user, %{room_id: room_id}, component) do
     JS.call(:disconnectDemoBoard, [])
-    put_page(component, ScrawlyWeb.Pages.GamePage, room_id: room_id)
+
+    component
+    |> put_state(:show_create_room, false)
+    |> put_state(:creating_room?, false)
+    |> put_page(ScrawlyWeb.Pages.GamePage, room_id: room_id)
   end
 
   # ── Lobby broadcasts (`:lobby`) ───────────────────────────────────
@@ -810,57 +744,28 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   # ── Commands ─────────────────────────────────────────────────────────
 
-  @ai_tones %{"fun" => :fun, "creative" => :creative, "weird" => :weird}
-
-  # Total over any params map: forged values (`max_players: "abc"`, an unknown
-  # tone) become invalid inputs that the Room's constraints reject, never an
-  # exception. Missing (nil) values are left out, so the Room's defaults apply.
-  # A missing, forged or unknown answer kind is the default one, like a word
-  # source other than "ai" is :local.
-  defp room_attrs(params) do
-    word_source = if Map.get(params, :word_source) == "ai", do: :ai, else: :local
-
-    %{
-      name: Map.get(params, :name),
-      max_players: parse_int(Map.get(params, :max_players)),
-      answer_kind: AnswerKind.parse(Map.get(params, :answer_kind)),
-      word_source: word_source,
-      prompt: if(word_source == :ai, do: Map.get(params, :prompt)),
-      round_duration: parse_int(Map.get(params, :round_duration)),
-      round_multiplier: parse_int(Map.get(params, :round_multiplier)),
-      ai_tone: if(word_source == :ai, do: ai_tone(Map.get(params, :ai_tone)))
-    }
-    |> Map.reject(fn {_key, value} -> is_nil(value) end)
-  end
-
-  # An unparsable value goes through as is, so the attribute's cast rejects it.
-  defp parse_int(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {int, ""} -> int
-      _ -> value
-    end
-  end
-
-  defp parse_int(value), do: value
-
-  defp ai_tone(tone), do: Map.get(@ai_tones, tone, tone)
-
   # Every clause reads its params through ScrawlyWeb.CommandParams (or Map.get
   # behind an is_map/1 guard) and the last one denies unknown names: a forged
   # command gets :command_denied, never an exception.
 
-  # Non-guest authenticated user creates room — they become creator and auto-join.
-  # Guests are rejected here (the UI also hides the button for them).
+  # A registered user creates a room from the form's values
+  # (RoomSettings.to_attrs/2) and joins it: :join_room_with_user takes them
+  # there. Anything else replies :create_room_failed with a `field` (or nil)
+  # and a message for the form. Guests are refused here too (the UI offers
+  # them registration instead).
   def command(:create_room, params, server) when is_map(params) do
-    with {:ok, %{is_guest: false, id: user_id}} <- ScrawlyWeb.Auth.current_user(server),
-         attrs = Map.put(room_attrs(params), :creator_id, user_id),
-         {:ok, room} <- Scrawly.Games.create_room(attrs),
-         {:ok, _user} <- Scrawly.Accounts.join_room(user_id, room.id),
-         {:ok, _room} <- Scrawly.Games.join_room(room.id, user_id),
-         {:ok, _pid} <- Scrawly.Games.RoomServer.ensure_started(room.id) do
-      put_action(server, :join_room_with_user, room_id: room.id)
-    else
-      _ -> server
+    case ScrawlyWeb.Auth.current_user(server) do
+      {:ok, %{is_guest: false} = user} ->
+        create_room(server, user, params)
+
+      {:ok, _guest} ->
+        put_action(server, :create_room_failed,
+          field: nil,
+          message: "register an account to create rooms"
+        )
+
+      {:error, :unauthenticated} ->
+        put_action(server, :create_room_failed, field: nil, message: "sign in to create a room")
     end
   end
 
@@ -925,6 +830,33 @@ defmodule ScrawlyWeb.Pages.HomePage do
   end
 
   def command(name, _params, server), do: CommandParams.deny_unknown(server, name)
+
+  # A room that was created but could not be joined or started is dissolved
+  # again, so it never lingers without its host.
+  defp create_room(server, user, params) do
+    attrs = params |> RoomSettings.to_attrs(user.username) |> Map.put(:creator_id, user.id)
+
+    case Scrawly.Games.create_room(attrs) do
+      {:ok, room} ->
+        with {:ok, _user} <- Scrawly.Accounts.join_room(user.id, room.id),
+             {:ok, _room} <- Scrawly.Games.join_room(room.id, user.id),
+             {:ok, _pid} <- RoomServer.ensure_started(room.id) do
+          put_action(server, :join_room_with_user, room_id: room.id)
+        else
+          _error ->
+            Scrawly.Games.dissolve_room(room.id)
+            create_room_failed(server, :joining, attrs)
+        end
+
+      {:error, error} ->
+        create_room_failed(server, error, attrs)
+    end
+  end
+
+  defp create_room_failed(server, error, attrs) do
+    {field, message} = RoomSettings.failure(error, attrs)
+    put_action(server, :create_room_failed, field: field, message: message)
+  end
 
   defp register_or_upgrade(server, email, password) do
     case ScrawlyWeb.Auth.current_user(server) do

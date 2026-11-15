@@ -237,7 +237,7 @@ defmodule Scrawly.Games.WordChoicesTest do
 
       assert Enum.any?(
                state.chat_messages,
-               &(&1.message == "AI generated 14/30 phrases")
+               &(&1.message == "phrases ready: 14 from your theme")
              )
 
       # Every later turn, as the pool runs low and refills come back.
@@ -327,7 +327,27 @@ defmodule Scrawly.Games.WordChoicesTest do
 
       assert_kind(:phrases, drawer_choices(room))
       assert state!(room).ai_words == []
-      assert Enum.any?(state!(room).chat_messages, &(&1.message =~ "AI failed"))
+
+      assert Enum.any?(
+               state!(room).chat_messages,
+               &(&1.message == "couldn't get themed phrases, using the built-in list")
+             )
+    end
+
+    test "a model call that raises still starts the game, with the built-in list" do
+      {room, creator, _player} =
+        room_with_player(%{answer_kind: :mixed, word_source: :ai, prompt: "TEST raise"})
+
+      server = GamePage.command(:start_game, %{room_id: room.id}, server_for(creator))
+
+      assert server.next_action == nil
+      assert state!(room).status == :playing
+      assert_kind(:mixed, drawer_choices(room))
+
+      assert Enum.any?(
+               state!(room).chat_messages,
+               &(&1.message == "couldn't get themed words, using the built-in list")
+             )
     end
   end
 end

@@ -16,6 +16,7 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
   alias Hologram.Server
   alias Scrawly.Accounts.User
   alias ScrawlyWeb.Layouts.AppLayout
+  alias ScrawlyWeb.Components.RoomSettingsForm
   alias ScrawlyWeb.Pages.{GamePage, HomePage}
 
   # The payload Hologram builds for a keydown (KeyboardEvent.buildOperationParam).
@@ -290,10 +291,13 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
 
   # Every `<form>` that can share the screen with HomePage's `<window>` N
   # binding must stop "n" first, or typing n in it opens a modal. HomePage
-  # renders its own forms and the layout's; no other page binds N.
+  # renders its own forms, the create-room form (RoomSettingsForm, whose
+  # :noop is its own) and the layout's; no other page binds N.
   describe "typing guards" do
     for {module, path, guard} <- [
           {HomePage, "lib/scrawly_web/pages/home_page.ex",
+           ~s($key_down.n.stop_propagation="noop")},
+          {RoomSettingsForm, "lib/scrawly_web/components/room_settings_form.ex",
            ~s($key_down.n.stop_propagation="noop")},
           {AppLayout, "lib/scrawly_web/layouts/app_layout.ex",
            ~s($key_down.n.stop_propagation={action: :noop, target: "layout"})}

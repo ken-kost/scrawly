@@ -19,6 +19,7 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
     :max_players,
     :name,
     :players,
+    :prompt,
     :room_id,
     :round_duration,
     :round_multiplier,
@@ -76,7 +77,7 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
         max_players: 6,
         answer_kind: :phrases,
         word_source: :ai,
-        prompt: "TEST secret prompt",
+        prompt: "TEST ocean animals",
         round_duration: 120,
         round_multiplier: 2,
         players: [
@@ -99,6 +100,8 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
                max_players: 6,
                answer_kind: :phrases,
                word_source: :ai,
+               # The room list shows a themed room's theme.
+               prompt: "TEST ocean animals",
                round_duration: 120,
                round_multiplier: 2,
                players: [
@@ -108,6 +111,10 @@ defmodule Scrawly.Games.RoomServerLobbyTest do
              }
 
       assert struct_free?(summary)
+
+      # A room on the built-in list keeps no theme, even a leftover one.
+      local = RoomServer.lobby_summary(%{state | word_source: :local})
+      assert local.prompt == nil
     end
   end
 

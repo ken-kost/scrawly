@@ -36,6 +36,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   param :room_id, :string
 
   alias ScrawlyWeb.Components.{Avatar, ChatBox, ScoreBoard, DrawingCanvas}
+  alias ScrawlyWeb.RoomSettings
   alias ScrawlyWeb.Pages.GamePage.Commands
   alias Scrawly.Games.RoomServer
 
@@ -55,6 +56,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
   @max_chat 50
   # A refused game socket asks for a fresh socket token at most this often.
   @token_refresh_ms 30_000
+  # A start request with no answer after this long (the AI call's own
+  # timeout is 60 s) gives the start button back.
+  @start_game_timeout_ms 90_000
 
   @room_commands ~w(resync_room join_room join_as_watcher leave_watcher start_game leave_room
                     submit_guess choose_word complete_stroke clear_drawing_cmd undo_drawing_cmd)a
@@ -164,6 +168,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:round_duration, rs.round_duration || 60)
               |> put_state(:round_multiplier, rs.round_multiplier || 1)
               |> put_state(:ai_tone, rs.ai_tone || :fun)
+              # The host pressed start and the start command (which makes the
+              # AI call for a themed room) hasn't been answered yet.
+              |> put_state(:starting_game?, false)
+              |> put_state(:start_game_attempt, 0)
               # A socket-only token (ScrawlyWeb.SocketToken), never the
               # session's sign-in token: state is rendered into the HTML and
               # snapshotted for Back/Forward. Refreshed by every snapshot
@@ -637,7 +645,45 @@ defmodule ScrawlyWeb.Pages.GamePage do
         do: put_state(component, :leaving?, false),
         else: component
 
+    component =
+      if command == :start_game, do: put_state(component, :starting_game?, false), else: component
+
     request_resync(component)
+  end
+
+  # The start button. It reads "preparing words…" until the game starts (a
+  # room view with a game), the start is refused (:command_denied) or no
+  # answer came for @start_game_timeout_ms.
+  def action(:request_start_game, _params, component) do
+    state = component.state
+
+    if state.can_start_game and not state.starting_game? do
+      attempt = state.start_game_attempt + 1
+
+      component
+      |> put_state(:starting_game?, true)
+      |> put_state(:start_game_attempt, attempt)
+      |> put_command(:start_game, room_id: component.props.room_id)
+      |> put_action(
+        name: :start_game_timed_out,
+        params: %{attempt: attempt},
+        delay: @start_game_timeout_ms
+      )
+    else
+      component
+    end
+  end
+
+  def action(:start_game_timed_out, %{attempt: attempt}, component) do
+    state = component.state
+
+    if state.starting_game? and attempt == state.start_game_attempt do
+      component
+      |> put_state(:starting_game?, false)
+      |> request_resync()
+    else
+      component
+    end
   end
 
   def action(:choose_word, %{word: word}, component) do
@@ -1283,6 +1329,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
         :can_start_game,
         state.is_creator and length(players) >= 2 and game_id == nil
       )
+      |> put_state(:starting_game?, Map.get(state, :starting_game?, false) and game_id == nil)
       |> put_state(:game_started, active)
       |> put_state(:game_id, game_id || "")
       |> put_state(:round, round)
@@ -1597,9 +1644,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
           <div class="row" style="margin-top: 24px; gap: 8px;">
             {%if @is_creator}
               <button class="app-btn app-btn-primary app-btn-lg" style="flex: 1;"
-                      disabled={!@can_start_game}
-                      $click={command: :start_game, params: %{room_id: @room_id}}>
-                {%if @can_start_game}start game{%else}need 2+ players{/if}
+                      disabled={!@can_start_game or @starting_game?}
+                      $click="request_start_game">
+                {%if @starting_game?}preparing words…{%else}{%if @can_start_game}start game{%else}need 2+ players{/if}{/if}
               </button>
             {/if}
             {%if @join_notice != nil and @current_user_id != nil and !@watching? and length(@players) < @max_players and !Enum.any?(@players, fn p -> p.id == @current_user_id end)}
@@ -1622,14 +1669,15 @@ defmodule ScrawlyWeb.Pages.GamePage do
           <div class="surface" style="overflow: hidden;">
             <div class="panel-head">settings</div>
             <div class="spec-grid">
-              <div class="spec"><div class="k">word source</div><div class="v">[{if(@word_source == :ai, do: "ai", else: "local")}]</div></div>
-              <div class="spec"><div class="k">answers</div><div class="v">{@answer_kind}</div></div>
-              <div class="spec"><div class="k">duration</div><div class="v">{@round_duration}s</div></div>
-              <div class="spec"><div class="k">rounds / player</div><div class="v">{@round_multiplier}×</div></div>
-              {%if @prompt != "" && @prompt != nil}
+              <div class="spec"><div class="k">answers</div><div class="v">{RoomSettings.answers_label(@answer_kind)}</div></div>
+              <div class="spec"><div class="k">draw time</div><div class="v">{RoomSettings.draw_time_label(@round_duration)}</div></div>
+              <div class="spec"><div class="k">turns each</div><div class="v">{@round_multiplier}</div></div>
+              <div class="spec"><div class="k">topic</div><div class="v">{RoomSettings.topic_label(@word_source)}</div></div>
+              {%if RoomSettings.theme(%{word_source: @word_source, prompt: @prompt})}
                 <div class="spec" style="grid-column: 1 / -1; border-right: 0;">
-                  <div class="k">prompt</div>
-                  <div class="v" style="font-size: 14px; color: var(--ink-2);">{@prompt}</div>
+                  <div class="k">theme</div>
+                  <div class="v" style="font-size: 14px; color: var(--ink-2); overflow-wrap: anywhere;">{@prompt}</div>
+                  <div class="mono" style="font-size: 11px; color: var(--muted); margin-top: 4px;">style: {@ai_tone}</div>
                 </div>
               {/if}
             </div>

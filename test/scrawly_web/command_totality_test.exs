@@ -31,6 +31,7 @@ defmodule ScrawlyWeb.CommandTotalityTest do
     GameDemo,
     RecoveryCodePanel,
     RoomList,
+    RoomSettingsForm,
     ScoreBoard
   }
 
@@ -48,6 +49,7 @@ defmodule ScrawlyWeb.CommandTotalityTest do
     GameDemo,
     RecoveryCodePanel,
     RoomList,
+    RoomSettingsForm,
     ScoreBoard
   ]
 
@@ -95,6 +97,16 @@ defmodule ScrawlyWeb.CommandTotalityTest do
   setup do
     creator = create_user()
     room = start_room(creator)
+
+    # :create_room with no values creates a room (an empty name is the
+    # user's room), so the walk starts rooms too: stop them all (no other
+    # test runs alongside this one).
+    on_exit(fn ->
+      for {_, pid, _, _} <- DynamicSupervisor.which_children(Scrawly.RoomSupervisor),
+          is_pid(pid),
+          do: DynamicSupervisor.terminate_child(Scrawly.RoomSupervisor, pid)
+    end)
+
     {_email, user} = register!()
     guest = Accounts.register_as_guest!()
 

@@ -485,7 +485,9 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
   # Word settings for a new game, from the room state snapshot the caller already
   # authorized against. Makes the AI call for AI rooms; its reply comes back
-  # filtered for the answer kind (Scrawly.Games.AiWords).
+  # filtered for the answer kind (Scrawly.Games.AiWords). The status is the
+  # one chat line players see about it, in plain words (ai_status/2); why a
+  # call failed goes to the log only.
   defp fetch_room_game_settings(rs) do
     kind = AnswerKind.parse(rs.answer_kind)
     p = rs.prompt
@@ -495,15 +497,16 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
 
     {generated, status} =
       if rs.word_source == :ai and p != nil and p != "" do
-        case Games.generate_ai_words(p, kind, %{num_words: ai_num_words, tone: to_string(tone)}) do
-          {:ok, words} when is_list(words) ->
-            {words, "AI generated #{length(words)}/#{ai_num_words} #{ai_noun(kind)}"}
+        case generate_ai_words(p, kind, ai_num_words, tone) do
+          {:ok, [_ | _] = words} ->
+            {words, ai_status(kind, length(words))}
 
-          {:error, reason} ->
-            {[], "AI failed: #{inspect(reason)} — falling back to local words"}
+          other ->
+            Logger.warning(
+              "themed words unavailable for room #{Map.get(rs, :room_id)}: #{failure_tag(other)}"
+            )
 
-          _ ->
-            {[], "AI returned unexpected response — falling back to local words"}
+            {[], ai_status(kind, 0)}
         end
       else
         {[], nil}
@@ -512,7 +515,33 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
     {kind, generated, status}
   end
 
-  defp ai_noun(:words), do: "words"
+  # The model call can raise rather than return an error (a missing API key
+  # raises inside Req): the game then starts with the built-in list instead
+  # of failing the start command.
+  defp generate_ai_words(prompt, kind, count, tone) do
+    Games.generate_ai_words(prompt, kind, %{num_words: count, tone: to_string(tone)})
+  rescue
+    error -> {:raised, error}
+  end
+
+  # What went wrong, for the log: a reason atom or an error module, never the
+  # error itself (Ash wraps the model request, prompt and credentials).
+  defp failure_tag({:error, reason}) when is_atom(reason), do: inspect(reason)
+  defp failure_tag({:error, %{__struct__: module}}), do: inspect(module)
+  defp failure_tag({:raised, %{__struct__: module}}), do: "raised " <> inspect(module)
+  defp failure_tag({:ok, []}), do: "no usable answers"
+  defp failure_tag(_other), do: "unexpected reply"
+
+  @doc """
+  The chat line about a themed room's words, given how many the AI call
+  brought: "words ready: 18 from your theme", or "couldn't get themed words,
+  using the built-in list" when it brought none. "phrases" for a phrases
+  room.
+  """
+  @spec ai_status(AnswerKind.t(), non_neg_integer) :: String.t()
+  def ai_status(kind, 0), do: "couldn't get themed #{ai_noun(kind)}, using the built-in list"
+  def ai_status(kind, count), do: "#{ai_noun(kind)} ready: #{count} from your theme"
+
   defp ai_noun(:phrases), do: "phrases"
-  defp ai_noun(:mixed), do: "words and phrases"
+  defp ai_noun(_kind), do: "words"
 end

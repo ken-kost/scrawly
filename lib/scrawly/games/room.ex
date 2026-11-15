@@ -42,6 +42,12 @@ defmodule Scrawly.Games.Room do
       validate {MaxBytes, attribute: :name, max: 160}
       validate {MaxBytes, attribute: :prompt, max: 800}
 
+      # A room that plays its own theme needs one (blank is nil: Ash trims).
+      validate present(:prompt) do
+        where attribute_equals(:word_source, :ai)
+        message "is required when the room plays its own theme"
+      end
+
       change fn changeset, _context ->
         Ash.Changeset.force_change_attribute(changeset, :code, generate_room_code())
       end

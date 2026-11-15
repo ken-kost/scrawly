@@ -13,32 +13,37 @@ defmodule ScrawlyWeb.Pages.HomePageTest do
       {component, _server} = HomePage.init(%{}, %Hologram.Component{}, server)
 
       assert component.state.show_create_room == false
-      assert component.state.new_room_name == ""
+      assert component.state.creating_room? == false
       assert is_list(component.state.rooms)
     end
   end
 
   describe "action/3" do
     test "show_create_room sets show_create_room to true" do
-      component = %Hologram.Component{state: %{show_create_room: false}}
+      component = %Hologram.Component{state: %{show_create_room: false, create_room_form: 0}}
       result = HomePage.action(:show_create_room, %{}, component)
 
       assert result.state.show_create_room == true
     end
 
-    test "hide_create_room resets modal state" do
-      component = %Hologram.Component{state: %{show_create_room: true, new_room_name: "test"}}
+    test "hide_create_room closes the form and forgets its errors" do
+      component = %Hologram.Component{
+        state: %{show_create_room: true, creating_room?: true, create_room_errors: %{name: "x"}}
+      }
+
       result = HomePage.action(:hide_create_room, %{}, component)
 
       assert result.state.show_create_room == false
-      assert result.state.new_room_name == "test"
+      assert result.state.creating_room? == false
+      assert result.state.create_room_errors == %{}
     end
 
-    test "update_room_name updates the room name" do
-      component = %Hologram.Component{state: %{new_room_name: ""}}
-      result = HomePage.action(:update_room_name, %{event: %{value: "New Room"}}, component)
-
-      assert result.state.new_room_name == "New Room"
+    test "the form's fields live in RoomSettingsForm, not here" do
+      for name <- [:update_room_name, :update_max_players, :set_answer_kind, :set_word_source] do
+        assert_raise FunctionClauseError, fn ->
+          HomePage.action(name, %{value: "x", event: %{value: "x"}}, %Hologram.Component{})
+        end
+      end
     end
   end
 end

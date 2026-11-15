@@ -170,6 +170,8 @@ defmodule Scrawly.Games.RoomServer.View do
       max_players: state.max_players,
       answer_kind: state.answer_kind,
       word_source: state.word_source,
+      # The room list shows a themed room's theme; other rooms keep none.
+      prompt: if(state.word_source == :ai, do: state.prompt),
       round_duration: state.round_duration,
       round_multiplier: state.round_multiplier,
       players:
