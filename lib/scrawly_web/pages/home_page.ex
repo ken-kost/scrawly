@@ -641,7 +641,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # ── Demo board tools (DrawingToolbar) ─────────────────────────────
   # Pointer input is native (stroke_engine.mjs via demo_board.mjs); only the
   # tool lives here, and every change reaches JS (draw_tools.mjs) at once.
-  # The toolbar's shortcuts ([ / ], E) dispatch the same actions
+  # The toolbar's shortcuts ([ / ], B, E) dispatch the same actions
   # (draw_controls.mjs, which ignores them while the user types anywhere).
 
   def action(:clear_canvas, _params, component) do
@@ -666,6 +666,10 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   def action(:toggle_eraser, _params, component),
     do: put_tool(component, DrawingToolbar.toggle_eraser(draw_tool(component.state)))
+
+  # B (draw_controls.mjs).
+  def action(:select_brush, _params, component),
+    do: put_tool(component, DrawingToolbar.select_brush(draw_tool(component.state)))
 
   # ── Lobby & Room Actions ──────────────────────────────────────────
 

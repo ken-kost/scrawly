@@ -8,7 +8,7 @@ defmodule ScrawlyWeb.Components.GameDemo do
 
   The board has the game canvas's coordinates (`viewBox="0 0 800 450"`), so
   a size draws as thick, relative to the canvas, on both. Its tools are the
-  game's DrawingToolbar without undo, with its shortcuts (`[` / `]`, E;
+  game's DrawingToolbar without undo, with its shortcuts (`[` / `]`, B, E;
   draw_controls.mjs ignores them while the user types in the lobby chat,
   the code field or any other field); `tool` is HomePage's `draw_tool`.
 

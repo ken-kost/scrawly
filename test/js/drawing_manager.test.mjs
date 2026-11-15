@@ -77,6 +77,28 @@ test("the eraser of an earlier page instance doesn't leak into the next one", ()
   dm.ackStrokeOp(lastOp().op_seq);
 });
 
+test("a right-button or Ctrl tap erases at the slider's size; the toolbar's brush stays", () => {
+  const svg = mountDrawer(3);
+  tools.setDrawTool({ tool: "brush", color: "#2a6df4", size: 14 });
+
+  for (const press of [{ button: 2, buttons: 2 }, { ctrlKey: true }, { button: 2, ctrlKey: true }]) {
+    tap(svg, 20, 20, 1, press);
+    // What the room (and through it every viewer) gets: an ordinary
+    // eraser stroke, white at the size.
+    assert.equal(lastOp().kind, "commit", JSON.stringify(press));
+    assert.deepEqual([lastOp().color, lastOp().width], [tools.ERASER.color, 14], JSON.stringify(press));
+    dm.ackStrokeOp(lastOp().op_seq);
+  }
+  assert.deepEqual(tools.currentTool(), { tool: "brush", color: "#2a6df4", size: 14 });
+
+  // No Ctrl, or Cmd: the brush.
+  for (const press of [{}, { metaKey: true }]) {
+    tap(svg, 25, 25, 1, press);
+    assert.deepEqual([lastOp().color, lastOp().width], ["#2a6df4", 14], JSON.stringify(press));
+    dm.ackStrokeOp(lastOp().op_seq);
+  }
+});
+
 test("every bundle's copy acts on the same canvas, queue and generation", () => {
   const svg = mountDrawer(3);
   assert.equal(copy.gamePageGeneration(), dm.gamePageGeneration());

@@ -1,7 +1,8 @@
 // The home page's board (lib/scrawly_web/pages/demo_board.mjs) draws with
 // the shared tool model (draw_tools.mjs), like the in-game canvas: the tool
-// HomePage pushes is the one a stroke starts with, eraser included, and the
-// eraser erases at the slider's size.
+// HomePage pushes is the one a stroke starts with, eraser included, the
+// eraser erases at the slider's size, and so does a right-button or Ctrl
+// stroke, without changing the selected tool.
 // Run with `node --test test/js/*.test.mjs` (test/scrawly_web/js_unit_test.exs).
 
 import { test, mock, after } from "node:test";
@@ -101,4 +102,21 @@ test("a stroke on the board starts with the tool the page pushed", () => {
       ["#d63838", "10"],
     ]
   );
+});
+
+test("a right-button or Ctrl stroke on the board erases; the toolbar's brush stays", () => {
+  const svg = renderBoard();
+  tools.setDrawTool({ tool: "brush", color: "#1f9a4a", size: 8 });
+  board.connectDemoBoard();
+
+  tap(svg, 40, 40, 1, { button: 2, buttons: 2 });
+  assert.deepEqual([completed().at(-1).color, completed().at(-1).width], [tools.ERASER.color, 8]);
+  assert.deepEqual([chunks().at(-1).color, chunks().at(-1).width], [tools.ERASER.color, 8]);
+
+  tap(svg, 50, 40, 1, { ctrlKey: true });
+  assert.deepEqual([completed().at(-1).color, completed().at(-1).width], [tools.ERASER.color, 8]);
+
+  tap(svg, 60, 40);
+  assert.deepEqual([completed().at(-1).color, completed().at(-1).width], ["#1f9a4a", 8]);
+  assert.deepEqual(tools.currentTool(), { tool: "brush", color: "#1f9a4a", size: 8 });
 });

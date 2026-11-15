@@ -7,8 +7,9 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   The tool model is `%{tool: :brush | :eraser, color: "#rrggbb", size: 1..40}`
   (`default_tool/0`); the size is one for the brush and the eraser. The page
   showing the canvas keeps it in its state as `draw_tool`, passes it in as
-  `tool`, changes it with `select_color/2`, `select_size/2` and
-  `toggle_eraser/1`, and pushes every change to the canvas:
+  `tool`, changes it with `select_color/2`, `select_size/2`,
+  `select_brush/1` and `toggle_eraser/1`, and pushes every change to the
+  canvas:
   `JS.call(:setDrawTool, [js_tool(tool)])` (draw_tools.mjs, which also
   defines the eraser's stroke: white, at the tool's size).
 
@@ -24,11 +25,17 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
     * `:select_color` (`color`): the brush in that colour;
     * `:select_size` (`size`, or the slider's `event.value`, see
       `size_param/1`): that size, brush or eraser alike;
-    * `:toggle_eraser`, `:undo_drawing`, `:clear_canvas`.
+    * `:toggle_eraser`, `:undo_drawing`, `:clear_canvas`;
+    * `:select_brush` (B, see below).
+
+  A gesture pressed with the right mouse button, or with Ctrl held, erases
+  without selecting the eraser (draw_tools.mjs `gestureTool`): the tool
+  shown here doesn't change for it.
 
   With `shortcuts`, the toolbar names its shortcuts in `data-draw-shortcuts`
-  and the hint shows them: `[` / `]` the size (with `:sizes`), E the eraser
-  (`:eraser`), Ctrl+Z / Cmd+Z undo (`:undo`). draw_controls.mjs handles the
+  and the hint shows them: `[` / `]` the size (with `:sizes`), B the brush
+  and E the eraser, a toggle like its button (both with `:eraser`), Ctrl+Z /
+  Cmd+Z undo (`:undo`). draw_controls.mjs handles the
   keys, all of them behind one typing guard (nothing while focus is in a
   text field, a select or a contenteditable), and dispatches the toolbar's
   own actions to the page; the size keys step the slider.
@@ -52,6 +59,7 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   # {control, name in data-draw-shortcuts, keys, label}.
   @shortcuts [
     {:undo, "undo", ["⌘/Ctrl+Z"], "undo"},
+    {:eraser, "brush", ["B"], "brush"},
     {:eraser, "eraser", ["E"], "eraser"},
     {:sizes, "size", ["[", "]"], "size"}
   ]
@@ -106,6 +114,9 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   end
 
   def size_param(_params), do: nil
+
+  @doc "The brush, in its colour and at the size (B)."
+  def select_brush(tool), do: %{tool | tool: :brush}
 
   @doc "The eraser, or back to the brush (its colour and size kept)."
   def toggle_eraser(%{tool: :eraser} = tool), do: %{tool | tool: :brush}

@@ -183,17 +183,17 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
     test "the game offers every control and names every shortcut; the board has no undo" do
       game = game_toolbar(@brush)
       assert game =~ ">undo</button>"
-      assert attr(toolbar_tag(game), "data-draw-shortcuts") == "undo eraser size"
+      assert attr(toolbar_tag(game), "data-draw-shortcuts") == "undo brush eraser size"
 
       assert game =~
-               ~s(<span class="mono toolbar-hint"><span class="kbd">⌘/Ctrl+Z</span> undo · <span class="kbd">E</span> eraser · <span class="kbd">[</span><span class="kbd">]</span> size</span>)
+               ~s(<span class="mono toolbar-hint"><span class="kbd">⌘/Ctrl+Z</span> undo · <span class="kbd">B</span> brush · <span class="kbd">E</span> eraser · <span class="kbd">[</span><span class="kbd">]</span> size</span>)
 
       board = board(@brush)
       refute board =~ "undo"
-      assert attr(toolbar_tag(board), "data-draw-shortcuts") == "eraser size"
+      assert attr(toolbar_tag(board), "data-draw-shortcuts") == "brush eraser size"
 
       assert board =~
-               ~s(<span class="kbd">E</span> eraser · <span class="kbd">[</span><span class="kbd">]</span> size</span>)
+               ~s(<span class="mono toolbar-hint"><span class="kbd">B</span> brush · <span class="kbd">E</span> eraser · <span class="kbd">[</span><span class="kbd">]</span> size</span>)
     end
 
     test "without shortcuts the toolbar names none and shows no hint" do
@@ -218,11 +218,15 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
       assert attr(toolbar_tag(html), "data-draw-shortcuts") == "undo"
       assert html =~ "⌘/Ctrl+Z"
       refute html =~ ~s(<span class="kbd">E</span>)
+      refute html =~ ~s(<span class="kbd">B</span>)
 
+      # B comes with the eraser: the way back to the brush from the keyboard.
       html = toolbar(%{tool: @brush, controls: [:eraser], shortcuts: true})
-      assert attr(toolbar_tag(html), "data-draw-shortcuts") == "eraser"
+      assert attr(toolbar_tag(html), "data-draw-shortcuts") == "brush eraser"
       refute html =~ "⌘/Ctrl+Z"
-      assert html =~ ~s(<span class="kbd">E</span> eraser</span>)
+
+      assert html =~
+               ~s(<span class="kbd">B</span> brush · <span class="kbd">E</span> eraser</span>)
 
       html = toolbar(%{tool: @brush, controls: [:sizes], shortcuts: true})
       assert attr(toolbar_tag(html), "data-draw-shortcuts") == "size"
@@ -244,12 +248,15 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
   end
 
   describe "the tool model" do
-    test "a colour picks the brush; a size keeps the tool; the eraser toggles" do
+    test "a colour picks the brush; a size keeps the tool; the eraser toggles; B is the brush" do
       assert DrawingToolbar.select_color(@eraser, "#d63838") == %{@brush | color: "#d63838"}
       assert DrawingToolbar.select_size(@eraser, 20) == %{@eraser | size: 20}
       assert DrawingToolbar.select_size(@brush, 20) == %{@brush | size: 20}
       assert DrawingToolbar.toggle_eraser(@brush) == @eraser
       assert DrawingToolbar.toggle_eraser(@eraser) == @brush
+      # Colour and size kept; already the brush, nothing changes.
+      assert DrawingToolbar.select_brush(@eraser) == @brush
+      assert DrawingToolbar.select_brush(@brush) == @brush
     end
 
     test "the size is clamped to 1..40; anything but a whole number changes nothing" do
@@ -325,7 +332,8 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
             select_size: %{size: 5},
             select_size: %{event: %{value: "33"}},
             select_size: %{event: %{value: "99"}},
-            toggle_eraser: %{}
+            toggle_eraser: %{},
+            select_brush: %{}
           ],
           tool <- [@brush, @eraser] do
         game = GamePage.action(name, params, %Component{state: %{draw_tool: tool}})

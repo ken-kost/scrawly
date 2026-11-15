@@ -1,8 +1,8 @@
 // The drawing tool model (lib/scrawly_web/pages/draw_tools.mjs), shared by
 // the in-game canvas and the home page's board: validation, the size model
 // (clamped to 1..40, one size for the brush and the eraser), the stroke a
-// tool draws, change listeners, and one model for every bundle's copy of
-// the module.
+// tool draws, the tool for one gesture (the right button or Ctrl erases),
+// change listeners, and one model for every bundle's copy of the module.
 // Run with `node --test test/js/*.test.mjs` (test/scrawly_web/js_unit_test.exs).
 
 import { test, beforeEach } from "node:test";
@@ -165,4 +165,104 @@ test("listeners hear every change, from any copy, and nothing else", () => {
   stop();
   tools.setDrawTool({ size: 30 });
   assert.equal(heard.length, 3);
+});
+
+// ── The tool for one gesture (quick-erase) ──────────────────────────
+
+// The decision, spelled out: the selected tool, except that a mouse's or a
+// pen's secondary button (right, barrel), or its main button with Ctrl,
+// erases; touch always draws with the selected tool; Cmd is nothing.
+function expectedTool(selected, { pointerType, button, ctrlKey }) {
+  if (pointerType === "touch") return selected.tool;
+  if (button === 2) return "eraser";
+  if (button === 0 && ctrlKey) return "eraser";
+  return selected.tool;
+}
+
+test("gestureTool, for every selected tool, pointer, button, Ctrl and Cmd", () => {
+  const selections = [
+    { tool: "brush", color: "#d63838", size: 7 },
+    { tool: "eraser", color: "#2a6df4", size: 33 },
+  ];
+  // -1: no button changed (what a move reports); 1 middle, 3 back, 4
+  // forward, 5 a pen's eraser button.
+  const buttons = [0, 1, 2, 3, 4, 5, -1, undefined];
+  let cases = 0;
+
+  for (const selected of selections) {
+    for (const pointerType of ["mouse", "pen", "touch"]) {
+      for (const button of buttons) {
+        for (const ctrlKey of [false, true]) {
+          for (const metaKey of [false, true]) {
+            const press = { pointerType, button, ctrlKey, metaKey, altKey: false, shiftKey: false };
+            const label = JSON.stringify({ selected: selected.tool, ...press });
+            const tool = tools.gestureTool(selected, press);
+
+            assert.equal(tool.tool, expectedTool(selected, press), label);
+            // Only the tool can change: colour and size are the selection's.
+            assert.equal(tool.color, selected.color, label);
+            assert.equal(tool.size, selected.size, label);
+
+            const stroke = tools.gestureStroke(selected, press);
+            assert.deepEqual(stroke, { ...tools.strokeStyle(tool), tool: tool.tool }, label);
+            cases += 1;
+          }
+        }
+      }
+    }
+  }
+  assert.equal(cases, 2 * 3 * buttons.length * 2 * 2);
+});
+
+test("the cases that matter, by name", () => {
+  const brush = { tool: "brush", color: "#d63838", size: 12 };
+  const mouse = (button, mods = {}) => ({ pointerType: "mouse", button, ctrlKey: false, metaKey: false, ...mods });
+  const erases = (press) => tools.gestureStroke(brush, press);
+  const white = { color: ERASER.color, width: 12, tool: "eraser" };
+  const red = { color: "#d63838", width: 12, tool: "brush" };
+
+  // Ctrl+drag and right-drag: white at the slider's size.
+  assert.deepEqual(erases(mouse(0, { ctrlKey: true })), white);
+  assert.deepEqual(erases(mouse(2)), white);
+  // macOS Ctrl+click: a right-button press with Ctrl (some browsers) or the
+  // main button with Ctrl (others). Both erase.
+  assert.deepEqual(erases(mouse(2, { ctrlKey: true })), white);
+  // A pen: Ctrl with the tip, or the barrel button.
+  assert.deepEqual(erases({ pointerType: "pen", button: 0, ctrlKey: true }), white);
+  assert.deepEqual(erases({ pointerType: "pen", button: 2 }), white);
+
+  // Cmd is not Ctrl; a plain press draws.
+  assert.deepEqual(erases(mouse(0, { metaKey: true })), red);
+  assert.deepEqual(erases(mouse(0)), red);
+  // Touch has no modifiers here, even with a keyboard's Ctrl held.
+  assert.deepEqual(erases({ pointerType: "touch", button: 0, ctrlKey: true }), red);
+  // Not a press at all: the selected tool.
+  assert.deepEqual(erases(undefined), red);
+  assert.deepEqual(erases(null), red);
+
+  // With the eraser selected, everything erases.
+  assert.equal(tools.gestureTool({ ...brush, tool: "eraser" }, mouse(0)).tool, "eraser");
+});
+
+test("a gesture's eraser never changes the selected tool", () => {
+  tools.setDrawTool({ tool: "brush", color: "#1f9a4a", size: 9 });
+  const heard = [];
+  const stop = tools.onToolChange((tool) => heard.push(tool));
+
+  const press = { pointerType: "mouse", button: 2, ctrlKey: true };
+  assert.equal(tools.gestureStroke(tools.currentTool(), press).color, ERASER.color);
+  assert.equal(tools.gestureTool(tools.currentTool(), press).tool, "eraser");
+
+  assert.deepEqual(tools.currentTool(), { tool: "brush", color: "#1f9a4a", size: 9 });
+  assert.deepEqual(heard, []);
+  stop();
+});
+
+test("an invalid selection falls back like normalizeTool", () => {
+  assert.deepEqual(tools.gestureTool(undefined, { pointerType: "mouse", button: 0 }), { ...DEFAULT_TOOL });
+  assert.deepEqual(tools.gestureTool({ tool: "pen", size: 99 }, { pointerType: "mouse", button: 2 }), {
+    ...DEFAULT_TOOL,
+    tool: "eraser",
+    size: MAX_SIZE,
+  });
 });

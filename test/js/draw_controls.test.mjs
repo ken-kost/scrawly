@@ -83,7 +83,8 @@ beforeEach(() => {
   dispatched.length = 0;
   inputEvents.length = 0;
   tools.resetDrawTool();
-  renderToolbar("undo eraser size");
+  // The game toolbar's names (DrawingToolbar.shortcut_names/1).
+  renderToolbar("undo brush eraser size");
 });
 
 // ── The typing guard ──────────────────────────────────────────────────
@@ -112,7 +113,7 @@ test("the slider, buttons, checkboxes and the page itself are not", () => {
 
 // ── Which key is which shortcut ───────────────────────────────────────
 
-const ALL = ["undo", "eraser", "size"];
+const ALL = ["undo", "brush", "eraser", "size"];
 const ev = (key, mods = {}) => ({ key, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, repeat: false, ...mods });
 
 test("E is the eraser, Shift+E too; with Ctrl, Cmd or Alt, or held, it is nothing", () => {
@@ -123,6 +124,18 @@ test("E is the eraser, Shift+E too; with Ctrl, Cmd or Alt, or held, it is nothin
   for (const mod of ["ctrlKey", "metaKey", "altKey", "repeat"]) {
     assert.equal(matchShortcut(ev("e", { [mod]: true }), ALL), null, mod);
   }
+});
+
+test("B is the brush, Shift+B too; with Ctrl, Cmd or Alt, or held, it is nothing", () => {
+  const brush = { control: "brush", action: "select_brush" };
+  assert.deepEqual(matchShortcut(ev("b"), ALL), brush);
+  assert.deepEqual(matchShortcut(ev("B", { shiftKey: true }), ALL), brush);
+
+  for (const mod of ["ctrlKey", "metaKey", "altKey", "repeat"]) {
+    assert.equal(matchShortcut(ev("b", { [mod]: true }), ALL), null, mod);
+  }
+  // Live only with its control (the toolbar names it with the eraser).
+  assert.equal(matchShortcut(ev("b"), ["undo", "eraser", "size"]), null);
 });
 
 test("Ctrl+Z and Cmd+Z undo (both at once: once); with Shift or held, nothing", () => {
@@ -167,13 +180,24 @@ test("a shortcut is live only with its control; composing text is never one", ()
 
 test("a shortcut dispatches the page's toolbar action and keeps the key from the browser", () => {
   const e = keydown("e");
+  const b = keydown("b");
   const z = keydown("z", { ctrlKey: true });
   assert.deepEqual(actions(), [
     ["toggle_eraser", "page"],
+    ["select_brush", "page"],
     ["undo_drawing", "page"],
   ]);
   assert.equal(e.defaultPrevented, true);
+  assert.equal(b.defaultPrevented, true);
   assert.equal(z.defaultPrevented, true);
+});
+
+test("Ctrl, held for a Ctrl+drag, is no shortcut", () => {
+  const ctrl = keydown("Control", { ctrlKey: true });
+  const held = keydown("Control", { ctrlKey: true, repeat: true });
+  assert.equal(ctrl.defaultPrevented, false);
+  assert.equal(held.defaultPrevented, false);
+  assert.deepEqual(actions(), []);
 });
 
 test("while focus is in a field, no shortcut fires and the key keeps its meaning", () => {
@@ -188,6 +212,8 @@ test("while focus is in a field, no shortcut fires and the key keeps its meaning
   for (const field of fields) {
     const events = [
       keydown("e", {}, field),
+      keydown("b", {}, field),
+      keydown("B", { shiftKey: true }, field),
       keydown("z", { ctrlKey: true }, field),
       keydown("z", { metaKey: true }, field),
       keydown("[", {}, field),
@@ -195,7 +221,7 @@ test("while focus is in a field, no shortcut fires and the key keeps its meaning
     ];
     assert.deepEqual(
       events.map((e) => e.defaultPrevented),
-      [false, false, false, false, false],
+      [false, false, false, false, false, false, false],
       field.tagName
     );
   }
@@ -271,7 +297,7 @@ test("no toolbar with shortcuts, or not this one's: nothing happens", () => {
   assert.equal(e.defaultPrevented, false);
 
   // The home board: no undo control.
-  renderToolbar("eraser size");
+  renderToolbar("brush eraser size");
   const z = keydown("z", { ctrlKey: true });
   assert.equal(z.defaultPrevented, false);
 

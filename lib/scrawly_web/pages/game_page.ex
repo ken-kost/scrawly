@@ -1106,6 +1106,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # actions for its shortcuts, behind its typing guard.
   def action(:toggle_eraser, _params, component), do: toggle_eraser(component)
 
+  # B (draw_controls.mjs).
+  def action(:select_brush, _params, component),
+    do: put_tool(component, DrawingToolbar.select_brush(draw_tool(component.state)))
+
   def action(:undo_drawing, _params, component), do: undo_last_stroke(component)
 
   # ── Score strip (phones) ───────────────────────────────────────────

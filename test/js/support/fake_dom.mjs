@@ -126,11 +126,12 @@ export function renderOtherPage(root) {
 }
 
 // One pointer press + release on the svg (a tap), through the engine's router.
-export function tap(svg, x = 10, y = 10, pointerId = 1) {
+// `press` overrides the pointerdown's fields (e.g. {button: 2}, {ctrlKey: true}).
+export function tap(svg, x = 10, y = 10, pointerId = 1, press = {}) {
   const target = svg.children[0];
   globalThis.__fire("pointerdown", {
     target, pointerId, isPrimary: true, pointerType: "mouse", button: 0,
-    clientX: x, clientY: y, preventDefault() {},
+    clientX: x, clientY: y, preventDefault() {}, ...press,
   });
   globalThis.__fire("pointerup", { pointerId });
 }

@@ -1,7 +1,8 @@
 // The size ring over a canvas (lib/scrawly_web/pages/size_ring.mjs): its
 // geometry (the stroke's real width at the canvas's scale), when it shows
 // (mouse and pen over an enabled canvas) and hides, and that it is written
-// at most once per animation frame, natively, following the tool.
+// at most once per animation frame, natively, following the tool; the
+// eraser's look while Ctrl is held and while a stroke that erases is drawn.
 // Run with `node --test test/js/*.test.mjs` (test/scrawly_web/js_unit_test.exs).
 
 import { test, beforeEach } from "node:test";
@@ -69,16 +70,23 @@ const elsewhere = { closest: () => null };
 const elements = { "game-canvas-svg": svg, "game-canvas-ring": ring };
 globalThis.document = { getElementById: (id) => elements[id] || null };
 
-// The canvas's stroke engine (stroke_engine.mjs registers it by svg id).
+// The canvas's stroke engine (stroke_engine.mjs registers it by svg id), and
+// the stroke it is drawing (its gestureStyle), if any.
 let enabled = true;
-globalThis.__scrawlyStrokeEngines = new Map([["game-canvas-svg", { isEnabled: () => enabled }]]);
+let drawing = null;
+globalThis.__scrawlyStrokeEngines = new Map([
+  ["game-canvas-svg", { isEnabled: () => enabled, gestureStyle: () => (drawing ? { ...drawing } : null) }],
+]);
 
 const sizeRing = await import("../../lib/scrawly_web/pages/size_ring.mjs");
 const tools = await import("../../lib/scrawly_web/pages/draw_tools.mjs");
-const { ringGeometry, ringShownFor, ringOffset, insideRect, ERASER_DASH, DOT_BELOW } = sizeRing;
+const { ringGeometry, ringShownFor, ringOffset, insideRect, ringLook, ERASER_DASH, DOT_BELOW } = sizeRing;
 
-const move = (x, y, { type = "mouse", target = path } = {}) =>
-  fire("pointermove", { clientX: x, clientY: y, pointerType: type, target });
+const move = (x, y, { type = "mouse", target = path, ctrlKey = false } = {}) =>
+  fire("pointermove", { clientX: x, clientY: y, pointerType: type, target, ctrlKey });
+const ctrlDown = () => fire("keydown", { key: "Control", ctrlKey: true });
+const ctrlUp = () => fire("keyup", { key: "Control", ctrlKey: false });
+const dashed = () => outer.attrs["stroke-dasharray"] === ERASER_DASH;
 const shown = () => ring.style.visibility === "visible";
 const at = () => ring.style.transform;
 
@@ -87,6 +95,7 @@ sizeRing.ensureSizeRing("game-canvas-svg", "game-canvas-ring");
 beforeEach(() => {
   scale = 1.1;
   enabled = true;
+  drawing = null;
   tools.resetDrawTool();
   tools.setDrawTool({ tool: "brush", size: 10 });
   move(500, 300);
@@ -292,4 +301,112 @@ test("an unchanged frame writes nothing", () => {
   } finally {
     ring.style = style;
   }
+});
+
+// ── Ctrl, and a stroke that erases (quick-erase) ─────────────────────
+
+test("ringLook: the stroke in progress, else what a press would draw with Ctrl as held", () => {
+  const brush = { tool: "brush", color: "#d63838", size: 10 };
+  assert.deepEqual(ringLook(brush, null, "mouse", false), { size: 10, eraser: false });
+  assert.deepEqual(ringLook(brush, null, "mouse", true), { size: 10, eraser: true });
+  assert.deepEqual(ringLook(brush, null, "pen", true), { size: 10, eraser: true });
+  assert.deepEqual(ringLook({ ...brush, tool: "eraser" }, null, "mouse", false), { size: 10, eraser: true });
+  // A stroke being drawn: its own width and tool, whatever Ctrl and the
+  // selection say now.
+  const erasing = { color: "#ffffff", width: 20, tool: "eraser" };
+  assert.deepEqual(ringLook(brush, erasing, "mouse", false), { size: 20, eraser: true });
+  assert.deepEqual(ringLook(brush, { color: "#d63838", width: 4, tool: "brush" }, "mouse", true), {
+    size: 4,
+    eraser: false,
+  });
+});
+
+test("with Ctrl held over the canvas the ring is the eraser's, and back when Ctrl comes up", () => {
+  assert.equal(dashed(), false);
+  ctrlDown();
+  flushFrame();
+  assert.equal(dashed(), true);
+  assert.equal(inner.attrs["stroke-dasharray"], ERASER_DASH);
+  // The same footprint: Ctrl erases at the slider's size.
+  assert.equal(ring.style.width, "13px");
+  // The toolbar's tool is still the brush.
+  assert.equal(tools.currentTool().tool, "brush");
+
+  // Held (auto-repeat): nothing new to draw.
+  const before = frameRequests;
+  fire("keydown", { key: "Control", ctrlKey: true, repeat: true });
+  assert.equal(frameRequests, before);
+
+  ctrlUp();
+  flushFrame();
+  assert.equal(dashed(), false);
+});
+
+test("a move with Ctrl held shows it too (Ctrl pressed before the page had focus)", () => {
+  move(510, 300, { ctrlKey: true });
+  flushFrame();
+  assert.equal(dashed(), true);
+  move(520, 300);
+  flushFrame();
+  assert.equal(dashed(), false);
+});
+
+test("the window losing focus puts it back: a Ctrl held while switching tabs never comes up here", () => {
+  ctrlDown();
+  flushFrame();
+  assert.equal(dashed(), true);
+
+  // An element's blur is not the window's.
+  fire("blur", { target: { tagName: "INPUT" } });
+  flushFrame();
+  assert.equal(dashed(), true);
+
+  fire("blur", { target: window });
+  flushFrame();
+  assert.equal(dashed(), false);
+});
+
+test("Ctrl with the pointer off the canvas draws nothing", () => {
+  move(500, 700, { target: elsewhere });
+  flushFrame();
+  const before = frameRequests;
+  ctrlDown();
+  ctrlUp();
+  assert.equal(frameRequests, before);
+  assert.equal(shown(), false);
+});
+
+test("while a stroke is drawn the ring is the stroke's: an eraser stroke stays dashed after Ctrl comes up", () => {
+  // A Ctrl press started an eraser stroke at 20 (the size has changed since).
+  ctrlDown();
+  drawing = { color: "#ffffff", width: 20, tool: "eraser" };
+  move(500, 300);
+  ctrlUp();
+  flushFrame();
+  assert.equal(dashed(), true);
+  // 20 units at 1.1 px: 22 px across.
+  assert.equal(ring.style.width, "24px");
+
+  // Released: the selected brush again, without a move.
+  drawing = null;
+  fire("pointerup", { pointerId: 1 });
+  flushFrame();
+  assert.equal(dashed(), false);
+  assert.equal(ring.style.width, "13px");
+
+  // A right-button stroke, with no Ctrl at all.
+  drawing = { color: "#ffffff", width: 10, tool: "eraser" };
+  move(505, 300);
+  flushFrame();
+  assert.equal(dashed(), true);
+  drawing = null;
+  fire("pointercancel", { pointerId: 1 });
+  flushFrame();
+  assert.equal(dashed(), false);
+});
+
+test("Ctrl never shows a ring for touch", () => {
+  move(500, 300, { type: "touch", ctrlKey: true });
+  flushFrame();
+  assert.equal(shown(), false);
 });

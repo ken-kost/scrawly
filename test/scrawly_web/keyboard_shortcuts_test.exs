@@ -144,7 +144,7 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
   end
 
   describe "drawing shortcuts" do
-    # E, Ctrl+Z / Cmd+Z and [ / ] are handled by draw_controls.mjs: one
+    # B, E, Ctrl+Z / Cmd+Z and [ / ] are handled by draw_controls.mjs: one
     # native keydown listener behind one typing guard, which dispatches the
     # toolbar's own actions (the size keys step the slider). The keys, their
     # modifiers and the guard are tested in test/js/draw_controls.test.mjs;
@@ -174,6 +174,21 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
 
       assert off.state.draw_tool == %{tool: :brush, color: "#d63838", size: 5}
       assert calls == [{:setDrawTool, [%{tool: "brush", color: "#d63838", size: 5}]}]
+    end
+
+    test "B's action (:select_brush) picks the brush, colour and size kept, and pushes it" do
+      erasing = drawer(%{draw_tool: %{tool: :eraser, color: "#d63838", size: 5}})
+
+      for page <- [GamePage, HomePage] do
+        {brush, calls} = js_calls(fn -> page.action(:select_brush, %{}, erasing) end)
+
+        assert brush.state.draw_tool == %{tool: :brush, color: "#d63838", size: 5}
+        assert calls == [{:setDrawTool, [%{tool: "brush", color: "#d63838", size: 5}]}]
+
+        # Already the brush: it stays the brush.
+        {again, _calls} = js_calls(fn -> page.action(:select_brush, %{}, brush) end)
+        assert again.state.draw_tool == brush.state.draw_tool
+      end
     end
 
     test "Ctrl+Z's action (:undo_drawing) undoes the last stroke" do
