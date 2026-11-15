@@ -6,11 +6,13 @@ defmodule Scrawly.Games.WordListTest do
 
   use ExUnit.Case, async: true
 
-  alias Scrawly.Games.WordList
+  alias Scrawly.Games.{Guess, WordList}
 
   @path "priv/words/words.csv"
 
   defp texts, do: Enum.map(WordList.entries(), & &1.text)
+
+  defp single_words, do: Enum.filter(WordList.entries(), &(WordList.word_count(&1.text) == 1))
 
   describe "priv/words/words.csv" do
     test "is the header and one line per entry, every field kept as written" do
@@ -22,10 +24,12 @@ defmodule Scrawly.Games.WordListTest do
                Enum.map(WordList.entries(), &Enum.join([&1.text, &1.difficulty, &1.theme], ","))
     end
 
-    test "has no two entries that differ only in case, spaces or hyphens" do
+    # A guess scores when its `Guess.key/1` equals the word's, so two entries
+    # with one key ("pop corn" and "popcorn") would be the same answer.
+    test "has no two entries with the same guess key" do
       clashes =
         texts()
-        |> Enum.group_by(&(&1 |> String.downcase() |> String.replace([" ", "-"], "")))
+        |> Enum.group_by(&Guess.key/1)
         |> Enum.filter(fn {_key, texts} -> length(texts) > 1 end)
         |> Enum.map(fn {_key, texts} -> texts end)
 
@@ -55,6 +59,44 @@ defmodule Scrawly.Games.WordListTest do
         assert entry.difficulty in WordList.difficulties(), inspect(entry)
         assert entry.theme in [nil | WordList.themes()], inspect(entry)
       end
+    end
+
+    test "every single-word entry has a theme" do
+      assert Enum.filter(single_words(), &is_nil(&1.theme)) == []
+    end
+
+    # priv/words/README.md: a longer single word earns its place only if it
+    # is common. List such a word here.
+    @common_long_words []
+
+    test "single words have at most 12 letters" do
+      long =
+        for %{text: text} <- single_words(),
+            text not in @common_long_words,
+            String.length(String.replace(text, ~r/[^a-z]/, "")) > 12,
+            do: text
+
+      assert long == []
+    end
+
+    # The word-list review of 2026-11-15 (priv/words/README.md has the rules).
+    @basics ~w(frog shark heart robot sword zebra ghost octopus elephant dolphin dragon clock)
+    @obscure ~w(nib sac sap jab lad tab tow vat use rod oat rye koi den ivy urn keg)
+    @look_alikes ~w(aspen birch cedar spruce willow maple elm quartz slate marble granite
+                    copper silver bronze crystal sapphire ruby emerald amber obsidian amethyst
+                    tourmaline turquoise daisy poppy tulip orchid violet jasmine lotus
+                    chrysanthemum bougainvillea wisteria)
+    @spelling_tests ~w(archipelago kaleidoscope amphitheater aqueduct colosseum constellation
+                       eucalyptus gyroscope hemisphere labyrinth metronome peninsula periscope
+                       silhouette)
+
+    test "has the basics" do
+      assert @basics -- Enum.map(single_words(), & &1.text) == []
+    end
+
+    test "has none of the obscure, look-alike or spelling-test words" do
+      removed = @obscure ++ @look_alikes ++ @spelling_tests
+      assert Enum.filter(single_words(), &(&1.text in removed)) == []
     end
 
     test "every group (single word or several, by difficulty) has at least 30 entries" do
