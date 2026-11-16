@@ -30,9 +30,11 @@ defmodule ScrawlyWeb.Pages.GamePagePhoneLayoutTest do
 
   @root Path.expand("../../..", __DIR__)
   @css_path Path.join(@root, "assets/css/app.css")
+  # color_picker.mjs builds the colour panel's controls (PICK_HTML).
   @markup_sources Enum.map(
                     ~w(pages/game_page.ex components/chat_box.ex components/score_board.ex
-                       components/drawing_canvas.ex components/avatar.ex layouts/app_layout.ex),
+                       components/drawing_canvas.ex components/drawing_toolbar.ex
+                       components/avatar.ex layouts/app_layout.ex pages/color_picker.mjs),
                     &Path.join([@root, "lib/scrawly_web", &1])
                   )
 
@@ -249,10 +251,32 @@ defmodule ScrawlyWeb.Pages.GamePagePhoneLayoutTest do
       assert declarations(phone_block(), ".chat-panel .chat-input input") =~ "font-size: 16px"
     end
 
-    test "the drawer's tools wrap, the colours on a row of their own" do
+    test "the drawer's tools: the colour chip alone, opening one sheet with every colour" do
       block = phone_block()
-      assert declarations(block, ".toolbar .swatches") =~ "flex: 1 1 100%"
       assert declarations(block, ".tool-btn") =~ "height: 32px"
+      assert declarations(block, ".color-chip") =~ "width: 32px"
+      assert declarations(block, ".color-control:not(.open) .color-sheet") =~ "display: none"
+
+      sheet = declarations(block, ".color-control.open .color-sheet")
+      assert sheet =~ "position: fixed"
+      assert sheet =~ "bottom: 0"
+      assert sheet =~ "overflow-y: auto"
+
+      # The presets in the sheet's full width; the panel is part of it.
+      assert declarations(block, ".toolbar .swatches") =~ "repeat(12, minmax(0, 1fr))"
+      assert declarations(block, ".color-panel") =~ "position: static"
+      # A tap beside the sheet lands on the backdrop, never on the canvas.
+      assert declarations(block, ".color-backdrop") =~ "position: fixed"
+      # iOS zooms into inputs under 16 px.
+      assert declarations(block, ".color-hex") =~ "font-size: 16px"
+    end
+
+    test "the size slider takes the rest of its row, with a finger-high (32 px) target" do
+      block = phone_block()
+      assert declarations(block, ".size-control") =~ "flex: 1 1 0"
+      slider = declarations(block, ".size-slider")
+      assert slider =~ "flex: 1 1 0"
+      assert slider =~ "height: 32px"
     end
 
     test "overlays fit a 360 px screen" do

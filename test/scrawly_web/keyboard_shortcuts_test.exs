@@ -1,7 +1,8 @@
 defmodule ScrawlyWeb.KeyboardShortcutsTest do
   @moduledoc """
   The keyboard shortcuts and dismissal actions behind the templates'
-  `<window $key_down...>` / `$click_outside` bindings (keyboard-and-dismissal).
+  `<window $key_down...>` / `$click_outside` bindings (keyboard-and-dismissal),
+  and the actions the drawing shortcuts dispatch (draw_controls.mjs).
 
   Key filters match a superset of modifiers and fire on auto-repeat, so the
   actions receive every Ctrl/Cmd/Alt variant and every repeat and must ignore
@@ -142,14 +143,18 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
     end
   end
 
-  describe "GamePage drawer shortcuts" do
+  describe "drawing shortcuts" do
+    # B, E, I, Ctrl+Z / Cmd+Z and [ / ] are handled by draw_controls.mjs: one
+    # native keydown listener behind one typing guard, which dispatches the
+    # toolbar's own actions (the size keys step the slider). The keys, their
+    # modifiers and the guard are tested in test/js/draw_controls.test.mjs;
+    # these are the pages' side.
+
     defp drawer(overrides \\ %{}) do
       state =
         Map.merge(
           %{
-            draw_color: "#d63838",
-            draw_width: 5,
-            draw_eraser: false,
+            draw_tool: %{tool: :brush, color: "#d63838", size: 5},
             is_drawer: true,
             new_message: "hello"
           },
@@ -159,99 +164,91 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
       %Component{props: %{room_id: "test-room"}, state: state}
     end
 
-    test "E toggles the eraser like the toolbar button" do
-      {on, calls} =
-        js_calls(fn -> GamePage.action(:shortcut_eraser, %{event: key("e")}, drawer()) end)
+    test "E's action (:toggle_eraser) toggles the eraser and pushes it" do
+      {on, calls} = js_calls(fn -> GamePage.action(:toggle_eraser, %{}, drawer()) end)
 
-      assert on.state.draw_eraser == true
-      assert calls == [{:setToolColor, ["#FFFFFF"]}, {:setToolWidth, [20]}]
+      assert on.state.draw_tool == %{tool: :eraser, color: "#d63838", size: 5}
+      assert calls == [{:setDrawTool, [%{tool: "eraser", color: "#d63838", size: 5}]}]
 
-      {off, calls} = js_calls(fn -> GamePage.action(:shortcut_eraser, %{event: key("e")}, on) end)
+      {off, calls} = js_calls(fn -> GamePage.action(:toggle_eraser, %{}, on) end)
 
-      assert off.state.draw_eraser == false
-      assert calls == [{:setToolColor, ["#d63838"]}, {:setToolWidth, [5]}]
-
-      {toolbar, toolbar_calls} =
-        js_calls(fn -> GamePage.action(:toggle_eraser, %{}, drawer()) end)
-
-      assert toolbar.state == on.state
-      assert toolbar_calls == [{:setToolColor, ["#FFFFFF"]}, {:setToolWidth, [20]}]
+      assert off.state.draw_tool == %{tool: :brush, color: "#d63838", size: 5}
+      assert calls == [{:setDrawTool, [%{tool: "brush", color: "#d63838", size: 5}]}]
     end
 
-    test "Shift+E toggles too" do
-      result = GamePage.action(:shortcut_eraser, %{event: key("E", %{shift_key: true})}, drawer())
-      assert result.state.draw_eraser == true
+    test "B's action (:select_brush) picks the brush, colour and size kept, and pushes it" do
+      erasing = drawer(%{draw_tool: %{tool: :eraser, color: "#d63838", size: 5}})
+
+      for page <- [GamePage, HomePage] do
+        {brush, calls} = js_calls(fn -> page.action(:select_brush, %{}, erasing) end)
+
+        assert brush.state.draw_tool == %{tool: :brush, color: "#d63838", size: 5}
+        assert calls == [{:setDrawTool, [%{tool: "brush", color: "#d63838", size: 5}]}]
+
+        # Already the brush: it stays the brush.
+        {again, _calls} = js_calls(fn -> page.action(:select_brush, %{}, brush) end)
+        assert again.state.draw_tool == brush.state.draw_tool
+      end
     end
 
-    test "a held E (auto-repeat) toggles nothing after the first press" do
+    test "I's action (:toggle_picker) toggles the colour picker and pushes it, on both pages" do
+      for page <- [GamePage, HomePage] do
+        {on, calls} = js_calls(fn -> page.action(:toggle_picker, %{}, drawer()) end)
+
+        assert on.state.draw_tool == %{tool: :picker, color: "#d63838", size: 5}
+        assert calls == [{:setDrawTool, [%{tool: "picker", color: "#d63838", size: 5}]}]
+
+        {off, calls} = js_calls(fn -> page.action(:toggle_picker, %{}, on) end)
+
+        assert off.state.draw_tool == %{tool: :brush, color: "#d63838", size: 5}
+        assert calls == [{:setDrawTool, [%{tool: "brush", color: "#d63838", size: 5}]}]
+      end
+    end
+
+    test "Ctrl+Z's action (:undo_drawing) undoes the last gesture, on both pages" do
       component = drawer()
-
-      {result, calls} =
-        js_calls(fn ->
-          GamePage.action(:shortcut_eraser, %{event: key("e", %{repeat: true})}, component)
-        end)
+      {result, calls} = js_calls(fn -> GamePage.action(:undo_drawing, %{}, component) end)
 
       assert result == component
-      assert calls == []
-    end
-
-    test "Ctrl+E, Cmd+E and Alt+E do nothing" do
-      component = drawer()
-
-      for mod <- [:ctrl_key, :meta_key, :alt_key] do
-        {result, calls} =
-          js_calls(fn ->
-            GamePage.action(:shortcut_eraser, %{event: key("e", %{mod => true})}, component)
-          end)
-
-        assert result == component
-        assert calls == []
-      end
-    end
-
-    test "Ctrl+Z and Cmd+Z undo once, like the toolbar button" do
-      component = drawer()
-
-      for {via, mod} <- [ctrl: :ctrl_key, meta: :meta_key] do
-        params = %{via: via, event: key("z", %{mod => true})}
-        {result, calls} = js_calls(fn -> GamePage.action(:shortcut_undo, params, component) end)
-
-        assert result == component
-        assert calls == [{:undoStroke, []}]
-      end
-
-      {_result, calls} = js_calls(fn -> GamePage.action(:undo_drawing, %{}, component) end)
       assert calls == [{:undoStroke, []}]
+
+      # Home: the visitor's own newest gesture on the board (demo_board.mjs).
+      {result, calls} = js_calls(fn -> HomePage.action(:undo_drawing, %{}, component) end)
+      assert result == component
+      assert calls == [{:undoBoard, []}]
     end
 
-    test "Ctrl+Cmd+Z fires both bindings with one event, and undoes once" do
-      component = drawer()
-      event = key("z", %{ctrl_key: true, meta_key: true})
-
-      {_result, calls} =
-        js_calls(fn ->
-          component
-          |> then(&GamePage.action(:shortcut_undo, %{via: :ctrl, event: event}, &1))
-          |> then(&GamePage.action(:shortcut_undo, %{via: :meta, event: event}, &1))
-        end)
-
-      assert calls == [{:undoStroke, []}]
+    test "the undo button follows what drawing_manager.mjs says there is to undo" do
+      on = GamePage.action(:undo_available, %{available: true}, drawer(%{can_undo: false}))
+      assert on.state.can_undo == true
+      assert GamePage.action(:undo_available, %{available: false}, on).state.can_undo == false
+      assert GamePage.action(:undo_available, %{available: 1}, on).state.can_undo == false
     end
 
-    test "Ctrl/Cmd+Shift+Z (redo) and a held Ctrl/Cmd+Z do nothing" do
-      component = drawer()
+    test "a size key's step reaches the page as the slider's :select_size, eraser kept" do
+      component = drawer(%{draw_tool: %{tool: :eraser, color: "#d63838", size: 5}})
 
-      for {via, mod} <- [ctrl: :ctrl_key, meta: :meta_key],
-          extra <- [%{shift_key: true}, %{repeat: true}] do
-        event = key("z", Map.put(extra, mod, true))
+      {result, calls} =
+        js_calls(fn -> GamePage.action(:select_size, %{event: %{value: "10"}}, component) end)
 
-        {result, calls} =
-          js_calls(fn ->
-            GamePage.action(:shortcut_undo, %{via: via, event: event}, component)
-          end)
+      assert result.state.draw_tool == %{tool: :eraser, color: "#d63838", size: 10}
+      assert calls == [{:setDrawTool, [%{tool: "eraser", color: "#d63838", size: 10}]}]
+    end
 
-        assert result == component
-        assert calls == [], "#{via} #{inspect(extra)} called #{inspect(calls)}"
+    test "no drawing shortcut is a <window> key binding: they all take the guarded path" do
+      root = Path.expand("../..", __DIR__)
+      toolbar = File.read!(Path.join(root, "lib/scrawly_web/components/drawing_toolbar.ex"))
+      # The one key binding there closes the colour panel (Escape is no
+      # drawing shortcut; draw_controls.mjs ignores it).
+      assert [~s($key_down.escape="close_color_panel")] ==
+               Regex.scan(~r/\$key_down[^ >]*/, toolbar) |> List.flatten()
+
+      assert toolbar =~ ~s|data-draw-shortcuts={if @shortcuts do shortcut_names(@controls) end}|
+
+      for file <- ["game_page.ex", "home_page.ex"] do
+        source = File.read!(Path.join(root, "lib/scrawly_web/pages/" <> file))
+        refute source =~ "shortcut_eraser", file
+        refute source =~ "shortcut_undo", file
       end
     end
 

@@ -484,13 +484,12 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
     end
 
     test ":clear_canvas empties the canvas and leaves the command to the op queue" do
-      component = %Hologram.Component{
-        props: %{room_id: "r1"},
-        state: %{drawing_strokes: [@stroke]}
-      }
+      component = %Hologram.Component{props: %{room_id: "r1"}, state: %{}}
 
-      cleared = GamePage.action(:clear_canvas, %{}, component)
-      assert cleared.state.drawing_strokes == []
+      {cleared, calls} =
+        js_calls(fn -> GamePage.action(:clear_canvas, %{}, component) end)
+
+      assert calls == [clearDrawing: []]
       assert cleared.next_command == nil
     end
 
@@ -530,7 +529,8 @@ defmodule ScrawlyWeb.Pages.GamePageDrawingTest do
           )
         end)
 
-      assert result.state.drawing_strokes == [@stroke]
+      # drawing_manager.mjs replaces the canvas (the page keeps no strokes).
+      assert result.state == component.state
       assert calls == [applyRejectedStrokes: [2, [@stroke]]]
     end
 

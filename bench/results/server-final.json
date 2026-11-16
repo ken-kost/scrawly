@@ -1,0 +1,516 @@
+{
+  "memory": {
+    "demo": {
+      "0": {
+        "process_bytes": 2760,
+        "heap_bytes": 1864,
+        "state_term_bytes": 80,
+        "binary_bytes": 0,
+        "binary_count": 0,
+        "total_bytes": 2760
+      },
+      "100": {
+        "process_bytes": 34376,
+        "heap_bytes": 33480,
+        "state_term_bytes": 32880,
+        "binary_bytes": 114535,
+        "binary_count": 100,
+        "total_bytes": 148911
+      },
+      "300": {
+        "process_bytes": 88560,
+        "heap_bytes": 87664,
+        "state_term_bytes": 98480,
+        "binary_bytes": 362383,
+        "binary_count": 300,
+        "total_bytes": 450943
+      },
+      "500": {
+        "process_bytes": 142744,
+        "heap_bytes": 141848,
+        "state_term_bytes": 118160,
+        "binary_bytes": 445728,
+        "binary_count": 360,
+        "total_bytes": 588472
+      }
+    },
+    "room": {
+      "0": {
+        "process_bytes": 8952,
+        "heap_bytes": 7896,
+        "state_term_bytes": 3272,
+        "binary_bytes": 0,
+        "binary_count": 0,
+        "total_bytes": 8952
+      },
+      "100": {
+        "process_bytes": 55232,
+        "heap_bytes": 54176,
+        "state_term_bytes": 26728,
+        "binary_bytes": 114087,
+        "binary_count": 100,
+        "total_bytes": 169319
+      },
+      "300": {
+        "process_bytes": 88720,
+        "heap_bytes": 87664,
+        "state_term_bytes": 72968,
+        "binary_bytes": 346723,
+        "binary_count": 300,
+        "total_bytes": 435443
+      },
+      "500": {
+        "process_bytes": 230576,
+        "heap_bytes": 229520,
+        "state_term_bytes": 119688,
+        "binary_bytes": 620488,
+        "binary_count": 500,
+        "total_bytes": 851064
+      }
+    },
+    "demo_500_without_ownership": {
+      "process_bytes": 230416,
+      "heap_bytes": 229520,
+      "state_term_bytes": 83600,
+      "binary_bytes": 445728,
+      "binary_count": 360,
+      "total_bytes": 676144
+    },
+    "room_500_fills": {
+      "process_bytes": 230576,
+      "heap_bytes": 229520,
+      "state_term_bytes": 120088,
+      "binary_bytes": 734330,
+      "binary_count": 497,
+      "total_bytes": 964906
+    },
+    "demo_500_fills": {
+      "process_bytes": 230416,
+      "heap_bytes": 229520,
+      "state_term_bytes": 164888,
+      "binary_bytes": 731551,
+      "binary_count": 499,
+      "total_bytes": 961967
+    }
+  },
+  "meta": {
+    "date": "2026-11-16T05:22:22Z",
+    "otp": "28",
+    "schedulers": 16,
+    "elixir": "1.19.7",
+    "iterations": 400,
+    "probe_stroke_bytes": 1758,
+    "fixture_path_bytes": 620488,
+    "duration_s": 38
+  },
+  "join": {
+    "room_view_500_fills": {
+      "fills": 50,
+      "path_bytes": 734473,
+      "external_bytes": 768437,
+      "strokes_json_bytes": 764712,
+      "strokes_hologram_state_bytes": 832622
+    },
+    "demo_snapshot_500_fills": {
+      "bytes": 466806,
+      "strokes_kept": 300
+    },
+    "room_view_500": {
+      "build": {
+        "n": 400,
+        "median_us": 53.21,
+        "p95_us": 69.2,
+        "min_us": 50.659,
+        "max_us": 129.851
+      },
+      "external_bytes": 653852,
+      "strokes_json_bytes": 650155,
+      "strokes_hologram_state_bytes": 716665,
+      "strokes_hologram_state_encode": {
+        "n": 100,
+        "median_us": 4958.045,
+        "p95_us": 5929.159,
+        "min_us": 3935.952,
+        "max_us": 6190.556
+      }
+    },
+    "demo_snapshot_500": {
+      "build": {
+        "n": 100,
+        "median_us": 1346.522,
+        "p95_us": 1744.047,
+        "min_us": 1030.265,
+        "max_us": 1874.213
+      },
+      "bytes": 469748,
+      "strokes_kept": 360
+    },
+    "demo_snapshot_500_x_7999": {
+      "build": {
+        "n": 20,
+        "median_us": 929.642,
+        "p95_us": 1062.855,
+        "min_us": 897.041,
+        "max_us": 1123.368
+      },
+      "bytes": 451463,
+      "strokes_kept": 56
+    },
+    "room_view_at_byte_cap": {
+      "build": {
+        "n": 50,
+        "median_us": 37.65,
+        "p95_us": 63.974,
+        "min_us": 15.534,
+        "max_us": 84.164
+      },
+      "strokes": 250,
+      "external_bytes": 2016116,
+      "strokes_hologram_state_bytes": 2046653
+    },
+    "sse_stroke_completed": {
+      "long": {
+        "encode": {
+          "n": 200,
+          "median_us": 38.299,
+          "p95_us": 45.989,
+          "min_us": 36.333,
+          "max_us": 59.585
+        },
+        "path_bytes": 6867,
+        "event_bytes": 7271
+      },
+      "medium": {
+        "encode": {
+          "n": 200,
+          "median_us": 15.803,
+          "p95_us": 38.754,
+          "min_us": 14.689,
+          "max_us": 143.535
+        },
+        "path_bytes": 1758,
+        "event_bytes": 2162
+      }
+    }
+  },
+  "commit": {
+    "0": {
+      "demo": {
+        "n": 400,
+        "median_us": 4.051,
+        "p95_us": 5.153,
+        "min_us": 3.97,
+        "max_us": 19.499
+      },
+      "room": {
+        "n": 400,
+        "median_us": 10.901,
+        "p95_us": 14.889,
+        "min_us": 10.29,
+        "max_us": 85.754
+      },
+      "demo_strokes_held": 0,
+      "room_check_append": {
+        "n": 400,
+        "median_us": 5.511,
+        "p95_us": 6.202,
+        "min_us": 4.922,
+        "max_us": 54.111
+      },
+      "room_check_with_totals": {
+        "n": 400,
+        "median_us": 5.481,
+        "p95_us": 6.242,
+        "min_us": 4.905,
+        "max_us": 116.469
+      },
+      "room_list_append": {
+        "n": 400,
+        "median_us": 0.027,
+        "p95_us": 0.032,
+        "min_us": 0.024,
+        "max_us": 0.515
+      }
+    },
+    "100": {
+      "demo": {
+        "n": 400,
+        "median_us": 5.848,
+        "p95_us": 12.186,
+        "min_us": 5.629,
+        "max_us": 130.678
+      },
+      "room": {
+        "n": 400,
+        "median_us": 12.934,
+        "p95_us": 25.38,
+        "min_us": 11.64,
+        "max_us": 49.987
+      },
+      "demo_strokes_held": 100,
+      "room_check_append": {
+        "n": 400,
+        "median_us": 6.827,
+        "p95_us": 7.817,
+        "min_us": 6.119,
+        "max_us": 282.633
+      },
+      "room_check_with_totals": {
+        "n": 400,
+        "median_us": 5.364,
+        "p95_us": 6.12,
+        "min_us": 4.813,
+        "max_us": 154.592
+      },
+      "room_list_append": {
+        "n": 400,
+        "median_us": 0.163,
+        "p95_us": 0.855,
+        "min_us": 0.153,
+        "max_us": 119.514
+      }
+    },
+    "300": {
+      "demo": {
+        "n": 400,
+        "median_us": 9.506,
+        "p95_us": 12.18,
+        "min_us": 8.753,
+        "max_us": 109.268
+      },
+      "room": {
+        "n": 400,
+        "median_us": 18.173,
+        "p95_us": 25.636,
+        "min_us": 15.867,
+        "max_us": 68.666
+      },
+      "demo_strokes_held": 300,
+      "room_check_append": {
+        "n": 400,
+        "median_us": 8.87,
+        "p95_us": 9.375,
+        "min_us": 8.383,
+        "max_us": 74.544
+      },
+      "room_check_with_totals": {
+        "n": 400,
+        "median_us": 5.255,
+        "p95_us": 5.915,
+        "min_us": 4.699,
+        "max_us": 303.616
+      },
+      "room_list_append": {
+        "n": 400,
+        "median_us": 0.552,
+        "p95_us": 0.568,
+        "min_us": 0.53,
+        "max_us": 5.761
+      }
+    },
+    "499": {
+      "demo": {
+        "n": 400,
+        "median_us": 11.234,
+        "p95_us": 14.866,
+        "min_us": 10.458,
+        "max_us": 46.414
+      },
+      "room": {
+        "n": 400,
+        "median_us": 24.891,
+        "p95_us": 36.984,
+        "min_us": 22.425,
+        "max_us": 95.6
+      },
+      "demo_strokes_held": 360,
+      "room_check_append": {
+        "n": 400,
+        "median_us": 10.165,
+        "p95_us": 12.482,
+        "min_us": 9.355,
+        "max_us": 153.451
+      },
+      "room_check_with_totals": {
+        "n": 400,
+        "median_us": 5.449,
+        "p95_us": 5.981,
+        "min_us": 4.795,
+        "max_us": 40.579
+      },
+      "room_list_append": {
+        "n": 400,
+        "median_us": 0.612,
+        "p95_us": 1.177,
+        "min_us": 0.586,
+        "max_us": 7.348
+      }
+    },
+    "demo_barrier_round_trip": {
+      "n": 400,
+      "median_us": 1.103,
+      "p95_us": 1.155,
+      "min_us": 1.072,
+      "max_us": 91.48
+    }
+  },
+  "at_500": {
+    "demo_clear": {
+      "n": 400,
+      "median_us": 3.168,
+      "p95_us": 7.321,
+      "min_us": 2.833,
+      "max_us": 36.33
+    },
+    "room_undo": {
+      "n": 400,
+      "median_us": 15.771,
+      "p95_us": 26.727,
+      "min_us": 14.692,
+      "max_us": 67.045
+    },
+    "room_clear": {
+      "n": 400,
+      "median_us": 5.322,
+      "p95_us": 11.632,
+      "min_us": 4.855,
+      "max_us": 30.14
+    }
+  },
+  "fanout": {
+    "send_ms": 6000,
+    "snapshot_wire": {
+      "bytes": 469748,
+      "wire_bytes": 469748,
+      "ms": 27.724
+    },
+    "deflate_offered": false,
+    "chunk_interval_ms": 50,
+    "delta_bytes_avg": 145,
+    "runs": {
+      "10": {
+        "wire_bytes": 319560,
+        "delivered_ratio": 1.0,
+        "scheduler_utilization_pct": 0.14,
+        "longest_message_queue": 1,
+        "longest_message_queue_owner": "{ScrawlyWeb.DemoBoardChannel, :join, 3}",
+        "delivery_latency_ms": {
+          "max": 2.095,
+          "median": 1.364,
+          "p95": 1.675
+        },
+        "payload_bytes": 319560,
+        "subscribers": 10,
+        "chunks_sent": 118,
+        "chunks_delivered": 1180,
+        "server_memory_per_subscriber_bytes": -1056,
+        "scheduler_utilization_idle_pct": 0.12,
+        "server_us_per_delivered_chunk": 18.09,
+        "longest_message_queue_idle": 0,
+        "board_undo": {
+          "call": {
+            "n": 40,
+            "median_us": 197.077,
+            "p95_us": 352.78,
+            "min_us": 109.129,
+            "max_us": 433.387
+          },
+          "interval_ms": 50,
+          "undos": 40,
+          "pushes_delivered": 400,
+          "delivered_ratio": 1.0,
+          "scheduler_utilization_pct": 0.14,
+          "longest_message_queue": 0,
+          "longest_message_queue_owner": null,
+          "delivery_latency_ms": {
+            "max": 1.198,
+            "median": 0.924,
+            "p95": 1.138
+          }
+        }
+      },
+      "50": {
+        "wire_bytes": 1597800,
+        "delivered_ratio": 1.0,
+        "scheduler_utilization_pct": 0.22,
+        "longest_message_queue": 0,
+        "longest_message_queue_owner": null,
+        "delivery_latency_ms": {
+          "max": 2.551,
+          "median": 1.617,
+          "p95": 2.034
+        },
+        "payload_bytes": 1597800,
+        "subscribers": 50,
+        "chunks_sent": 118,
+        "chunks_delivered": 5900,
+        "server_memory_per_subscriber_bytes": 19938,
+        "scheduler_utilization_idle_pct": 0.11,
+        "server_us_per_delivered_chunk": 16.55,
+        "longest_message_queue_idle": 1,
+        "board_undo": {
+          "call": {
+            "n": 40,
+            "median_us": 365.42,
+            "p95_us": 499.095,
+            "min_us": 206.54,
+            "max_us": 534.368
+          },
+          "interval_ms": 50,
+          "undos": 40,
+          "pushes_delivered": 2000,
+          "delivered_ratio": 1.0,
+          "scheduler_utilization_pct": 0.26,
+          "longest_message_queue": 0,
+          "longest_message_queue_owner": null,
+          "delivery_latency_ms": {
+            "max": 2.472,
+            "median": 1.079,
+            "p95": 1.606
+          }
+        }
+      },
+      "200": {
+        "wire_bytes": 6391200,
+        "delivered_ratio": 1.0,
+        "scheduler_utilization_pct": 0.66,
+        "longest_message_queue": 1,
+        "longest_message_queue_owner": "{ScrawlyWeb.DemoBoardChannel, :join, 3}",
+        "delivery_latency_ms": {
+          "max": 4.529,
+          "median": 2.305,
+          "p95": 3.209
+        },
+        "payload_bytes": 6391200,
+        "subscribers": 200,
+        "chunks_sent": 118,
+        "chunks_delivered": 23600,
+        "server_memory_per_subscriber_bytes": 34784,
+        "scheduler_utilization_idle_pct": 0.12,
+        "server_us_per_delivered_chunk": 22.01,
+        "longest_message_queue_idle": 0,
+        "board_undo": {
+          "call": {
+            "n": 40,
+            "median_us": 703.04,
+            "p95_us": 1206.271,
+            "min_us": 413.5,
+            "max_us": 1959.612
+          },
+          "interval_ms": 50,
+          "undos": 40,
+          "pushes_delivered": 8000,
+          "delivered_ratio": 1.0,
+          "scheduler_utilization_pct": 0.88,
+          "longest_message_queue": 0,
+          "longest_message_queue_owner": null,
+          "delivery_latency_ms": {
+            "max": 4.824,
+            "median": 1.845,
+            "p95": 3.145
+          }
+        }
+      }
+    }
+  }
+}

@@ -24,6 +24,18 @@ export class FakeEl {
     this.children.push(c);
     return c;
   }
+  insertBefore(c, ref) {
+    if (!ref) return this.appendChild(c);
+    if (c.parentNode) c.parentNode.removeChild(c);
+    c.parentNode = this;
+    this.children.splice(this.children.indexOf(ref), 0, c);
+    return c;
+  }
+  get nextSibling() {
+    if (!this.parentNode) return null;
+    const s = this.parentNode.children;
+    return s[s.indexOf(this) + 1] || null;
+  }
   removeChild(c) {
     const i = this.children.indexOf(c);
     if (i >= 0) this.children.splice(i, 1);
@@ -50,7 +62,10 @@ export class FakeEl {
   querySelector(sel) {
     return find(this, sel.replace(/^#/, ""));
   }
-  closest() {
+  // Only the stroke engines' and the ring's "svg[id]"; nothing here matches
+  // the colour panel's selectors (color_picker.mjs).
+  closest(sel) {
+    if (sel !== "svg[id]") return null;
     let n = this;
     while (n) {
       if (n.tagName === "svg" && n.attrs.id) return n;
@@ -95,26 +110,30 @@ export function installFakeDom() {
   return { root, dispatched };
 }
 
-// GamePage's markup: the marker (with the instance's mount id) and the svg,
-// with the drawer's group for a drawer. Replaces whatever was rendered.
+// GamePage's markup (DrawingCanvas): the marker (with the instance's mount
+// id), the svg of committed strokes (the drawer's group for a drawer) and,
+// over it, the input svg (the active path for a drawer, the overlay).
+// Replaces whatever was rendered; returns the input svg.
 export function renderGamePage(root, { mount = 1, drawer = true } = {}) {
   root.children = [];
   const marker = new FakeEl("span", "game-page-marker");
   marker.setAttribute("data-mount", mount);
+  const paint = new FakeEl("svg", "game-canvas-paint");
+  paint.appendChild(new FakeEl("g", "game-canvas-strokes"));
+  const drawerG = new FakeEl("g", "game-canvas-drawer");
+  if (drawer) drawerG.appendChild(new FakeEl("g", "game-canvas-drawer-strokes"));
+  paint.appendChild(drawerG);
   const svg = new FakeEl("svg", "game-canvas-svg");
   svg.getScreenCTM = () => ({ inverse: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }) });
   svg.setPointerCapture = () => {};
   svg.hasPointerCapture = () => false;
   svg.releasePointerCapture = () => {};
-  svg.appendChild(new FakeEl("g", "game-canvas-strokes"));
-  const drawerG = new FakeEl("g", "game-canvas-drawer");
-  if (drawer) {
-    drawerG.appendChild(new FakeEl("g", "game-canvas-drawer-strokes"));
-    drawerG.appendChild(new FakeEl("path", "drawing-path"));
-  }
-  svg.appendChild(drawerG);
+  const active = new FakeEl("g", "game-canvas-active");
+  if (drawer) active.appendChild(new FakeEl("path", "drawing-path"));
+  svg.appendChild(active);
   svg.appendChild(new FakeEl("g", "game-canvas-overlay"));
   root.appendChild(marker);
+  root.appendChild(paint);
   root.appendChild(svg);
   return svg;
 }
@@ -126,11 +145,12 @@ export function renderOtherPage(root) {
 }
 
 // One pointer press + release on the svg (a tap), through the engine's router.
-export function tap(svg, x = 10, y = 10, pointerId = 1) {
+// `press` overrides the pointerdown's fields (e.g. {button: 2}, {ctrlKey: true}).
+export function tap(svg, x = 10, y = 10, pointerId = 1, press = {}) {
   const target = svg.children[0];
   globalThis.__fire("pointerdown", {
     target, pointerId, isPrimary: true, pointerType: "mouse", button: 0,
-    clientX: x, clientY: y, preventDefault() {},
+    clientX: x, clientY: y, preventDefault() {}, ...press,
   });
   globalThis.__fire("pointerup", { pointerId });
 }
@@ -144,4 +164,23 @@ export function drawnIds() {
 export function overlayIds() {
   const group = document.getElementById("game-canvas-overlay");
   return group ? group.children.map((c) => c.getAttribute("data-remote-in-progress")) : [];
+}
+
+// A long gesture through the engine's router: a press, `moves` pointer
+// moves along a zigzag (2 viewBox units apart, so every point is kept),
+// then the release. 600 moves make a path of well over SPLIT_AT, so the
+// engine splits it.
+export function scribble(svg, moves = 600, pointerId = 1) {
+  const target = svg.children[0];
+  globalThis.__fire("pointerdown", {
+    target, pointerId, isPrimary: true, pointerType: "mouse", button: 0,
+    clientX: 10, clientY: 10, preventDefault() {},
+  });
+  for (let i = 1; i <= moves; i++) {
+    globalThis.__fire("pointermove", {
+      pointerId, pointerType: "mouse", buttons: 1,
+      clientX: 10 + (i % 300) * 2 + 0.3, clientY: 10 + Math.floor(i / 300) * 40 + (i % 2) * 7.7,
+    });
+  }
+  globalThis.__fire("pointerup", { pointerId });
 }

@@ -113,6 +113,38 @@ defmodule ScrawlyWeb.Pages.GamePagePlayFeedbackTest do
       assert chunks(html, "word-letters") == ["CHICKEN", "CROSSING", "THE", "ROAD"]
       assert html =~ "your word · 4 words · 22 letters"
     end
+
+    # String.split/2 compiles a binary pattern that Hologram 0.12.8's client
+    # runtime registers and never frees: split on every render, the game page
+    # grew by ~4 KB per action (notes/files/drawing-benchmarks.md).
+    test "the blocks are worked out when the word changes, never by a render", ctx do
+      source = File.read!("lib/scrawly_web/pages/game_page.ex")
+      [_code, template] = String.split(source, "def template do", parts: 2)
+
+      for helper <- ~w(mask_blocks word_blocks word_label) do
+        refute template =~ "PlayFeedback.#{helper}",
+               "the template calls PlayFeedback.#{helper} on every render"
+      end
+
+      page = init_page(ctx.room, server_for(ctx.other))
+      view = page.state.word_view
+      assert view.mask == ["_ _ _ _ _ _ _", "_ _ _ _ _ _ _ _", "_ _ _", "_ _ _ _"]
+
+      # An action that changes no word field keeps the very blocks it had.
+      tick = GamePage.action(:countdown_tick, %{gen: page.state.tick_gen}, page)
+      assert tick.state.word_view == view
+
+      # A hint does change them (here through a snapshot of the room).
+      [{pid, _}] = Registry.lookup(Scrawly.RoomRegistry, ctx.room.id)
+      send(pid, {:hint_reveal, :sys.get_state(pid).game_id, 1, 2})
+      {:ok, view} = Scrawly.Games.RoomServer.get_view(ctx.room.id, ctx.other.id)
+      hinted = GamePage.action(:room_resynced, view, page)
+
+      assert Enum.join(hinted.state.word_view.mask, "   ") == view.word_display
+
+      assert hinted.state.word_view.mask !=
+               view.word_display |> String.replace(~r/[a-z]/, "_") |> String.split("   ")
+    end
   end
 
   describe "you got it" do

@@ -594,9 +594,7 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
               <div class="round-card">
                 <div class="thumb" $click={:open_drawing_modal, round: round.round}>
                   <svg viewBox="0 0 800 450" preserveAspectRatio="xMidYMid meet">
-                    {%for stroke <- round.drawing_strokes}
-                      <path d={stroke.path} stroke={stroke.color} stroke-width={stroke.width} fill="none" stroke-linecap="round" stroke-linejoin="round" />
-                    {/for}
+                    {%for stroke <- round.drawing_strokes}{%if StrokeRules.fill?(stroke)}<path d={stroke.path} fill={stroke.color} fill-rule="evenodd" stroke="none" />{%else}<path d={stroke.path} stroke={stroke.color} stroke-width={stroke.width} fill="none" stroke-linecap="round" stroke-linejoin="round" />{/if}{/for}
                   </svg>
                 </div>
                 <div class="round-meta">
@@ -644,9 +642,7 @@ defmodule ScrawlyWeb.Pages.GameScorePage do
                 <div style="padding: 20px;">
                   <div style="background: #fff; border: 1px solid var(--hairline); border-radius: 6px; overflow: hidden;">
                     <svg viewBox="0 0 800 450" preserveAspectRatio="xMidYMid meet" style="width: 100%; display: block;">
-                      {%for stroke <- round.drawing_strokes}
-                        <path d={stroke.path} stroke={stroke.color} stroke-width={stroke.width} fill="none" stroke-linecap="round" stroke-linejoin="round" />
-                      {/for}
+                      {%for stroke <- round.drawing_strokes}{%if StrokeRules.fill?(stroke)}<path d={stroke.path} fill={stroke.color} fill-rule="evenodd" stroke="none" />{%else}<path d={stroke.path} stroke={stroke.color} stroke-width={stroke.width} fill="none" stroke-linecap="round" stroke-linejoin="round" />{/if}{/for}
                     </svg>
                   </div>
                 </div>

@@ -291,21 +291,28 @@ defmodule ScrawlyWeb.Pages.HomePageLobbyTest do
 
       # Server-side, JS.call returns :ok (no stale rooms list).
       assert %{name: :resync_lobby, params: %{stale_rooms: []}} = again.next_command
-      # The demo board gets the tool the restored toolbar shows.
+      # The demo board gets the tool the restored toolbar shows; the saved
+      # colours are read again (the game page may have changed them). The
+      # board connects with the token :resync_lobby's reply brings.
       assert calls == [
-               connectDemoBoard: [%{color: "#000000", width: 2, eraser: false}],
-               takeStaleRoomChannels: [nil]
+               setDrawTool: [%{tool: "brush", color: "#0a0a0a", size: 4}],
+               takeStaleRoomChannels: [nil],
+               savedColors: []
              ]
 
-      red_eraser =
-        put_in(first.state, Map.merge(first.state, %{demo_color: "#d63838", demo_eraser: true}))
+      assert again.state.can_undo == false
+
+      red_eraser = %{
+        first
+        | state: Map.put(first.state, :draw_tool, %{tool: :eraser, color: "#d63838", size: 5})
+      }
 
       {_again, calls} =
         Scrawly.JsCallTrace.js_calls(fn ->
           HomePage.action(:page_shown, %{mount_id: "1"}, red_eraser)
         end)
 
-      assert {:connectDemoBoard, [%{color: "#d63838", width: 2, eraser: true}]} in calls
+      assert [{:setDrawTool, [%{tool: "eraser", color: "#d63838", size: 5}]} | _] = calls
     end
 
     test ":resync_lobby re-subscribes and replies with both lists" do
@@ -319,20 +326,22 @@ defmodule ScrawlyWeb.Pages.HomePageLobbyTest do
 
       assert Enum.any?(result.subscriptions, &(elem(&1, 0) == :lobby))
 
-      assert %{name: :lobby_resynced, params: %{rooms: rooms, messages: [^line]}} =
+      assert %{name: :lobby_resynced, params: %{rooms: rooms, messages: [^line]} = params} =
                result.next_action
 
       assert Enum.any?(rooms, &(&1.room_id == room.id))
+      assert {:ok, "anon:" <> _} = ScrawlyWeb.BoardToken.verify(params.board_token)
 
-      applied =
-        HomePage.action(
-          :lobby_resynced,
-          result.next_action.params,
-          page(%{rooms: [], lobby_chat_messages: []})
-        )
+      {applied, calls} =
+        Scrawly.JsCallTrace.js_calls(fn ->
+          HomePage.action(:lobby_resynced, params, page(%{rooms: [], lobby_chat_messages: []}))
+        end)
 
       assert applied.state.rooms == rooms
       assert applied.state.lobby_chat_messages == [line]
+      # The board reconnects with the reply's token, which stays out of state.
+      assert calls == [connectDemoBoard: [params.board_token]]
+      refute inspect(applied.state) =~ params.board_token
     end
   end
 

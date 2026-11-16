@@ -183,6 +183,129 @@ defmodule Scrawly.Games.StrokeRulesTest do
     end
   end
 
+  describe "fills (#43)" do
+    @square "M 101 101 L 299 101 L 299 299 L 101 299 Z M 150 150 L 150 160 L 160 160 L 160 150 Z"
+    @fill %{id: "f-1", path: @square, color: "#2563eb", width: 1, fill: true}
+
+    test "valid_fill_path?/1 takes only M, L, Z, digits, dots, minus signs, spaces and commas" do
+      for path <- [@square, "M 0 0 L 800 0 L 800 450 Z", "M-1,2.5L3,4Z", "M 1 2"] do
+        assert StrokeRules.valid_fill_path?(path), path
+      end
+
+      for path <- [
+            # Curves, relative commands, exponents: a line's path, not a fill's.
+            "M 1 2 Q 3 4 5 6 Z",
+            "M 1 2 C 3 4 5 6 7 8 Z",
+            "m 1 2 l 3 4 z",
+            "M 1e2 2 L 3 4 Z",
+            "M 1 2 H 3 Z",
+            "M 1 2 L 3 4 Z\n",
+            "M 1 2 <path>",
+            "",
+            nil,
+            7
+          ] do
+        refute StrokeRules.valid_fill_path?(path), inspect(path)
+      end
+
+      assert StrokeRules.valid_fill_path?(String.duplicate("1", 8_000))
+      refute StrokeRules.valid_fill_path?(String.duplicate("1", 8_001))
+    end
+
+    test "a fill is validated as a fill: its colour checked, its width stored as 1" do
+      assert StrokeRules.validate(@fill) == {:ok, @fill}
+      assert StrokeRules.check_append([], @fill) == {:ok, @fill}
+
+      # Whatever width it came with, or none.
+      for width <- [nil, 0, 7, 40, 99, "wide"] do
+        assert StrokeRules.validate(%{@fill | width: width}) == {:ok, @fill}, inspect(width)
+      end
+
+      assert StrokeRules.validate(Map.delete(@fill, :width)) == {:ok, @fill}
+      # Other keys are dropped.
+      assert StrokeRules.validate(Map.put(@fill, :owner, "x")) == {:ok, @fill}
+    end
+
+    test "an invalid fill: bad characters, too long, a bad colour or id" do
+      for bad <- [
+            %{@fill | path: "M 1 2 Q 3 4 5 6 Z"},
+            %{@fill | path: "M 1 2 L 3 4 z"},
+            %{@fill | path: "M 1e3 2 L 3 4 Z"},
+            %{@fill | path: String.duplicate("1", 8_001)},
+            %{@fill | path: ""},
+            %{@fill | path: nil},
+            %{@fill | color: "blue"},
+            %{@fill | color: "#12345"},
+            Map.delete(@fill, :color),
+            %{@fill | id: ""},
+            %{@fill | id: String.duplicate("a", 65)}
+          ] do
+        assert StrokeRules.validate(bad) == {:error, :invalid_stroke}, inspect(bad)
+        assert StrokeRules.check_append([], bad) == {:error, :invalid_stroke}, inspect(bad)
+      end
+    end
+
+    test "fill is strictly boolean: false, nil or none is a line, anything else invalid" do
+      line = Map.put(@stroke, :fill, false)
+      assert StrokeRules.validate(line) == {:ok, @stroke}
+      assert StrokeRules.validate(Map.put(@stroke, :fill, nil)) == {:ok, @stroke}
+      assert StrokeRules.validate(@stroke) == {:ok, @stroke}
+      # A line keeps its width rule and its path characters.
+      assert StrokeRules.validate(%{line | width: 99}) == {:error, :invalid_stroke}
+
+      for flag <- ["true", 1, "1", :yes, %{}, [true]] do
+        assert StrokeRules.validate(%{@fill | fill: flag}) == {:error, :invalid_stroke},
+               inspect(flag)
+
+        assert StrokeRules.validate(Map.put(@stroke, :fill, flag)) == {:error, :invalid_stroke}
+      end
+    end
+
+    test "fill?/1: only fill: true" do
+      assert StrokeRules.fill?(@fill)
+      refute StrokeRules.fill?(@stroke)
+      refute StrokeRules.fill?(%{@fill | fill: "true"})
+      refute StrokeRules.fill?(%{"fill" => true})
+      refute StrokeRules.fill?(nil)
+    end
+
+    test "fills count against the stroke and byte limits like lines" do
+      lines = List.duplicate(@stroke, StrokeRules.max_strokes() - 1)
+      assert {:ok, _} = StrokeRules.check_append(lines, @fill)
+      assert StrokeRules.check_append([@fill | lines], @fill) == {:error, :stroke_limit}
+
+      big = %{@fill | path: String.duplicate("1", 8_000)}
+      full = List.duplicate(big, 250)
+      assert StrokeRules.check_append(full, %{@fill | path: "1"}) == {:error, :stroke_limit}
+      assert {:ok, _} = StrokeRules.check_append(Enum.drop(full, 1), big)
+    end
+
+    test "the replay keeps a fill a fill, from atom or JSONB keys; anything else is a line" do
+      strokes = [@stroke, @fill]
+
+      assert StrokeRules.replay(strokes) ==
+               {[
+                  %{path: @stroke.path, color: @stroke.color, width: @stroke.width},
+                  %{path: @square, color: "#2563eb", width: 1, fill: true}
+                ], false}
+
+      rows = [
+        %{"path" => @square, "color" => "#2563eb", "width" => 1, "fill" => true},
+        # Saved before fills: no flag, a line.
+        %{"path" => "M 1 1 L 2 2", "color" => "#000000", "width" => 3},
+        # Not strictly true: a line.
+        %{"path" => "M 1 1 L 2 2", "color" => "#000000", "width" => 3, "fill" => "true"},
+        %{"path" => "M 1 1 L 2 2", "color" => "#000000", "width" => 3, "fill" => false}
+      ]
+
+      assert {[fill, legacy, not_true, no], false} = StrokeRules.replay(rows)
+      assert fill == %{path: @square, color: "#2563eb", width: 1, fill: true}
+
+      for line <- [legacy, not_true, no],
+          do: assert(line == %{path: "M 1 1 L 2 2", color: "#000000", width: 3})
+    end
+  end
+
   describe "replay/1 (QA G14)" do
     test "keeps whole strokes in order, without ids, while they fit" do
       strokes = [%{@stroke | id: "a"}, %{@stroke | id: "b", color: "#ffffff", width: 9}]

@@ -17,10 +17,8 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
 
   defp drawing_component(overrides) do
     defaults = %{
-      drawing_strokes: [],
-      draw_color: "#000000",
-      draw_width: 2,
-      draw_eraser: false,
+      canvas_strokes: "",
+      draw_tool: ScrawlyWeb.Components.DrawingToolbar.default_tool(),
       is_drawer: true,
       game_started: true,
       phase: :drawing,
@@ -110,7 +108,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       revealed_word: nil,
       word_choices: [],
       is_drawer: false,
-      drawing_strokes: [@s1, @s2]
+      canvas_strokes: ""
     }
 
     %Hologram.Component{props: %{room_id: "r1"}, state: Map.merge(state, overrides)}
@@ -193,88 +191,96 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
   end
 
   describe "clear_canvas" do
-    test "resets strokes to empty" do
-      strokes = [%{id: "s-1", path: "M 100 150 L 120 160", color: "#000000", width: 2}]
-      comp = drawing_component(%{drawing_strokes: strokes})
+    test "clears the drawer's canvas through drawing_manager.mjs (the op queue)" do
+      comp = drawing_component(%{})
 
-      result = GamePage.action(:clear_canvas, %{}, comp)
+      {result, calls} = js_calls(fn -> GamePage.action(:clear_canvas, %{}, comp) end)
 
-      assert result.state.drawing_strokes == []
+      assert calls == [clearDrawing: []]
+      assert result.state == comp.state
     end
   end
 
+  # A viewer's strokes are drawing_manager.mjs's (one node each, appended or
+  # removed): the page hands every applied broadcast over with its seq and
+  # keeps no stroke in its state, so neither the action nor its render grows
+  # with the canvas.
   describe "stroke_completed" do
-    test "appends completed stroke to non-drawer's strokes" do
+    test "hands the stroke to a viewer's canvas with its seq" do
       comp = drawing_component(%{is_drawer: false})
       params = %{stroke_id: "s1", path: "M 10 20 L 30 40", color: "#EF4444", width: 5, seq: 2}
 
-      result = GamePage.action(:stroke_completed, params, comp)
+      {result, calls} = js_calls(fn -> GamePage.action(:stroke_completed, params, comp) end)
 
-      # The stroke keeps the seq it arrived with.
-      assert result.state.drawing_strokes == [
-               %{id: "s1", path: "M 10 20 L 30 40", color: "#EF4444", width: 5, seq: 2}
+      assert calls == [
+               applyViewerStroke: [
+                 %{id: "s1", path: "M 10 20 L 30 40", color: "#EF4444", width: 5, fill: false},
+                 2
+               ]
              ]
 
       assert result.state.last_seq == 2
+      refute Map.has_key?(result.state, :drawing_strokes)
     end
 
-    test "ignores a stroke id the viewer already has" do
-      comp = drawing_component(%{is_drawer: false, drawing_strokes: [@s1]})
-      params = %{stroke_id: "s-1", path: "M 9 9", color: "#000000", width: 2, seq: 2}
+    test "a fill keeps its flag" do
+      comp = drawing_component(%{is_drawer: false})
 
-      result = GamePage.action(:stroke_completed, params, comp)
+      params = %{
+        stroke_id: "f1",
+        path: "M 0 0 L 9 0 L 9 9 Z",
+        color: "#1f9a4a",
+        width: 1,
+        fill: true,
+        seq: 2
+      }
 
-      assert result.state.drawing_strokes == [@s1]
+      {_result, calls} = js_calls(fn -> GamePage.action(:stroke_completed, params, comp) end)
+
+      assert [applyViewerStroke: [%{id: "f1", fill: true}, 2]] = calls
     end
 
-    test "the drawer ignores its own echo but takes the seq" do
+    test "the drawer's tab only adopts it (another tab's stroke), and takes the seq" do
       comp = drawing_component(%{is_drawer: true})
       params = %{stroke_id: "s1", path: "M 10 20", color: "#000000", width: 2, seq: 2}
 
-      result = GamePage.action(:stroke_completed, params, comp)
+      {result, calls} = js_calls(fn -> GamePage.action(:stroke_completed, params, comp) end)
 
-      assert result.state.drawing_strokes == []
+      assert [adoptStroke: [%{id: "s1"}]] = calls
       assert result.state.last_seq == 2
     end
 
-    test "accumulates multiple strokes" do
-      comp =
-        drawing_component(%{
-          is_drawer: false,
-          drawing_strokes: [@s1]
-        })
+    test "a stale broadcast reaches no canvas" do
+      comp = drawing_component(%{is_drawer: false, last_seq: 5})
+      params = %{stroke_id: "s1", path: "M 10 20", color: "#000000", width: 2, seq: 4}
 
-      params = %{stroke_id: "s2", path: "M 10 20", color: "#3B82F6", width: 10, seq: 2}
+      {result, calls} = js_calls(fn -> GamePage.action(:stroke_completed, params, comp) end)
 
-      result = GamePage.action(:stroke_completed, params, comp)
-
-      assert length(result.state.drawing_strokes) == 2
+      assert calls == []
+      assert result.state.last_seq == 5
     end
   end
 
   describe "drawing_cleared" do
-    test "clears a viewer's strokes" do
-      comp = drawing_component(%{is_drawer: false, drawing_strokes: [@s1]})
+    test "clears a viewer's canvas, with the clear's seq" do
+      comp = drawing_component(%{is_drawer: false})
 
-      {result, names} =
-        js_call_names(fn -> GamePage.action(:drawing_cleared, %{seq: 2}, comp) end)
+      {result, calls} = js_calls(fn -> GamePage.action(:drawing_cleared, %{seq: 2}, comp) end)
 
-      assert result.state.drawing_strokes == []
-      assert result.state.strokes_seq == 2
-      # The live overlays go, their ids stay open (a stroke started after the
-      # clear comes back with its next chunk).
-      assert names == [:clearRemoteStrokes]
+      assert result.state.last_seq == 2
+      # The live overlays go there too, their ids stay open (a stroke
+      # started after the clear comes back with its next chunk).
+      assert calls == [clearViewerStrokes: [2]]
     end
 
     test "on the drawer's tab, only a clear from another tab touches the canvas" do
-      comp = drawing_component(%{is_drawer: true, drawing_strokes: [@s1]})
+      comp = drawing_component(%{is_drawer: true})
 
       {result, calls} =
         js_calls(fn ->
           GamePage.action(:drawing_cleared, %{seq: 2, op_epoch: "epoch-a"}, comp)
         end)
 
-      assert result.state.drawing_strokes == [@s1]
       assert result.state.last_seq == 2
       # drawing_manager.mjs compares the epoch with its own (applyRoomClear).
       assert calls == [applyRoomClear: ["epoch-a"]]
@@ -282,19 +288,22 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
   end
 
   describe "drawing_undone" do
-    test "removes the stroke by id for a viewer; the drawer only takes the seq" do
-      viewer = drawing_component(%{is_drawer: false, drawing_strokes: [@s1, @s2]})
-      result = GamePage.action(:drawing_undone, %{stroke_id: @s2.id, seq: 2}, viewer)
-      assert result.state.drawing_strokes == [@s1]
+    test "removes the stroke by id from a viewer's canvas; the drawer's tab forgets it" do
+      viewer = drawing_component(%{is_drawer: false})
 
-      drawer = drawing_component(%{drawing_strokes: [@s1, @s2]})
+      {result, calls} =
+        js_calls(fn -> GamePage.action(:drawing_undone, %{stroke_id: @s2.id, seq: 2}, viewer) end)
+
+      assert calls == [undoViewerStroke: [@s2.id, 2]]
+      assert result.state.last_seq == 2
+
+      drawer = drawing_component(%{})
 
       {result, names} =
         js_call_names(fn ->
           GamePage.action(:drawing_undone, %{stroke_id: @s2.id, seq: 2}, drawer)
         end)
 
-      assert result.state.drawing_strokes == [@s1, @s2]
       assert result.state.last_seq == 2
       # Its own undo already removed it; another tab's is removed here.
       assert names == [:forgetStroke]
@@ -318,7 +327,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
 
       comp =
         drawing_component(%{
-          drawing_strokes: [@s1],
+          canvas_strokes: Jason.encode!([@s1]),
           players: member,
           socket_token: "tok",
           round_remaining_ms: 0,
@@ -330,15 +339,20 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
       assert [
                {:mountCanvas, [42]},
                {:noteRoomChannel, ["test-room"]},
-               {:setToolColor, ["#000000"]},
-               {:setToolWidth, [2]},
-               {:restoreStrokes, [[@s1]]},
+               {:setDrawTool, [%{tool: "brush", color: "#0a0a0a", size: 4}]},
+               # The browser's saved colours (color_picker.mjs).
+               {:savedColors, []},
+               # The canvas init put in the state, as JSON.
+               {:restoreStrokes, [canvas]},
                {:setDrawingEnabled, [true]},
                {:connectGameChannel, ["tok", "ABCD"]}
              ] =
                calls
 
+      assert Jason.decode!(canvas, keys: :atoms) == [@s1]
       assert result.state.channel_connecting == true
+      # drawing_manager.mjs owns the canvas from here on.
+      assert result.state.canvas_strokes == ""
 
       # Not a member yet: the join reply connects it (GameChannel refuses
       # non-members).
@@ -348,6 +362,24 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
         js_call_names(fn -> GamePage.action(:mounted, %{join: :player}, outsider) end)
 
       refute :connectGameChannel in names
+    end
+
+    test "a viewer's canvas is drawn from init's JSON, at init's seq" do
+      comp =
+        drawing_component(%{
+          is_drawer: false,
+          canvas_strokes: Jason.encode!([@s1, @s2]),
+          strokes_seq: 7,
+          round_remaining_ms: 0,
+          choice_remaining_ms: 0
+        })
+
+      {result, calls} = js_calls(fn -> GamePage.action(:mounted, %{join: nil}, comp) end)
+
+      assert [canvas, 7] = Keyword.fetch!(calls, :showViewerStrokes)
+      assert Jason.decode!(canvas, keys: :atoms) == [@s1, @s2]
+      refute Keyword.has_key?(calls, :restoreStrokes)
+      assert result.state.canvas_strokes == ""
     end
 
     test "anchors init's countdowns and starts the tick chain, for the drawer or a viewer" do
@@ -361,14 +393,15 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
         :zero_since,
         :phase_entered_at,
         :tick_gen,
-        :last_tick_at
+        :last_tick_at,
+        :canvas_strokes
       ]
 
       for is_drawer <- [true, false] do
         comp =
           drawing_component(%{
             is_drawer: is_drawer,
-            drawing_strokes: [@s1],
+            canvas_strokes: Jason.encode!([@s1]),
             round_remaining_ms: 41_500,
             choice_remaining_ms: 0,
             choice_duration: 15,
@@ -390,29 +423,30 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
   end
 
   describe ":room_resynced gives a viewer the room's strokes" do
-    test "snapshots carry the real strokes, with or without the channel" do
+    test "snapshots hand the room's strokes and seq to the canvas, with or without the channel" do
       longer = [@s1, @s2, %{@s2 | id: "s-3"}]
 
       for connected <- [false, true], strokes <- [longer, [@s1]] do
         comp = page_component(%{channel_connected: connected})
 
-        {result, calls} =
+        {_result, calls} =
           js_calls(fn ->
             GamePage.action(:room_resynced, refreshed(%{drawing_strokes: strokes}), comp)
           end)
 
-        assert result.state.drawing_strokes == strokes
-        # Overlays of strokes the snapshot holds go; a stroke still being
-        # drawn keeps its live preview.
-        assert {:settleRemoteStrokes, [Enum.map(strokes, & &1.id)]} in calls
+        # drawing_manager.mjs keeps what arrived after the snapshot, takes
+        # no snapshot older than its last full list, and settles the
+        # overlays of the strokes it holds (applyViewerSnapshot).
+        assert {:applyViewerSnapshot, [strokes, 5]} in calls
       end
     end
 
     test "a late joiner's canvas is not wiped by a delta" do
       comp = page_component(%{})
       delta = refreshed(%{}) |> Map.drop([:drawing_strokes, :chat_messages]) |> Map.put(:seq, 5)
-      result = GamePage.action(:room_delta, delta, comp)
-      assert result.state.drawing_strokes == [@s1, @s2]
+      {_result, names} = js_call_names(fn -> GamePage.action(:room_delta, delta, comp) end)
+      refute :applyViewerSnapshot in names
+      refute :setDrawingPath in names
     end
   end
 
@@ -440,7 +474,11 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
 
     test "a new round and the game's end turn the drawer's engine off and reset the canvas" do
       in_round =
-        page_component(%{is_drawer: true, current_drawer: %{id: "user-1", username: "You"}})
+        page_component(%{
+          is_drawer: true,
+          current_drawer: %{id: "user-1", username: "You"},
+          color_panel: true
+        })
 
       {next_round, calls} =
         js_calls(fn ->
@@ -452,9 +490,12 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
         end)
 
       assert next_round.state.round == 2
-      assert next_round.state.drawing_strokes == []
-      assert {:setDrawingPath, [""]} in calls
+      # Every canvas empties, viewers' at the delta's seq.
+      assert {:setDrawingPath, ["", 5]} in calls
       assert enabled_calls(calls) == [false]
+      # The colour panel closes with the drawing: the next turn's toolbar
+      # starts closed.
+      assert next_round.state.color_panel == false
 
       {ended, calls} =
         js_calls(fn ->
@@ -466,8 +507,9 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
         end)
 
       assert ended.state.game_started == false
-      assert ended.state.drawing_strokes == []
+      assert {:setDrawingPath, ["", 5]} in calls
       assert enabled_calls(calls) == [false]
+      assert ended.state.color_panel == false
     end
 
     test "leaving :drawing turns it off and keeps the strokes" do
@@ -488,7 +530,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
         end)
 
       assert result.state.phase == :round_end
-      assert result.state.drawing_strokes == [@s1, @s2]
+      refute Enum.any?(calls, &match?({:setDrawingPath, _}, &1))
       assert {:endDrawingPhase, []} in calls
       assert enabled_calls(calls) == [false]
     end
@@ -533,37 +575,62 @@ defmodule ScrawlyWeb.Components.DrawingCanvasTest do
   end
 
   describe "tool selection actions" do
-    test "select_color updates draw_color and disables eraser" do
-      comp = drawing_component(%{draw_eraser: true, draw_color: "#000000"})
+    @eraser %{tool: :eraser, color: "#0a0a0a", size: 2}
 
-      result = GamePage.action(:select_color, %{color: "#EF4444"}, comp)
+    test "select_color picks the brush in that colour, and pushes the tool" do
+      comp = drawing_component(%{draw_tool: @eraser})
 
-      assert result.state.draw_color == "#EF4444"
-      assert result.state.draw_eraser == false
+      {result, calls} =
+        js_calls(fn -> GamePage.action(:select_color, %{color: "#d63838"}, comp) end)
+
+      assert result.state.draw_tool == %{tool: :brush, color: "#d63838", size: 2}
+      assert calls == [{:setDrawTool, [%{tool: "brush", color: "#d63838", size: 2}]}]
     end
 
-    test "select_width updates draw_width" do
-      comp = drawing_component(%{draw_width: 2})
+    test "select_size sets the size and keeps the tool (the eraser too), and pushes it" do
+      comp = drawing_component(%{draw_tool: @eraser})
 
-      result = GamePage.action(:select_width, %{width: 10}, comp)
+      {result, calls} = js_calls(fn -> GamePage.action(:select_size, %{size: 10}, comp) end)
 
-      assert result.state.draw_width == 10
+      assert result.state.draw_tool == %{tool: :eraser, color: "#0a0a0a", size: 10}
+      assert calls == [{:setDrawTool, [%{tool: "eraser", color: "#0a0a0a", size: 10}]}]
+
+      brush = drawing_component(%{draw_tool: %{@eraser | tool: :brush}})
+      assert GamePage.action(:select_size, %{size: 30}, brush).state.draw_tool.tool == :brush
     end
 
-    test "toggle_eraser enables eraser" do
-      comp = drawing_component(%{draw_eraser: false})
+    test "select_size takes the slider's value (its throttled $change), clamped to 1..40" do
+      comp = drawing_component(%{draw_tool: @eraser})
 
-      result = GamePage.action(:toggle_eraser, %{}, comp)
+      {result, calls} =
+        js_calls(fn -> GamePage.action(:select_size, %{event: %{value: "37"}}, comp) end)
 
-      assert result.state.draw_eraser == true
+      assert result.state.draw_tool == %{tool: :eraser, color: "#0a0a0a", size: 37}
+      assert calls == [{:setDrawTool, [%{tool: "eraser", color: "#0a0a0a", size: 37}]}]
+
+      for {value, size} <- [{"0", 1}, {"99", 40}, {"x", 2}, {"4.5", 2}, {"", 2}] do
+        result = GamePage.action(:select_size, %{event: %{value: value}}, comp)
+        assert result.state.draw_tool.size == size, inspect(value)
+      end
     end
 
-    test "toggle_eraser disables eraser on second toggle" do
-      comp = drawing_component(%{draw_eraser: true})
+    test "toggle_eraser turns the eraser on, and off again with the brush as it was" do
+      comp = drawing_component(%{draw_tool: %{tool: :brush, color: "#2a6df4", size: 5}})
 
-      result = GamePage.action(:toggle_eraser, %{}, comp)
+      {on, calls} = js_calls(fn -> GamePage.action(:toggle_eraser, %{}, comp) end)
 
-      assert result.state.draw_eraser == false
+      assert on.state.draw_tool == %{tool: :eraser, color: "#2a6df4", size: 5}
+      assert calls == [{:setDrawTool, [%{tool: "eraser", color: "#2a6df4", size: 5}]}]
+
+      off = GamePage.action(:toggle_eraser, %{}, on)
+      assert off.state.draw_tool == comp.state.draw_tool
+    end
+
+    test "a page state without a tool starts from the default one" do
+      comp = drawing_component(%{}) |> Map.update!(:state, &Map.delete(&1, :draw_tool))
+
+      assert GamePage.action(:toggle_eraser, %{}, comp).state.draw_tool ==
+               %{ScrawlyWeb.Components.DrawingToolbar.default_tool() | tool: :eraser}
     end
   end
 end

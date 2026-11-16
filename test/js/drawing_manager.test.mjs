@@ -12,6 +12,7 @@ import {
   renderGamePage,
   renderOtherPage,
   tap,
+  scribble,
   drawnIds,
   overlayIds,
 } from "./support/fake_dom.mjs";
@@ -24,6 +25,8 @@ const MODULE = "../../lib/scrawly_web/pages/drawing_manager.mjs";
 // reach GamePage: a second URL gives node a second module instance.
 const dm = await import(MODULE);
 const copy = await import(MODULE + "?bundle=home");
+// GamePage pushes its toolbar's tool to draw_tools.mjs (setDrawTool).
+const tools = await import("../../lib/scrawly_web/pages/draw_tools.mjs");
 const channels = await import("../../lib/scrawly_web/pages/room_channels.mjs");
 
 const ops = () => dispatched.filter((d) => d.name === "send_stroke_op").map((d) => d.params);
@@ -33,8 +36,7 @@ const lastOp = () => ops().at(-1);
 function mountDrawer(mount, strokes = []) {
   const svg = renderGamePage(root, { mount });
   dm.mountCanvas(mount);
-  dm.setToolColor("#000000");
-  dm.setToolWidth(2);
+  tools.setDrawTool({ tool: "brush", color: "#0a0a0a", size: 2 });
   dm.restoreStrokes(strokes);
   dm.setDrawingEnabled(true);
   return svg;
@@ -48,9 +50,13 @@ beforeEach(() => {
 
 test("the eraser of an earlier page instance doesn't leak into the next one", () => {
   // Instance 1: the drawer turns the eraser on (GamePage toggle_eraser).
-  mountDrawer(1);
-  dm.setToolColor("#FFFFFF");
-  dm.setToolWidth(20);
+  const first = mountDrawer(1);
+  tools.setDrawTool({ tool: "eraser", color: "#d63838", size: 5 });
+  tap(first);
+  // The eraser: white, at the slider's size.
+  assert.equal(lastOp().color, tools.ERASER.color);
+  assert.equal(lastOp().width, 5);
+  dm.ackStrokeOp(lastOp().op_seq);
 
   // Instance 2: mountCanvas puts the default tool back before :mounted
   // pushes the page's own.
@@ -59,17 +65,39 @@ test("the eraser of an earlier page instance doesn't leak into the next one", ()
   dm.setDrawingEnabled(true);
   tap(svg);
   assert.equal(lastOp().kind, "commit");
-  assert.equal(lastOp().color, "#000000");
-  assert.equal(lastOp().width, 2);
+  assert.equal(lastOp().color, tools.DEFAULT_TOOL.color);
+  assert.equal(lastOp().width, tools.DEFAULT_TOOL.size);
   dm.ackStrokeOp(lastOp().op_seq);
 
-  // The page's tool (pushed on :mounted and after a restore) is the one drawn with.
-  dm.setToolColor("#d63838");
-  dm.setToolWidth(10);
+  // The page's tool (pushed on :mounted, after a restore and on every
+  // change) is the one drawn with, read when the stroke starts.
+  tools.setDrawTool({ tool: "brush", color: "#d63838", size: 10 });
   tap(svg, 30, 30);
   assert.equal(lastOp().color, "#d63838");
   assert.equal(lastOp().width, 10);
   dm.ackStrokeOp(lastOp().op_seq);
+});
+
+test("a right-button or Ctrl tap erases at the slider's size; the toolbar's brush stays", () => {
+  const svg = mountDrawer(3);
+  tools.setDrawTool({ tool: "brush", color: "#2a6df4", size: 14 });
+
+  for (const press of [{ button: 2, buttons: 2 }, { ctrlKey: true }, { button: 2, ctrlKey: true }]) {
+    tap(svg, 20, 20, 1, press);
+    // What the room (and through it every viewer) gets: an ordinary
+    // eraser stroke, white at the size.
+    assert.equal(lastOp().kind, "commit", JSON.stringify(press));
+    assert.deepEqual([lastOp().color, lastOp().width], [tools.ERASER.color, 14], JSON.stringify(press));
+    dm.ackStrokeOp(lastOp().op_seq);
+  }
+  assert.deepEqual(tools.currentTool(), { tool: "brush", color: "#2a6df4", size: 14 });
+
+  // No Ctrl, or Cmd: the brush.
+  for (const press of [{}, { metaKey: true }]) {
+    tap(svg, 25, 25, 1, press);
+    assert.deepEqual([lastOp().color, lastOp().width], ["#2a6df4", 14], JSON.stringify(press));
+    dm.ackStrokeOp(lastOp().op_seq);
+  }
 });
 
 test("every bundle's copy acts on the same canvas, queue and generation", () => {
@@ -278,4 +306,143 @@ test("room_channels.mjs: the rooms a restored page drops", () => {
 
   for (let i = 0; i < 30; i++) channels.noteRoomChannel("r" + i);
   assert.equal(channels.takeStaleRoomChannels(null).length, 20);
+});
+
+// ── Undo: whole gestures ───────────────────────────────────────────────
+
+const undoReports = () => dispatched.filter((d) => d.name === "undo_available").map((d) => d.params.available);
+
+// Acks the head until the queue is empty (the room applied every op).
+function drainOps() {
+  for (let i = 0; i < 100 && window.__scrawlyGameCanvas.queue.length > 0; i++) {
+    dm.ackStrokeOp(window.__scrawlyGameCanvas.queue[0].op.op_seq);
+  }
+}
+
+test("one undo takes back a whole split gesture: one undo op per stroke, in queue order", () => {
+  const svg = mountDrawer(20, [S1]);
+  tap(svg, 30, 30);
+  drainOps();
+  const before = drawnIds();
+
+  scribble(svg);
+  const parts = drawnIds().slice(before.length);
+  assert.ok(parts.length >= 2, `split into ${parts.length}`);
+  const gesture = window.__scrawlyGameCanvas.history.at(-1).gesture;
+  assert.equal(gesture, parts[0]);
+  drainOps();
+
+  dispatched.length = 0;
+  dm.undoStroke();
+  assert.deepEqual(drawnIds(), before, "the whole scribble left the canvas at once");
+
+  // One undo op per stroke, newest first, each with its own op_seq after
+  // the last one: only the head is in flight, the next goes on its ack.
+  const sent = [];
+  for (let i = 0; i < parts.length; i++) {
+    const op = lastOp();
+    assert.equal(op.kind, "undo");
+    sent.push(op);
+    dm.ackStrokeOp(op.op_seq);
+  }
+  assert.deepEqual(sent.map((o) => o.stroke_id), parts.slice().reverse());
+  assert.ok(sent.every((o, i) => i === 0 || o.op_seq === sent[i - 1].op_seq + 1));
+  assert.ok(sent.every((o) => o.op_epoch === sent[0].op_epoch));
+  assert.equal(window.__scrawlyGameCanvas.queue.length, 0);
+
+  // The next press takes the tap, alone.
+  dm.undoStroke();
+  assert.deepEqual(drawnIds(), ["room-1"]);
+  assert.equal(lastOp().kind, "undo");
+  drainOps();
+});
+
+test("an undo before the room acked the gesture's commits queues behind them", () => {
+  const svg = mountDrawer(21);
+  scribble(svg);
+  const parts = drawnIds();
+  dm.undoStroke();
+  assert.deepEqual(drawnIds(), []);
+
+  const kinds = window.__scrawlyGameCanvas.queue.map((q) => q.op.kind);
+  assert.deepEqual(kinds, [...parts.map(() => "commit"), ...parts.map(() => "undo")]);
+  // What the room will hold once they're applied: nothing.
+  dm.rebaseCanvas([]);
+  assert.deepEqual(drawnIds(), []);
+  drainOps();
+});
+
+test("strokes from the room (a reload) undo one per press; a rebase keeps this tab's gestures", () => {
+  // A reload: the history comes from the room, without gestures.
+  const room = ["r-a", "r-b", "r-c"].map((id) => ({ ...S1, id }));
+  mountDrawer(22, room);
+  dm.undoStroke();
+  assert.deepEqual(drawnIds(), ["r-a", "r-b"]);
+  drainOps();
+
+  // Back/Forward: the same instance, rebased on the room's snapshot.
+  const svg = mountDrawer(23);
+  scribble(svg);
+  const parts = drawnIds();
+  drainOps();
+  renderOtherPage(root);
+  renderGamePage(root, { mount: 23 });
+  dm.restoreCanvas(23);
+  const fromRoom = window.__scrawlyGameCanvas.history.map((s) => ({ id: s.id, path: s.path, color: s.color, width: s.width }));
+  dm.rebaseCanvas(fromRoom);
+  dm.setDrawingEnabled(true);
+  dm.undoStroke();
+  assert.deepEqual(drawnIds(), [], `all ${parts.length} parts with one press`);
+  drainOps();
+});
+
+test("the page hears when there is something to undo, and only then", () => {
+  const svg = mountDrawer(24);
+  assert.deepEqual(undoReports(), []);
+  tap(svg, 10, 10);
+  tap(svg, 20, 20);
+  assert.deepEqual(undoReports(), [true]);
+  dm.undoStroke();
+  assert.deepEqual(undoReports(), [true]);
+  dm.undoStroke();
+  assert.deepEqual(undoReports(), [true, false]);
+  drainOps();
+
+  // A mount with the room's strokes: on at once.
+  dispatched.length = 0;
+  mountDrawer(25, [S1]);
+  assert.deepEqual(undoReports(), [true]);
+  dm.clearDrawing();
+  assert.deepEqual(undoReports(), [true, false]);
+  drainOps();
+
+  // Another page in the document hears nothing.
+  dispatched.length = 0;
+  const own = mountDrawer(26);
+  renderOtherPage(root);
+  dm.adoptStroke({ id: "tab2-x", path: "M 1 1 L 2 2", color: "#000000", width: 2 });
+  assert.deepEqual(undoReports(), []);
+  renderGamePage(root, { mount: 26 });
+  dm.restoreCanvas(26);
+  assert.deepEqual(undoReports(), [true], "the restored page is told");
+  void own;
+
+  // Viewers never draw: never told.
+  dispatched.length = 0;
+  renderGamePage(root, { mount: 27, drawer: false });
+  dm.mountCanvas(27);
+  dm.applyRemoteChunk("v-1", 1, "M 1 1 L 2 2", "#000000", 2);
+  assert.deepEqual(undoReports(), []);
+});
+
+test("lastGesture: the newest stroke's gesture, newest first; one stroke without", () => {
+  assert.deepEqual(dm.lastGesture([]), []);
+  assert.deepEqual(dm.lastGesture([{ id: "a" }, { id: "b" }]), ["b"]);
+  assert.deepEqual(
+    dm.lastGesture([{ id: "a", gesture: "a" }, { id: "x" }, { id: "b", gesture: "a" }, { id: "c", gesture: "a" }]),
+    ["c", "b", "a"]
+  );
+  assert.deepEqual(dm.lastGesture([{ id: "a", gesture: "a" }, { id: "b", gesture: "b" }]), ["b"]);
+  // A fill (#43) is an entry with an id like any other.
+  assert.deepEqual(dm.lastGesture([{ id: "a", gesture: "a" }, { id: "f", fill: true }]), ["f"]);
 });

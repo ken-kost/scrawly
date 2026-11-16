@@ -559,8 +559,9 @@ defmodule Scrawly.Games.RoomServer do
   @doc """
   Appends a completed stroke drawn by `actor_id`, who must pass
   `authorize(state, actor_id, :draw)`. The stroke is
-  `%{id, path, color, width}`, checked by `StrokeRules.check_append/2`; other
-  keys are dropped.
+  `%{id, path, color, width}`, plus `fill: true` for a fill (the fill tool's
+  closed shape, width stored as 1), checked by `StrokeRules.check_append/2`;
+  other keys are dropped.
 
   Idempotent: when the room already holds a stroke with that id, or `op` is
   stale (see `t:stroke_op/0`), nothing changes and it returns `:duplicate`.
@@ -569,7 +570,8 @@ defmodule Scrawly.Games.RoomServer do
   :rate_limited | :not_found}`, or `{:error, :invalid_stroke | :stroke_limit,
   strokes}` with the canvas as stored, so the drawer can resync. A stored
   stroke is published to the whole room as `:stroke_completed` (`%{stroke_id,
-  path, color, width, seq}`).
+  path, color, width, seq}`, and `fill: true` for a fill). Views and
+  snapshots carry the strokes as stored, fills with their flag.
 
   The drawer's stroke ops (appends, clears and undos together, duplicates
   included) are limited to `StrokeRules.op_rate_limit/0`; one over the
@@ -1712,12 +1714,14 @@ defmodule Scrawly.Games.RoomServer do
         state
         |> put_stroke_op(op)
         |> put_strokes(state.drawing_strokes ++ [stroke])
-        |> Broadcasts.publish(:stroke_completed, %{
-          stroke_id: stroke.id,
-          path: stroke.path,
-          color: stroke.color,
-          width: stroke.width
-        })
+        |> Broadcasts.publish(
+          :stroke_completed,
+          Map.merge(
+            %{stroke_id: stroke.id, path: stroke.path, color: stroke.color, width: stroke.width},
+            # `fill: true` for a fill; a line has no such key.
+            Map.take(stroke, [:fill])
+          )
+        )
 
       {:reply, :ok, new_state}
     else

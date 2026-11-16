@@ -11,12 +11,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :setDrawingEnabled, from: "./drawing_manager.mjs"
   js_import :clearDrawing, from: "./drawing_manager.mjs"
   js_import :setDrawingPath, from: "./drawing_manager.mjs"
-  js_import :setToolColor, from: "./drawing_manager.mjs"
-  js_import :setToolWidth, from: "./drawing_manager.mjs"
   js_import :undoStroke, from: "./drawing_manager.mjs"
-  js_import :removeRemoteOverlay, from: "./drawing_manager.mjs"
-  js_import :settleRemoteStrokes, from: "./drawing_manager.mjs"
-  js_import :clearRemoteStrokes, from: "./drawing_manager.mjs"
+  js_import :showViewerStrokes, from: "./drawing_manager.mjs"
+  js_import :applyViewerStroke, from: "./drawing_manager.mjs"
+  js_import :undoViewerStroke, from: "./drawing_manager.mjs"
+  js_import :clearViewerStrokes, from: "./drawing_manager.mjs"
+  js_import :applyViewerSnapshot, from: "./drawing_manager.mjs"
   js_import :mountCanvas, from: "./drawing_manager.mjs"
   js_import :restoreStrokes, from: "./drawing_manager.mjs"
   js_import :restoreCanvas, from: "./drawing_manager.mjs"
@@ -28,6 +28,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :ackStrokeOp, from: "./drawing_manager.mjs"
   js_import :rejectStrokeOp, from: "./drawing_manager.mjs"
   js_import :applyRejectedStrokes, from: "./drawing_manager.mjs"
+  js_import :setDrawTool, from: "./draw_tools.mjs"
+  js_import :savedColors, from: "./color_picker.mjs"
 
   js_import :noteRoomChannel, from: "./room_channels.mjs"
   js_import :takeStaleRoomChannels, from: "./room_channels.mjs"
@@ -38,7 +40,15 @@ defmodule ScrawlyWeb.Pages.GamePage do
   route "/game/:room_id"
   param :room_id, :string
 
-  alias ScrawlyWeb.Components.{Avatar, ChatBox, ScoreBoard, DrawingCanvas, RoomSettingsForm}
+  alias ScrawlyWeb.Components.{
+    Avatar,
+    ChatBox,
+    ScoreBoard,
+    DrawingCanvas,
+    DrawingToolbar,
+    RoomSettingsForm
+  }
+
   alias ScrawlyWeb.{PlayFeedback, RoomSettings}
   alias ScrawlyWeb.Pages.GamePage.Commands
   alias Scrawly.Games.RoomServer
@@ -109,8 +119,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:is_creator, is_creator)
               |> put_state(:creator_id, rs.creator_id)
               # Sequencing: the seq of the last broadcast applied, and of the
-              # last room state / full stroke list applied (stale snapshots,
-              # see :room_resynced).
+              # last room state applied (stale snapshots, see :room_resynced).
+              # The canvas's own (drawing_manager.mjs) starts at strokes_seq.
               |> put_state(:last_seq, rs.seq)
               |> put_state(:delta_seq, rs.seq)
               |> put_state(:strokes_seq, rs.seq)
@@ -171,10 +181,22 @@ defmodule ScrawlyWeb.Pages.GamePage do
                 is_creator and length(rs.players) >= 2 and rs.game_id == nil
               )
               |> put_state(:chat_messages, rs.chat_messages || [])
-              |> put_state(:drawing_strokes, rs.drawing_strokes || [])
-              |> put_state(:draw_color, "#000000")
-              |> put_state(:draw_width, 2)
-              |> put_state(:draw_eraser, false)
+              # The canvas at load, as one JSON string: drawing_manager.mjs
+              # draws it on :mounted (the drawer's history, a viewer's list)
+              # and owns it from then on. One string is much cheaper for
+              # Hologram to carry and decode than a list of maps, and the
+              # page's HTML carries the strokes once (no rendered paths).
+              |> put_state(:canvas_strokes, strokes_json(rs.drawing_strokes))
+              # The drawer's tool (DrawingToolbar's model): every page
+              # instance starts with the default one.
+              |> put_state(:draw_tool, DrawingToolbar.default_tool())
+              # The browser's saved colours (localStorage): none here, the
+              # client loads them after mount (:mounted, :page_shown).
+              |> put_state(:saved_colors, [])
+              |> put_state(:color_panel, false)
+              # Whether the drawer's history holds anything to undo
+              # (drawing_manager.mjs tells, :undo_available).
+              |> put_state(:can_undo, false)
               # On a phone the scores are a one-line strip; tapping it shows
               # the full list over the canvas until the next tap.
               |> put_state(:show_all_scores, false)
@@ -183,6 +205,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:answer_kind, rs.answer_kind)
               |> put_state(:themes, Map.get(rs, :themes) || [])
               |> put_state(:word_source, rs.word_source || :local)
+              |> put_word_view()
               |> put_state(:prompt, rs.prompt || "")
               |> put_state(:creator_name, rs.creator_name || "")
               |> put_state(:round_duration, rs.round_duration || 60)
@@ -308,15 +331,21 @@ defmodule ScrawlyWeb.Pages.GamePage do
     JS.call(:mountCanvas, [Map.get(component.state, :mount_id)])
     JS.call(:noteRoomChannel, [component.props.room_id])
     push_tool(component.state)
+    component = load_saved_colors(component)
+    canvas = Map.get(component.state, :canvas_strokes, "")
 
     if component.state.is_drawer do
-      JS.call(:restoreStrokes, [component.state.drawing_strokes])
+      JS.call(:restoreStrokes, [canvas])
+    else
+      JS.call(:showViewerStrokes, [canvas, Map.get(component.state, :strokes_seq)])
     end
 
     JS.call(:setDrawingEnabled, [can_draw?(component.state)])
 
     component =
       component
+      # drawing_manager.mjs holds the canvas now.
+      |> put_state(:canvas_strokes, "")
       |> put_state(:phase_entered_at, System.monotonic_time(:millisecond))
       |> anchor_countdowns(component.state)
 
@@ -373,6 +402,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
         component
         |> close_room_settings()
+        |> put_state(:color_panel, false)
+        # restoreCanvas above tells it again (:undo_available).
+        |> put_state(:can_undo, false)
+        |> load_saved_colors()
         |> put_state(:restoring?, true)
         |> put_state(:invite_copy, restored_invite_copy(state))
         |> put_state(:last_tick_at, nil)
@@ -450,10 +483,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  # Viewers render the completed strokes; a drawer's tab already holds its
-  # own (drawing_manager.mjs) and only takes in one drawn in another of the
-  # drawer's tabs (adoptStroke). Each viewer stroke keeps the seq it arrived
-  # with (stale snapshots, see :room_resynced).
+  # The canvas is drawing_manager.mjs's: a viewer's page hands the stroke
+  # over with its seq (applyViewerStroke: one node appended, the seq kept
+  # for stale snapshots, see :room_resynced); a drawer's tab already holds
+  # its own and only takes in one drawn in another of the drawer's tabs
+  # (adoptStroke).
   def action(:stroke_completed, params, component) do
     case accept_seq(component, params) do
       {:apply, component, seq, gap} ->
@@ -468,22 +502,14 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   # A drawer's tab only follows a clear made in another of the drawer's tabs
   # (`op_epoch` is the clearing tab's, see drawing_manager.mjs
-  # applyRoomClear). Viewers keep the live preview of a stroke started after
-  # the clear (clearRemoteStrokes).
+  # applyRoomClear). Viewers empty their canvas and keep the live preview of
+  # a stroke started after the clear (clearViewerStrokes).
   def action(:drawing_cleared, params, component) do
     case accept_seq(component, params) do
       {:apply, component, seq, gap} ->
-        component =
-          if component.state.is_drawer do
-            JS.call(:applyRoomClear, [Map.get(params, :op_epoch)])
-            component
-          else
-            JS.call(:clearRemoteStrokes, [])
-
-            component
-            |> put_state(:drawing_strokes, [])
-            |> put_state(:strokes_seq, seq)
-          end
+        if component.state.is_drawer,
+          do: JS.call(:applyRoomClear, [Map.get(params, :op_epoch)]),
+          else: JS.call(:clearViewerStrokes, [seq])
 
         after_gap(component, gap)
 
@@ -493,27 +519,16 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   # Only the undone stroke's id comes (the canvas is never re-sent): a
-  # viewer drops that stroke from the list it renders. Live overlays of the
-  # stroke being drawn stay. strokes_seq moves on, so a stale snapshot
-  # can't bring the stroke back. A drawer's tab drops it if another of the
+  # viewer's canvas drops that stroke and moves its seq on, so a stale
+  # snapshot can't bring it back (undoViewerStroke). Live overlays of the
+  # stroke being drawn stay. A drawer's tab drops it if another of the
   # drawer's tabs undid it (its own undo already did).
   def action(:drawing_undone, params, component) do
     case accept_seq(component, params) do
       {:apply, component, seq, gap} ->
-        component =
-          if component.state.is_drawer do
-            JS.call(:forgetStroke, [Map.get(params, :stroke_id)])
-            component
-          else
-            stroke_id = Map.get(params, :stroke_id)
-
-            component
-            |> put_state(
-              :drawing_strokes,
-              Enum.reject(component.state.drawing_strokes, &(&1.id == stroke_id))
-            )
-            |> put_state(:strokes_seq, seq)
-          end
+        if component.state.is_drawer,
+          do: JS.call(:forgetStroke, [Map.get(params, :stroke_id)]),
+          else: JS.call(:undoViewerStroke, [Map.get(params, :stroke_id), seq])
 
         after_gap(component, gap)
 
@@ -977,7 +992,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   # Dispatched on every (re)join of the game channel. Never touches the
   # canvas: the drawer's strokes live in drawing_manager.mjs (restored once per
-  # mount by :mounted), the viewers' in :drawing_strokes.
+  # mount by :mounted), the viewers' too (showViewerStrokes).
   def action(:channel_connected, _params, component) do
     component
     |> put_state(:channel_connected, true)
@@ -1019,7 +1034,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
     base = [room_id: component.props.room_id, op_epoch: op_epoch, op_seq: op_seq]
 
     case kind do
-      # The turn goes along so a rejection can be matched to it.
+      # The turn goes along so a rejection can be matched to it. A fill
+      # (fill_tool.mjs) carries `fill: true`.
       "commit" ->
         put_command(
           component,
@@ -1032,7 +1048,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               width: Map.get(op, :width),
               game_id: Map.get(component.state, :game_id),
               round: Map.get(component.state, :round)
-            ]
+            ] ++ if(Map.get(op, :fill) == true, do: [fill: true], else: [])
         )
 
       "undo" ->
@@ -1068,7 +1084,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
          Map.get(params, :game_id) == Map.get(state, :game_id) and
          Map.get(params, :round) == Map.get(state, :round) do
       JS.call(:applyRejectedStrokes, [Map.get(params, :op_seq), strokes])
-      put_state(component, :drawing_strokes, strokes)
+      component
     else
       component
     end
@@ -1077,27 +1093,79 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # The clear goes out through the op queue, after the ops queued before it.
   def action(:clear_canvas, _params, component) do
     JS.call(:clearDrawing, [])
-    put_state(component, :drawing_strokes, [])
-  end
-
-  def action(:select_color, params, component) do
-    color = params.color || "#000000"
-    JS.call(:setToolColor, [color])
-
     component
-    |> put_state(:draw_color, color)
-    |> put_state(:draw_eraser, false)
   end
 
-  def action(:select_width, params, component) do
-    width = params.width || 2
-    JS.call(:setToolWidth, [width])
-    put_state(component, :draw_width, width)
-  end
+  # A preset or a saved colour.
+  def action(:select_color, params, component),
+    do:
+      put_tool(
+        component,
+        DrawingToolbar.select_color(draw_tool(component.state), Map.get(params, :color))
+      )
 
+  # The colour panel's native controls (color_picker.mjs) and a pick from
+  # the canvas (eyedropper.mjs) have set the model already; the state
+  # follows, throttled, without a push (a push could put an older colour
+  # back over a newer one mid-drag).
+  # `tool` is the canvas's tool by then (a pick made with the picker goes
+  # back to the brush or the fill, see DrawingToolbar.select_color/3).
+  def action(:color_picked, params, component),
+    do:
+      put_state(
+        component,
+        :draw_tool,
+        DrawingToolbar.select_color(
+          draw_tool(component.state),
+          Map.get(params, :color),
+          Map.get(params, :tool)
+        )
+      )
+
+  def action(:toggle_color_panel, _params, component),
+    do: put_state(component, :color_panel, Map.get(component.state, :color_panel) != true)
+
+  # Escape, a click outside, "done" (phones).
+  def action(:close_color_panel, _params, component),
+    do: put_state(component, :color_panel, false)
+
+  # "+ save" and the removals: color_picker.mjs has stored the new list.
+  def action(:saved_colors, params, component),
+    do: put_saved_colors(component, Map.get(params, :colors))
+
+  # The slider's throttled `$change` (`event.value`), or `size`.
+  def action(:select_size, params, component),
+    do:
+      put_tool(
+        component,
+        DrawingToolbar.select_size(draw_tool(component.state), DrawingToolbar.size_param(params))
+      )
+
+  # Also E and Ctrl+Z / Cmd+Z: draw_controls.mjs dispatches the toolbar's
+  # actions for its shortcuts, behind its typing guard.
   def action(:toggle_eraser, _params, component), do: toggle_eraser(component)
 
+  # B (draw_controls.mjs).
+  def action(:select_brush, _params, component),
+    do: put_tool(component, DrawingToolbar.select_brush(draw_tool(component.state)))
+
+  # The "pick" button, and I (draw_controls.mjs). The pick itself is native
+  # (eyedropper.mjs, the drawer's history) and comes back as :color_picked;
+  # nothing reaches the room.
+  def action(:toggle_picker, _params, component),
+    do: put_tool(component, DrawingToolbar.toggle_picker(draw_tool(component.state)))
+
+  # The "fill" button, and F (draw_controls.mjs). A fill is native
+  # (fill_tool.mjs) and reaches the room as a stroke, through the op queue.
+  def action(:toggle_fill, _params, component),
+    do: put_tool(component, DrawingToolbar.toggle_fill(draw_tool(component.state)))
+
   def action(:undo_drawing, _params, component), do: undo_last_stroke(component)
+
+  # drawing_manager.mjs: whether the drawer's history holds anything to
+  # undo (the toolbar's undo button).
+  def action(:undo_available, params, component),
+    do: put_state(component, :can_undo, Map.get(params, :available) == true)
 
   # ── Score strip (phones) ───────────────────────────────────────────
   # Under 720 px the scoreboard is a one-line strip; a tap on it shows the
@@ -1114,29 +1182,6 @@ defmodule ScrawlyWeb.Pages.GamePage do
       )
 
   def action(:hide_scores, _params, component), do: put_state(component, :show_all_scores, false)
-
-  # ── Drawer keyboard shortcuts ──────────────────────────────────────
-  # The `<window>` bindings render only inside the drawer's toolbar. Key
-  # filters match a superset of modifiers and fire on auto-repeat, so these
-  # clauses keep only the plain press: E alone toggles once even when held,
-  # Ctrl+Z / Cmd+Z undo once (no Shift: that is redo elsewhere). Ctrl+Cmd+Z
-  # fires both undo bindings with the same event; the :meta one yields.
-
-  def action(
-        :shortcut_eraser,
-        %{event: %{ctrl_key: false, meta_key: false, alt_key: false, repeat: false}},
-        component
-      ),
-      do: toggle_eraser(component)
-
-  def action(:shortcut_eraser, _params, component), do: component
-
-  def action(:shortcut_undo, %{via: :meta, event: %{ctrl_key: true}}, component), do: component
-
-  def action(:shortcut_undo, %{event: %{shift_key: false, repeat: false}}, component),
-    do: undo_last_stroke(component)
-
-  def action(:shortcut_undo, _params, component), do: component
 
   # ── Other pages' broadcasts ──────────────────────────────────────────
   # HomePage's `:lobby` actions. They reach this page when it was restored
@@ -1318,66 +1363,38 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   defp add_viewer_stroke(component, params, seq) do
-    if component.state.is_drawer do
-      JS.call(:adoptStroke, [
-        %{
-          id: Map.get(params, :stroke_id),
-          path: Map.get(params, :path),
-          color: Map.get(params, :color),
-          width: Map.get(params, :width)
-        }
-      ])
+    stroke = %{
+      id: Map.get(params, :stroke_id),
+      path: Map.get(params, :path),
+      color: Map.get(params, :color),
+      width: Map.get(params, :width),
+      fill: Map.get(params, :fill) == true
+    }
 
-      component
-    else
-      strokes = component.state.drawing_strokes
-      JS.call(:removeRemoteOverlay, [params.stroke_id])
+    if component.state.is_drawer,
+      do: JS.call(:adoptStroke, [stroke]),
+      else: JS.call(:applyViewerStroke, [stroke, seq])
 
-      if Enum.any?(strokes, &(&1.id == params.stroke_id)) do
-        component
-      else
-        stroke = %{
-          id: params.stroke_id,
-          path: params.path || "",
-          color: params.color || "#000000",
-          width: params.width || 2,
-          seq: seq
-        }
-
-        put_state(component, :drawing_strokes, strokes ++ [stroke])
-      end
-    end
+    component
   end
 
-  # Viewers take the snapshot's strokes, plus strokes that arrived after it
-  # (unless the list was replaced after it: then theirs is newer). The live
-  # overlays of strokes it holds go; those of strokes still being drawn stay.
+  # A viewer's canvas takes the snapshot's strokes, plus strokes that arrived
+  # after it, unless its list was replaced after it (drawing_manager.mjs
+  # applyViewerSnapshot); the live overlays of strokes it holds go, those of
+  # strokes still being drawn stay. The drawer's canvas is rebased on a
+  # restore only (finish_restore/2).
   defp apply_snapshot_strokes(component, view, seq) do
-    state = component.state
-
-    cond do
-      state.is_drawer ->
-        component
-
-      is_integer(state.strokes_seq) and state.strokes_seq > seq ->
-        component
-
-      true ->
-        room = view.drawing_strokes || []
-
-        newer =
-          Enum.filter(state.drawing_strokes, fn s ->
-            Map.get(s, :seq, 0) > seq and not Enum.any?(room, &(&1.id == s.id))
-          end)
-
-        strokes = room ++ newer
-        JS.call(:settleRemoteStrokes, [Enum.map(strokes, & &1.id)])
-
-        component
-        |> put_state(:drawing_strokes, strokes)
-        |> put_state(:strokes_seq, seq)
+    unless component.state.is_drawer do
+      JS.call(:applyViewerSnapshot, [view.drawing_strokes || [], seq])
     end
+
+    component
   end
+
+  # The strokes as one JSON string, for the page's state (init): the
+  # canvas drawing_manager.mjs draws on :mounted.
+  defp strokes_json(strokes) when is_list(strokes), do: Jason.encode!(strokes)
+  defp strokes_json(_strokes), do: "[]"
 
   # The word fields of the drawer, or of a player who has guessed the word,
   # in a snapshot, applied like a pushed slice.
@@ -1437,6 +1454,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     if phase_rank(slice.phase) >= phase_rank(component.state.phase) do
       component
       |> put_state(:current_word, slice.current_word)
+      |> put_word_view()
       |> put_state(:word_choices, slice.word_choices || [])
       |> put_state(
         :guess_points,
@@ -1616,6 +1634,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
       |> put_state(:revealed_word, Map.get(view, :revealed_word))
       |> put_state(:word_difficulty, Map.get(view, :word_difficulty))
       |> put_state(:round_summary, Map.get(view, :round_summary))
+      |> put_word_view()
       |> put_settings(view)
 
     # The settings form is the lobby's: it goes when the room leaves it.
@@ -1674,16 +1693,37 @@ defmodule ScrawlyWeb.Pages.GamePage do
     }
   end
 
+  # The word's blocks and label (PlayFeedback.word_view/1), worked out again
+  # only when what they show has changed, never by a render: the template
+  # reads them from the state.
+  defp put_word_view(component) do
+    s = component.state
+    summary = Map.get(s, :round_summary)
+
+    inputs = %{
+      display: Map.get(s, :current_word_display),
+      letters: Map.get(s, :word_length),
+      word: Map.get(s, :current_word),
+      revealed: Map.get(s, :revealed_word),
+      summary: if(is_map(summary), do: Map.get(summary, :word))
+    }
+
+    current = Map.get(s, :word_view)
+
+    if is_map(current) and Map.get(current, :for) == inputs,
+      do: component,
+      else: put_state(component, :word_view, PlayFeedback.word_view(inputs))
+  end
+
   # A new game, a new turn or the end of the game: an empty canvas for
   # everyone (the drawer's local history and op queue included), no word
   # until the new drawer's slice arrives and no guess yet.
   defp reset_turn(component, seq) do
-    JS.call(:setDrawingPath, [""])
+    JS.call(:setDrawingPath, ["", seq])
 
     component
-    |> put_state(:drawing_strokes, [])
-    |> put_state(:strokes_seq, seq)
     |> put_state(:current_word, nil)
+    |> put_word_view()
     |> put_state(:word_choices, [])
     |> put_state(:guess_points, nil)
   end
@@ -1808,7 +1848,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
   def can_draw?(state),
     do: Map.get(state, :is_drawer) == true and Map.get(state, :phase) == :drawing
 
-  # After the reducer changed is_drawer or the phase.
+  # After the reducer changed is_drawer or the phase. The colour panel
+  # closes with the drawing (it would open again with the next turn's
+  # toolbar).
   defp sync_drawing_enabled(component, old_state) do
     allowed = can_draw?(component.state)
 
@@ -1816,28 +1858,36 @@ defmodule ScrawlyWeb.Pages.GamePage do
       JS.call(:setDrawingEnabled, [allowed])
     end
 
-    component
+    if allowed, do: component, else: put_state(component, :color_panel, false)
   end
 
-  # Shared by the toolbar buttons and the keyboard shortcuts.
-  defp toggle_eraser(component) do
-    component =
-      put_state(component, :draw_eraser, not Map.get(component.state, :draw_eraser, false))
+  # The toolbar's button, and E (draw_controls.mjs dispatches :toggle_eraser).
+  defp toggle_eraser(component),
+    do: put_tool(component, DrawingToolbar.toggle_eraser(draw_tool(component.state)))
 
+  defp draw_tool(state), do: Map.get(state, :draw_tool) || DrawingToolbar.default_tool()
+
+  defp put_tool(component, tool) do
+    component = put_state(component, :draw_tool, tool)
     push_tool(component.state)
     component
   end
 
-  # The tool the toolbar shows, into drawing_manager.mjs (whose tool is
-  # shared by every page instance of the tab): on :mounted, after a
-  # Back/Forward restore, and when the eraser toggles.
-  defp push_tool(state) do
-    if Map.get(state, :draw_eraser, false) do
-      JS.call(:setToolColor, ["#FFFFFF"])
-      JS.call(:setToolWidth, [20])
-    else
-      JS.call(:setToolColor, [Map.get(state, :draw_color, "#000000")])
-      JS.call(:setToolWidth, [Map.get(state, :draw_width, 2)])
+  # The tool the toolbar shows, into draw_tools.mjs (one tool per tab, shared
+  # by every page instance; drawing_manager.mjs mountCanvas resets it): on
+  # :mounted, after a Back/Forward restore, and on every change.
+  defp push_tool(state), do: JS.call(:setDrawTool, [DrawingToolbar.js_tool(draw_tool(state))])
+
+  # The browser's saved colours (color_picker.mjs, localStorage), loaded on
+  # the client after mount and after a restore: never server-rendered.
+  defp load_saved_colors(component), do: put_saved_colors(component, JS.call(:savedColors, []))
+
+  # The list color_picker.mjs returned or sent (on the server JS.call
+  # returns :ok: the state stays as it is).
+  defp put_saved_colors(component, value) do
+    case DrawingToolbar.saved_colors(value) do
+      nil -> component
+      colors -> put_state(component, :saved_colors, colors)
     end
   end
 
@@ -2084,27 +2134,27 @@ defmodule ScrawlyWeb.Pages.GamePage do
             {%else}
               {%if @revealed_word}
                 <div class="word-letters">
-                  {%for w <- PlayFeedback.word_blocks(String.upcase(@revealed_word))}<span class="word-chunk">{w}</span>{/for}
+                  {%for w <- @word_view.revealed}<span class="word-chunk">{w}</span>{/for}
                 </div>
               {%else}
                 {%if @current_word}
                   <div class={"word-letters" <> if(@is_drawer, do: "", else: " got-it")}>
-                    {%for w <- PlayFeedback.word_blocks(String.upcase(@current_word))}<span class="word-chunk">{w}</span>{/for}
+                    {%for w <- @word_view.word}<span class="word-chunk">{w}</span>{/for}
                   </div>
                 {%else}
                   <div class="word-letters masked">
-                    {%for w <- PlayFeedback.mask_blocks(@current_word_display)}<span class="word-chunk">{w}</span>{/for}
+                    {%for w <- @word_view.mask}<span class="word-chunk">{w}</span>{/for}
                   </div>
                 {/if}
               {/if}
               <div class="word-meta">
                 {%if @is_drawer}
-                  your word · {PlayFeedback.word_label(@current_word_display, @word_length)}
+                  your word · {@word_view.label}
                 {%else}
                   {%if @phase == :drawing and PlayFeedback.guessed?(@correct_guessers, @current_user_id, @guess_points)}
                     <span class="got-it">{PlayFeedback.got_it(@guess_points)}</span>
                   {%else}
-                    round {@round} of {@total_rounds} · {PlayFeedback.word_label(@current_word_display, @word_length)}
+                    round {@round} of {@total_rounds} · {@word_view.label}
                   {/if}
                 {/if}
                 {%if @word_difficulty}<span class={PlayFeedback.difficulty_class(@word_difficulty)}>{PlayFeedback.difficulty_label(@word_difficulty)}</span>{/if}
@@ -2165,7 +2215,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               {%if @round_summary.difficulty}<span class={PlayFeedback.difficulty_class(@round_summary.difficulty)}>{PlayFeedback.difficulty_label(@round_summary.difficulty)}</span>{/if}
             </div>
             <div class="word-letters round-summary-answer">
-              {%for w <- PlayFeedback.word_blocks(String.upcase(@round_summary.word || ""))}<span class="word-chunk">{w}</span>{/for}
+              {%for w <- @word_view.summary}<span class="word-chunk">{w}</span>{/for}
             </div>
             <div class="round-summary-rows">
               {%for row <- @round_summary.players}
@@ -2229,41 +2279,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
             </span>
           </div>
 
-          <DrawingCanvas is_drawer={@is_drawer}
-            strokes={@drawing_strokes}
-            active_color={if(@draw_eraser, do: "#FFFFFF", else: @draw_color)}
-            active_width={if(@draw_eraser, do: 20, else: @draw_width)} />
+          <DrawingCanvas is_drawer={@is_drawer} />
 
           {%if @is_drawer}
-            <div class="toolbar">
-              <div class="swatches">
-                {%for c <- ["#0a0a0a", "#d63838", "#2a6df4", "#1f9a4a", "#eab308", "#f97316", "#a855f7", "#ec4899"]}
-                  <button class={"swatch " <> if(@draw_color == c && !@draw_eraser, do: "active", else: "")}
-                          style={"background: " <> c <> ";"}
-                          $click={:select_color, color: c}></button>
-                {/for}
-              </div>
-              <div class="tool-group">
-                {%for {wv, sz} <- [{2, 4}, {5, 7}, {10, 10}, {20, 14}]}
-                  <button class={"tool-btn " <> if(@draw_width == wv && !@draw_eraser, do: "active", else: "")}
-                          $click={:select_width, width: wv}>
-                    <span class="size-dot" style={"width: " <> Integer.to_string(sz) <> "px; height: " <> Integer.to_string(sz) <> "px;"}></span>
-                  </button>
-                {/for}
-              </div>
-              <div class="tool-group">
-                <button class={"tool-btn " <> if(@draw_eraser, do: "active", else: "")} $click={:toggle_eraser}>erase</button>
-                <button class="tool-btn" $click={:undo_drawing}>undo</button>
-                <button class="tool-btn" $click={:clear_canvas}>clear</button>
-              </div>
-              <span class="mono" style="font-size: 11px; color: var(--muted); margin-left: auto;">
-                <span class="kbd">⌘/Ctrl+Z</span> undo · <span class="kbd">E</span> eraser
-              </span>
-              <window
-                $key_down.e="shortcut_eraser"
-                $key_down.ctrl+z.prevent_default={:shortcut_undo, via: :ctrl}
-                $key_down.meta+z.prevent_default={:shortcut_undo, via: :meta} />
-            </div>
+            <DrawingToolbar tool={@draw_tool} saved={@saved_colors} panel={@color_panel} can_undo={@can_undo} shortcuts={true} />
           {%else}
             <div class="toolbar toolbar-viewer" style="justify-content: space-between;">
               <div class="row" style="gap: 8px;">

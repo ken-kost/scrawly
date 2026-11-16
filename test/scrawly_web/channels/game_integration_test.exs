@@ -138,6 +138,37 @@ defmodule ScrawlyWeb.GameIntegrationTest do
       assert relayed["width"] == 2
     end
 
+    test "any #rrggbb colour (no preset) reaches viewers exactly: live and committed",
+         %{room: room, creator: creator} do
+      # The colour panel's (colors): what the wheel or the hex field gives.
+      color = "#3fa7c2"
+      refute color in ScrawlyWeb.Components.DrawingToolbar.colors()
+      socket = join!(creator, room)
+
+      assert assert_relayed(socket, chunk(%{"color" => color}))["color"] == color
+
+      Phoenix.PubSub.subscribe(Hologram.PubSub, Hologram.Realtime.channel_topic({:room, room.id}))
+      stroke = %{id: "s-custom", path: "M 1 1 L 9 9", color: color, width: 7}
+      :ok = RoomServer.append_drawing(room.id, creator.id, stroke)
+
+      assert_receive {:broadcast_action, {:room, _}, :stroke_completed,
+                      %{stroke_id: "s-custom", color: ^color, width: 7}, _}
+
+      assert [%{color: ^color}] = room_state!(room.id).drawing_strokes
+    end
+
+    test "a forged chunk with a fill is relayed as a line's chunk, without the flag (#43)",
+         %{room: room, creator: creator} do
+      socket = join!(creator, room)
+      forged = chunk(%{"fill" => true, "delta" => "M 1 1 L 9 1 L 9 9 Z"})
+
+      relayed = assert_relayed(socket, forged)
+      assert relayed == Map.delete(forged, "fill")
+      assert Process.alive?(socket.channel_pid)
+      # Fills reach viewers only as completed strokes, through the room.
+      assert room_state!(room.id).drawing_strokes == []
+    end
+
     test "a non-drawer's chunk is not relayed", %{room: room, player: player} do
       socket = join!(player, room)
       refute_relayed(socket, chunk())

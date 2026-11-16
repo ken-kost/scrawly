@@ -6,16 +6,41 @@ defmodule ScrawlyWeb.Components.GameDemo do
   strokes are committed to the DOM directly by `demo_board.mjs`, so Hologram
   never runs an action or re-renders per pointer move.
 
-  The svg's layers, bottom to top: the JS-owned `#demo-board-strokes` and
-  `#demo-board-overlay` groups (JS only inserts into these), then
-  `#demo-board-active-path`. The dot grid is drawn by CSS above the strokes
-  (`.demo-canvas::after`), so the white eraser never paints over it.
+  The board has the game canvas's coordinates (`viewBox="0 0 800 450"`), so
+  a size draws as thick, relative to the canvas, on both. Its tools are the
+  game's DrawingToolbar, every control, with its shortcuts (`[` / `]`, B, E,
+  I, F, Ctrl/Cmd+Z; draw_controls.mjs ignores them while the user types in the
+  lobby chat, the code field or any other field); `tool` is HomePage's
+  `draw_tool`, `saved` and `panel` its saved colours and colour panel flag,
+  `can_undo` whether the visitor has a stroke of their own on the board (undo
+  takes back only the visitor's own strokes, demo_board.mjs).
+
+  Two svgs stacked, with the same viewBox (the game canvas's split,
+  DrawingCanvas): below, `#demo-board-paint` (no pointer events) holds the
+  committed strokes in the JS-owned `#demo-board-strokes` group; on top,
+  `#demo-board-svg`, the canvas the stroke engine listens to, holds what
+  changes while drawing, the JS-owned `#demo-board-overlay` group (peers'
+  strokes in progress) and `#demo-board-active-path` (styled by JS when a
+  stroke starts), on a compositor layer of its own (app.css
+  `.canvas-input`), so a frame of a stroke in progress never re-rasters the
+  committed strokes. JS only inserts into the groups. The dot grid is drawn
+  by CSS above the strokes (`.demo-canvas::after`), so the white eraser
+  never paints over it. `#demo-board-ring`, beside the svg, is the
+  size ring (size_ring.mjs, on its own layer, hidden until JS shows it),
+  `#demo-board-pick` the colour picker's swatch (eyedropper.mjs, the same),
+  and `#demo-board-notice` the fill tool's status line (fill_tool.mjs: why
+  an area wasn't filled, for a moment). Fills are strokes like the others
+  (demo_board.mjs paints their inside).
   """
   use Hologram.Component
 
-  prop :color, :string, default: "#000000"
-  prop :width, :integer, default: 2
-  prop :eraser, :boolean, default: false
+  alias ScrawlyWeb.Components.DrawingToolbar
+
+  prop :tool, :map, required: true
+  # HomePage's saved colours and colour panel flag (DrawingToolbar).
+  prop :saved, :list, default: []
+  prop :panel, :boolean, default: false
+  prop :can_undo, :boolean, default: false
 
   def template do
     ~HOLO"""
@@ -25,49 +50,23 @@ defmodule ScrawlyWeb.Components.GameDemo do
           <span class="chip chip-live">live demo</span>
           <span class="section-label">shared board · everyone draws together</span>
         </div>
-        <button type="button" class="app-btn app-btn-ghost app-btn-sm" $click={:demo_clear}>clear</button>
       </div>
 
       <div class="demo-canvas" style="aspect-ratio: 16/9; min-height: 220px; position: relative;">
-        <svg
-          id="demo-board-svg"
-          viewBox="0 0 400 225"
-          preserveAspectRatio="xMidYMid meet"
-          style="touch-action: none; width: 100%; height: 100%;">
-          <g id="demo-board-strokes"></g>
+        <svg id="demo-board-paint" class="canvas-paint" viewBox="0 0 800 450" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><g id="demo-board-strokes"></g></svg>
+        <svg id="demo-board-svg" class="canvas-input" viewBox="0 0 800 450" preserveAspectRatio="xMidYMid meet" style="touch-action: none;">
           <g id="demo-board-overlay"></g>
-          <path id="demo-board-active-path" d="" stroke={@color} stroke-width={@width} fill="none" stroke-linecap="round" stroke-linejoin="round" />
+          <path id="demo-board-active-path" d="" fill="none" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
+        <svg id="demo-board-ring" class="size-ring" aria-hidden="true" focusable="false">
+          <circle class="size-ring-outer" />
+          <circle class="size-ring-inner" />
+        </svg>
+        <span id="demo-board-pick" class="pick-swatch" aria-hidden="true"></span>
+        <span id="demo-board-notice" class="canvas-notice" role="status"></span>
       </div>
 
-      <div class="between" style="padding: 10px 14px; gap: 12px; flex-wrap: wrap;">
-        <div class="row" style="gap: 4px;">
-          {%for c <- ["#000000", "#EF4444", "#F97316", "#EAB308", "#22C55E", "#3B82F6", "#A855F7", "#EC4899"]}
-            <button
-              type="button"
-              class={"swatch " <> if(@color == c and !@eraser, do: "active", else: "")}
-              style={"background: " <> c <> ";"}
-              $click={:demo_set_color, value: c}></button>
-          {/for}
-        </div>
-
-        <div class="row" style="gap: 4px;">
-          {%for {wv, lbl} <- [{2, "s"}, {4, "m"}, {8, "l"}]}
-            <button
-              type="button"
-              class={"tool-btn " <> if(@width == wv and !@eraser, do: "active", else: "")}
-              $click={:demo_set_width, value: wv}>
-              <span class="size-dot" style={"width: " <> Integer.to_string(wv * 2) <> "px; height: " <> Integer.to_string(wv * 2) <> "px;"}></span>
-              <span class="mono" style="font-size: 11px; color: var(--muted); margin-left: 4px;">{lbl}</span>
-            </button>
-          {/for}
-        </div>
-
-        <button
-          type="button"
-          class={"tool-btn " <> if(@eraser, do: "active", else: "")}
-          $click={:demo_toggle_eraser}>erase</button>
-      </div>
+      <DrawingToolbar tool={@tool} saved={@saved} panel={@panel} can_undo={@can_undo} shortcuts={true} />
     </div>
     """
   end

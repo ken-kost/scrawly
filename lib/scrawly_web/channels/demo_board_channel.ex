@@ -4,13 +4,30 @@ defmodule ScrawlyWeb.DemoBoardChannel do
   Topic: `demo:board`. Kept over Hologram Realtime by a measured gate
   (REALTIME_MIGRATION_REPORT.md, "Live stroke chunks: the measured gate").
 
+  Who draws: the socket's `board_key`, the caller's actor key from a board
+  token (`ScrawlyWeb.BoardToken`, verified in `ScrawlyWeb.UserSocket`). The
+  join replies `%{draw: true | false}`: a socket without a key can watch,
+  but every drawing event is refused (chunks and clears dropped,
+  `stroke_complete` and `undo` answered `{:error, %{reason: "unauthorized"}}`),
+  and the page asks for a fresh token.
+
   Inbound events:
     * `"stroke_chunk"` (`%{stroke_id, seq, delta, color, width}`) — live in-flight chunk
-    * `"stroke_complete"` (`%{stroke_id, path, color, width}`) — final stroke. Replies
-      `:ok` when stored, or `{:error, %{reason: "invalid_stroke" | "rate_limited"}}`
-      (peers then get `"stroke_abandon"` for its id, if the id itself is valid). The
-      sender commits the stroke optimistically and uses the reply to roll it back,
-      and the `"stroke"` echo to confirm and order it.
+    * `"stroke_complete"` (`%{stroke_id, path, color, width, gesture, fill}`) —
+      final stroke; `gesture` (optional, validated like a stroke id) is the id
+      the strokes of one split gesture share, stored with the stroke and never
+      sent out. `fill: true` makes it a fill (the fill tool's closed shape:
+      `StrokeRules.validate/1`, its path `M L Z` only, width stored as 1); a
+      fill sends no chunks, and a fill press is its own gesture, so one undo
+      takes one fill back. Replies `:ok` when stored, or `{:error, %{reason: "invalid_stroke" |
+      "rate_limited" | "unauthorized"}}` (peers then get `"stroke_abandon"` for
+      its id, if the id itself is valid; an id already on the board is
+      invalid). The sender commits the stroke optimistically and uses the reply
+      to roll it back, and the `"stroke"` echo to confirm and order it.
+    * `"undo"` — removes the caller's newest gesture still on the board (every
+      stroke of it); a client can't name a stroke. Replies `{:ok, %{stroke_ids:
+      ids}}`, or `{:error, %{reason: "nothing_to_undo" | "rate_limited" |
+      "unauthorized"}}`.
     * `"clear"` — wipe the board
 
   Any other event is ignored.
@@ -22,17 +39,26 @@ defmodule ScrawlyWeb.DemoBoardChannel do
   `StrokeRules.max_path_bytes/0` bytes, a chunk delta of at most
   `StrokeRules.max_delta_bytes/0`, `color` `#RRGGBB` and `width` an integer
   in 1..40, in chunks and completed strokes alike; a missing value is
-  invalid. Invalid or over-limit chunks and clears are dropped silently. Only
+  invalid. A fill's `fill` must be `true` exactly (`false` or none is a line,
+  anything else invalid); chunks are relayed with their own five fields
+  only, so a chunk can't carry a fill. Invalid or over-limit chunks and clears are dropped silently. Only
   the socket's 8 newest open strokes are remembered (abandoned for peers
   if it goes away mid-stroke).
 
-  Outbound events:
-    * `"strokes"` — full snapshot on every join and rejoin
+  Outbound events (every payload built here from the public fields: no owner
+  key or gesture id ever leaves the server):
+    * `"strokes"` — full snapshot on every join and rejoin; the socket's own
+      strokes carry `mine: true`, fills `fill: true`
     * `"stroke"` — single newly added stroke with its `stroke_id`, sent to everyone
-      including its sender
+      including its sender, with `mine: true` for the sockets of its owner
+    * `"stroke_removed"` — `%{stroke_ids: ids}`, an undo took them off the board
     * `"stroke_chunk"` — relay of another client's in-flight chunk
     * `"stroke_abandon"` — a stroke was rejected, or its sender disconnected mid-stroke
     * `"cleared"` — board was wiped
+
+  `mine` is worked out per socket, here, from the internal
+  `{:stroke_added, stroke}` message every channel process gets; the board's
+  own broadcast is the same for everyone.
   """
   use ScrawlyWeb, :channel
 
@@ -43,19 +69,24 @@ defmodule ScrawlyWeb.DemoBoardChannel do
   @max_open_strokes 8
 
   # Per-socket sliding windows: {max events, window ms}. The client flushes
-  # chunks at 20 Hz (FLUSH_INTERVAL_MS = 50 in demo_board.mjs).
+  # chunks at 20 Hz (FLUSH_INTERVAL_MS = 50 in demo_board.mjs); undo is one
+  # press per gesture (Ctrl+Z doesn't auto-repeat there).
   @limits %{
     clear: {1, 5_000},
     stroke_complete: {20, 1_000},
-    stroke_chunk: {40, 1_000}
+    stroke_chunk: {40, 1_000},
+    undo: {10, 1_000}
   }
+
+  # What a stroke shows to clients (`fill` only a fill has).
+  @public_fields [:stroke_id, :path, :color, :width, :fill]
 
   @impl true
   def join("demo:board", _payload, socket) do
     send(self(), :after_join)
     Phoenix.PubSub.subscribe(Scrawly.PubSub, DemoBoardServer.topic())
 
-    {:ok,
+    {:ok, %{draw: board_key(socket) != nil},
      socket
      |> assign(:open_stroke_ids, [])
      |> assign(:rate_events, Map.new(@limits, fn {event, _limit} -> {event, []} end))}
@@ -63,12 +94,19 @@ defmodule ScrawlyWeb.DemoBoardChannel do
 
   @impl true
   def handle_info(:after_join, socket) do
-    push(socket, "strokes", %{strokes: DemoBoardServer.get_strokes()})
+    key = board_key(socket)
+    strokes = Enum.map(DemoBoardServer.get_strokes(), &public_stroke(&1, key))
+    push(socket, "strokes", %{strokes: strokes})
     {:noreply, socket}
   end
 
   def handle_info({:stroke_added, stroke}, socket) do
-    push(socket, "stroke", stroke)
+    push(socket, "stroke", public_stroke(stroke, board_key(socket)))
+    {:noreply, socket}
+  end
+
+  def handle_info({:strokes_removed, ids}, socket) do
+    push(socket, "stroke_removed", %{stroke_ids: ids})
     {:noreply, socket}
   end
 
@@ -86,29 +124,48 @@ defmodule ScrawlyWeb.DemoBoardChannel do
   # roundtrip on the 20Hz hot path. Persistence happens once on
   # `stroke_complete` below.
   def handle_in("stroke_chunk", payload, socket) do
-    case take_slot(socket, :stroke_chunk) do
-      {:ok, socket} -> {:noreply, relay_chunk(socket, payload)}
-      :rate_limited -> {:noreply, socket}
+    with true <- drawer?(socket),
+         {:ok, socket} <- take_slot(socket, :stroke_chunk) do
+      {:noreply, relay_chunk(socket, payload)}
+    else
+      _refused -> {:noreply, socket}
     end
   end
 
   def handle_in("stroke_complete", payload, socket) do
     stroke_id = payload["stroke_id"]
 
-    case take_slot(socket, :stroke_complete) do
-      {:ok, socket} -> complete_stroke(socket, stroke_id, payload)
-      :rate_limited -> reject_stroke(socket, stroke_id, "rate_limited")
+    if drawer?(socket) do
+      case take_slot(socket, :stroke_complete) do
+        {:ok, socket} -> complete_stroke(socket, stroke_id, payload)
+        :rate_limited -> reject_stroke(socket, stroke_id, "rate_limited")
+      end
+    else
+      # No overlay to drop: this socket's chunks were never relayed.
+      {:reply, {:error, %{reason: "unauthorized"}}, socket}
+    end
+  end
+
+  def handle_in("undo", _payload, socket) do
+    with true <- drawer?(socket),
+         {:ok, socket} <- take_slot(socket, :undo) do
+      case DemoBoardServer.undo(board_key(socket)) do
+        {:ok, ids} -> {:reply, {:ok, %{stroke_ids: ids}}, socket}
+        :none -> {:reply, {:error, %{reason: "nothing_to_undo"}}, socket}
+      end
+    else
+      false -> {:reply, {:error, %{reason: "unauthorized"}}, socket}
+      :rate_limited -> {:reply, {:error, %{reason: "rate_limited"}}, socket}
     end
   end
 
   def handle_in("clear", _payload, socket) do
-    case take_slot(socket, :clear) do
-      {:ok, socket} ->
-        DemoBoardServer.clear()
-        {:noreply, socket}
-
-      :rate_limited ->
-        {:noreply, socket}
+    with true <- drawer?(socket),
+         {:ok, socket} <- take_slot(socket, :clear) do
+      DemoBoardServer.clear()
+      {:noreply, socket}
+    else
+      _refused -> {:noreply, socket}
     end
   end
 
@@ -125,6 +182,29 @@ defmodule ScrawlyWeb.DemoBoardChannel do
     end)
 
     :ok
+  end
+
+  defp board_key(socket) do
+    case socket.assigns do
+      %{board_key: key} when is_binary(key) and key != "" -> key
+      _ -> nil
+    end
+  end
+
+  defp drawer?(socket), do: board_key(socket) != nil
+
+  @doc """
+  What a socket of actor key `key` (nil: no key) is sent for a stored
+  stroke: the fields every client may see (`fill: true` for a fill), plus
+  `mine: true` when it is that key's. `owner` and `gesture` stay on the
+  server.
+  """
+  def public_stroke(stroke, key) do
+    public = Map.take(stroke, @public_fields)
+
+    if key != nil and Map.get(stroke, :owner) == key,
+      do: Map.put(public, :mine, true),
+      else: public
   end
 
   defp relay_chunk(socket, payload) do
@@ -153,24 +233,46 @@ defmodule ScrawlyWeb.DemoBoardChannel do
   end
 
   defp complete_stroke(socket, stroke_id, payload) do
-    path = payload["path"]
-
-    with true <- StrokeRules.valid_stroke_id?(stroke_id),
-         true <- StrokeRules.valid_path?(path),
-         {:ok, color, width} <- style(payload) do
-      # Stored with its stroke_id, which the `stroke` echo carries to every
-      # client (the sender included): the sender confirms its pending stroke
-      # by id, peers swap their in-progress overlay for it in one step.
-      DemoBoardServer.add_stroke(%{
-        path: path,
-        color: color,
-        width: width,
-        stroke_id: stroke_id
-      })
-
+    with {:ok, stroke} <-
+           StrokeRules.validate(%{
+             id: stroke_id,
+             path: payload["path"],
+             color: payload["color"],
+             width: payload["width"],
+             fill: payload["fill"]
+           }),
+         {:ok, gesture} <- gesture(payload, stroke_id),
+         # Stored with its stroke_id, which the `stroke` echo carries to every
+         # client (the sender included): the sender confirms its pending stroke
+         # by id, peers swap their in-progress overlay for it in one step. The
+         # owner and the gesture stay on the server; `fill: true` comes along
+         # for a fill.
+         :ok <-
+           DemoBoardServer.add_stroke(
+             Map.merge(
+               %{
+                 path: stroke.path,
+                 color: stroke.color,
+                 width: stroke.width,
+                 stroke_id: stroke.id,
+                 owner: board_key(socket),
+                 gesture: gesture
+               },
+               Map.take(stroke, [:fill])
+             )
+           ) do
       {:reply, :ok, forget_open_stroke(socket, stroke_id)}
     else
       _ -> reject_stroke(socket, stroke_id, "invalid_stroke")
+    end
+  end
+
+  # A stroke alone is its own gesture.
+  defp gesture(payload, stroke_id) do
+    case Map.fetch(payload, "gesture") do
+      :error -> {:ok, stroke_id}
+      {:ok, nil} -> {:ok, stroke_id}
+      {:ok, gesture} -> if StrokeRules.valid_stroke_id?(gesture), do: {:ok, gesture}, else: :error
     end
   end
 

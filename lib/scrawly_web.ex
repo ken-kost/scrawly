@@ -17,9 +17,11 @@ defmodule ScrawlyWeb do
   those modules here.
   """
 
+  # fill_worker.mjs: the fill tool's module Web Worker (fill_tool.mjs loads
+  # it as /fill_worker.mjs?v=N), kept out of the page bundles.
   def static_paths,
     do:
-      ~w(assets fonts images favicon.ico robots.txt phoenix.min.js game_socket.js chat_scroll.js)
+      ~w(assets fonts images favicon.ico robots.txt phoenix.min.js game_socket.js chat_scroll.js fill_worker.mjs)
 
   def router do
     quote do
