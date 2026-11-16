@@ -84,7 +84,7 @@ beforeEach(() => {
   inputEvents.length = 0;
   tools.resetDrawTool();
   // The game toolbar's names (DrawingToolbar.shortcut_names/1).
-  renderToolbar("undo brush eraser size");
+  renderToolbar("undo brush eraser picker size");
 });
 
 // ── The typing guard ──────────────────────────────────────────────────
@@ -113,7 +113,7 @@ test("the slider, buttons, checkboxes and the page itself are not", () => {
 
 // ── Which key is which shortcut ───────────────────────────────────────
 
-const ALL = ["undo", "brush", "eraser", "size"];
+const ALL = ["undo", "brush", "eraser", "picker", "size"];
 const ev = (key, mods = {}) => ({ key, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, repeat: false, ...mods });
 
 test("E is the eraser, Shift+E too; with Ctrl, Cmd or Alt, or held, it is nothing", () => {
@@ -136,6 +136,24 @@ test("B is the brush, Shift+B too; with Ctrl, Cmd or Alt, or held, it is nothing
   }
   // Live only with its control (the toolbar names it with the eraser).
   assert.equal(matchShortcut(ev("b"), ["undo", "eraser", "size"]), null);
+});
+
+test("I is the colour picker, Shift+I too; with Ctrl, Cmd or Alt, or held, it is nothing", () => {
+  const picker = { control: "picker", action: "toggle_picker" };
+  assert.deepEqual(matchShortcut(ev("i"), ALL), picker);
+  assert.deepEqual(matchShortcut(ev("I", { shiftKey: true }), ALL), picker);
+
+  // Ctrl+I, Cmd+I (the browser's), Alt+I, a held key.
+  for (const mod of ["ctrlKey", "metaKey", "altKey", "repeat"]) {
+    assert.equal(matchShortcut(ev("i", { [mod]: true }), ALL), null, mod);
+  }
+  // Live only with its control (the board and the game both name it).
+  assert.equal(matchShortcut(ev("i"), ["undo", "brush", "eraser", "size"]), null);
+
+  // Pressed: the page's toggle_picker, the key kept from the browser.
+  const e = keydown("i");
+  assert.equal(e.defaultPrevented, true);
+  assert.deepEqual(actions(), [["toggle_picker", "page"]]);
 });
 
 test("Ctrl+Z and Cmd+Z undo (both at once: once); with Shift or held, nothing", () => {
@@ -213,6 +231,7 @@ test("while focus is in a field, no shortcut fires and the key keeps its meaning
     const events = [
       keydown("e", {}, field),
       keydown("b", {}, field),
+      keydown("i", {}, field),
       keydown("B", { shiftKey: true }, field),
       keydown("z", { ctrlKey: true }, field),
       keydown("z", { metaKey: true }, field),
@@ -221,7 +240,7 @@ test("while focus is in a field, no shortcut fires and the key keeps its meaning
     ];
     assert.deepEqual(
       events.map((e) => e.defaultPrevented),
-      [false, false, false, false, false, false, false],
+      [false, false, false, false, false, false, false, false],
       field.tagName
     );
   }

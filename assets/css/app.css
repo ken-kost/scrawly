@@ -1010,6 +1010,25 @@ html, body {
 /* A footprint too small for a ring is shown as the dot it paints. */
 .size-ring[data-dot] .size-ring-outer { fill: rgba(10, 10, 10, 0.8); stroke: none; }
 svg[data-size-ring] { cursor: crosshair; }
+/* The colour picker's swatch (eyedropper.mjs): the colour under the
+   pointer, beside it, while a click would pick. Own layer, moved by
+   transform; JS colours, places and shows it. */
+.pick-swatch {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(10, 10, 10, 0.8), 0 1px 4px rgba(0, 0, 0, 0.25);
+  z-index: 2;
+  pointer-events: none;
+  visibility: hidden;
+  will-change: transform;
+}
+svg[data-pick] { cursor: crosshair; }
 
 .toolbar {
   display: flex;
@@ -1085,7 +1104,9 @@ svg[data-size-ring] { cursor: crosshair; }
    2 rows of 12 with the saved colours as a third row (each removable: its x
    shows on hover and focus), and the colour panel, a popover over the
    canvas. Phones get one sheet instead (see "Play on phones"). */
-.color-control { position: relative; display: flex; align-items: center; gap: 8px; }
+/* Wraps the swatch grid under the chip when the toolbar is too narrow for
+   both (the home board's card at ~860-900 px windows). */
+.color-control { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; }
 .color-sheet { display: contents; }
 .color-sheet-head,
 .color-backdrop { display: none; }

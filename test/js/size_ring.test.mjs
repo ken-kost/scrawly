@@ -2,7 +2,8 @@
 // geometry (the stroke's real width at the canvas's scale), when it shows
 // (mouse and pen over an enabled canvas) and hides, and that it is written
 // at most once per animation frame, natively, following the tool; the
-// eraser's look while Ctrl is held and while a stroke that erases is drawn.
+// eraser's look while Ctrl is held and while a stroke that erases is drawn;
+// no ring while a press would pick a colour (the picker, Alt with the brush).
 // Run with `node --test test/js/*.test.mjs` (test/scrawly_web/js_unit_test.exs).
 
 import { test, beforeEach } from "node:test";
@@ -82,8 +83,8 @@ const sizeRing = await import("../../lib/scrawly_web/pages/size_ring.mjs");
 const tools = await import("../../lib/scrawly_web/pages/draw_tools.mjs");
 const { ringGeometry, ringShownFor, ringOffset, insideRect, ringLook, ERASER_DASH, DOT_BELOW } = sizeRing;
 
-const move = (x, y, { type = "mouse", target = path, ctrlKey = false } = {}) =>
-  fire("pointermove", { clientX: x, clientY: y, pointerType: type, target, ctrlKey });
+const move = (x, y, { type = "mouse", target = path, ctrlKey = false, altKey = false } = {}) =>
+  fire("pointermove", { clientX: x, clientY: y, pointerType: type, target, ctrlKey, altKey });
 const ctrlDown = () => fire("keydown", { key: "Control", ctrlKey: true });
 const ctrlUp = () => fire("keyup", { key: "Control", ctrlKey: false });
 const dashed = () => outer.attrs["stroke-dasharray"] === ERASER_DASH;
@@ -409,4 +410,86 @@ test("Ctrl never shows a ring for touch", () => {
   move(500, 300, { type: "touch", ctrlKey: true });
   flushFrame();
   assert.equal(shown(), false);
+});
+
+// ── No ring while a press would pick a colour (eyedropper) ──────────
+
+const altDown = () => fire("keydown", { key: "Alt", ctrlKey: false, altKey: true });
+const altUp = () => fire("keyup", { key: "Alt", ctrlKey: false, altKey: false });
+
+test("ringLook: null when a press would pick (the picker, Alt with the brush); Ctrl still erases", () => {
+  const brush = { tool: "brush", color: "#d63838", size: 10 };
+  const picker = { ...brush, tool: "picker" };
+  assert.equal(ringLook(picker, null, "mouse", false, false), null);
+  assert.equal(ringLook(brush, null, "mouse", false, true), null);
+  assert.equal(ringLook(brush, null, "pen", false, true), null);
+  // Alt with the eraser erases; Ctrl wins over Alt and over the picker.
+  assert.deepEqual(ringLook({ ...brush, tool: "eraser" }, null, "mouse", false, true), { size: 10, eraser: true });
+  assert.deepEqual(ringLook(brush, null, "mouse", true, true), { size: 10, eraser: true });
+  assert.deepEqual(ringLook(picker, null, "mouse", true, false), { size: 10, eraser: true });
+  // A stroke being drawn is the stroke's, whatever is selected.
+  assert.deepEqual(ringLook(picker, { width: 6, tool: "eraser" }, "mouse", false, false), { size: 6, eraser: true });
+});
+
+test("the picker selected hides the ring, without a move; the brush brings it back", () => {
+  assert.equal(shown(), true);
+  tools.setDrawTool({ tool: "picker" });
+  flushFrame();
+  assert.equal(shown(), false);
+  assert.equal(svg.getAttribute("data-size-ring"), null);
+
+  // With Ctrl held a press would erase: the eraser's ring.
+  ctrlDown();
+  flushFrame();
+  assert.equal(shown(), true);
+  assert.equal(dashed(), true);
+  ctrlUp();
+  flushFrame();
+  assert.equal(shown(), false);
+
+  tools.setDrawTool({ tool: "brush" });
+  flushFrame();
+  assert.equal(shown(), true);
+});
+
+test("Alt held with the brush hides the ring until Alt comes up or the window loses focus", () => {
+  altDown();
+  flushFrame();
+  assert.equal(shown(), false);
+  altUp();
+  flushFrame();
+  assert.equal(shown(), true);
+
+  move(510, 300, { altKey: true });
+  flushFrame();
+  assert.equal(shown(), false);
+  fire("blur", { target: window });
+  flushFrame();
+  assert.equal(shown(), true);
+
+  // With the eraser, Alt changes nothing.
+  tools.setDrawTool({ tool: "eraser" });
+  altDown();
+  flushFrame();
+  assert.equal(shown(), true);
+  assert.equal(dashed(), true);
+  altUp();
+});
+
+test("followPointer: another follower gets the same frames, the pointer and the keys", () => {
+  const seen = [];
+  sizeRing.followPointer("test follower", (p, ctrl, alt) => seen.push([p && p.x, ctrl, alt]));
+  flushFrame();
+  seen.length = 0;
+  move(600, 300, { altKey: true });
+  move(610, 300, { altKey: true });
+  ctrlDown();
+  flushFrame();
+  assert.deepEqual(seen, [[610, true, true]]);
+  ctrlUp();
+  altUp();
+  flushFrame();
+  assert.deepEqual(seen.at(-1), [610, false, false]);
+  // Replaced by key.
+  sizeRing.followPointer("test follower", () => {});
 });

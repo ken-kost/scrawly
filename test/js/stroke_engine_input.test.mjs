@@ -319,3 +319,75 @@ test("a re-rendered canvas (same svg id) is guarded like the old one; one listen
   globalThis.__fire("contextmenu", { target: svg, preventDefault: () => (prevented += 1) });
   assert.equal(prevented, 1);
 });
+
+// ── A press that is no stroke (the colour picker) ────────────────────
+
+test("takePress gets the press and its viewBox point; a taken press starts no gesture", () => {
+  const taken = [];
+  const takeIt = { value: true };
+  engine = createStrokeEngine({
+    svgId: SVG_ID,
+    activePathId: "test-active-path",
+    canStart: () => ({ owner: "test" }),
+    takePress: (ctx, e, point) => {
+      taken.push({ ctx, button: e.button, altKey: e.altKey === true, point });
+      return takeIt.value;
+    },
+    getTool: (_ctx, p) => {
+      presses.push(p);
+      return tools.gestureStroke(tools.currentTool(), p);
+    },
+    newStrokeId: () => "s-" + ++nextId,
+    onStart: (s) => calls.push(["start", s.id]),
+    onSegments: (s) => calls.push(["segments", s.id]),
+    onEnd: (s) => calls.push(["end", s.id]),
+  });
+  engine.enable();
+
+  // The CTM's inverse maps client to viewBox: here the identity.
+  const e = press({ clientX: 120.04, clientY: 33.36, altKey: true });
+  assert.deepEqual(taken, [{ ctx: { owner: "test" }, button: 0, altKey: true, point: [120, 33.4] }]);
+  // No gesture, no getTool, no stroke id used, no callback; but the press
+  // is the canvas's (no text selection or native drag).
+  assert.equal(engine.isDrawing(), false);
+  assert.equal(e.defaultPrevented, true);
+  assert.deepEqual(presses, []);
+  assert.equal(nextId, 0);
+  move(140, 40);
+  release();
+  assert.deepEqual(calls, []);
+
+  // Declined: an ordinary gesture.
+  takeIt.value = false;
+  drag({});
+  assert.deepEqual([calls[0][0], calls.at(-1)[0]], ["start", "end"]);
+  assert.equal(engine.isDrawing(), false);
+  assert.equal(taken.length, 2);
+});
+
+test("takePress is not asked for presses the engine ignores (disabled, other buttons, mid-gesture)", () => {
+  let asked = 0;
+  engine = createStrokeEngine({
+    svgId: SVG_ID,
+    activePathId: "test-active-path",
+    canStart: () => ({ owner: "test" }),
+    takePress: () => {
+      asked += 1;
+      return false;
+    },
+    getTool: (_ctx, p) => tools.gestureStroke(tools.currentTool(), p),
+    newStrokeId: () => "s-" + ++nextId,
+    onEnd: () => {},
+  });
+  press({});
+  assert.equal(asked, 0, "disabled: a viewer's canvas");
+  engine.enable();
+  press({ button: 1, buttons: 4 });
+  assert.equal(asked, 0, "the middle button");
+  press({});
+  assert.equal(asked, 1);
+  // A second pointer while drawing.
+  press({ pointerId: 2, isPrimary: false });
+  assert.equal(asked, 1);
+  release();
+});

@@ -27,6 +27,7 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
   # Not a preset.
   @custom %{tool: :brush, color: "#123456", size: 10}
   @eraser %{@brush | tool: :eraser}
+  @picker %{@brush | tool: :picker}
 
   defp render_dom(node) do
     {html, _registry, _server} = Renderer.render_dom(node, %Renderer.Env{}, %Hologram.Server{})
@@ -198,23 +199,31 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
       html = toolbar(%{tool: @eraser})
       assert [[_, "erase"]] = active(html)
     end
+
+    test "the picker marks only itself; the chip keeps the colour it will paint with" do
+      html = toolbar(%{tool: @picker})
+      assert [[_, "pick"]] = active(html)
+      assert html =~ ~s(aria-label="colour #2563eb, more colours")
+    end
   end
 
   describe "controls and shortcuts" do
     test "the game offers every control and names every shortcut; the board has no undo" do
       game = game_toolbar(@brush)
       assert game =~ ">undo</button>"
-      assert attr(toolbar_tag(game), "data-draw-shortcuts") == "undo brush eraser size"
+      assert game =~ ">pick</button>"
+      assert attr(toolbar_tag(game), "data-draw-shortcuts") == "undo brush eraser picker size"
 
       assert game =~
-               ~s(<span class="mono toolbar-hint"><span class="kbd">⌘/Ctrl+Z</span> undo · <span class="kbd">B</span> brush · <span class="kbd">E</span> eraser · <span class="kbd">[</span><span class="kbd">]</span> size</span>)
+               ~s(<span class="mono toolbar-hint"><span class="kbd">⌘/Ctrl+Z</span> undo · <span class="kbd">B</span> brush · <span class="kbd">E</span> eraser · <span class="kbd">I</span> pick · <span class="kbd">[</span><span class="kbd">]</span> size</span>)
 
       board = board(@brush)
       refute board =~ "undo"
-      assert attr(toolbar_tag(board), "data-draw-shortcuts") == "brush eraser size"
+      assert board =~ ">pick</button>"
+      assert attr(toolbar_tag(board), "data-draw-shortcuts") == "brush eraser picker size"
 
       assert board =~
-               ~s(<span class="mono toolbar-hint"><span class="kbd">B</span> brush · <span class="kbd">E</span> eraser · <span class="kbd">[</span><span class="kbd">]</span> size</span>)
+               ~s(<span class="mono toolbar-hint"><span class="kbd">B</span> brush · <span class="kbd">E</span> eraser · <span class="kbd">I</span> pick · <span class="kbd">[</span><span class="kbd">]</span> size</span>)
     end
 
     test "without shortcuts the toolbar names none and shows no hint" do
@@ -229,6 +238,7 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
       assert [_] = sliders(html)
       assert html =~ ">clear</button>"
       refute html =~ ">erase</button>"
+      refute html =~ ">pick</button>"
       refute html =~ ">undo</button>"
 
       assert toolbar(%{tool: @brush, controls: []}) =~ ~r/<div class="toolbar">\s*<\/div>/
@@ -251,6 +261,15 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
 
       html = toolbar(%{tool: @brush, controls: [:sizes], shortcuts: true})
       assert attr(toolbar_tag(html), "data-draw-shortcuts") == "size"
+
+      # I comes with the pick button, alone if need be.
+      html = toolbar(%{tool: @brush, controls: [:picker], shortcuts: true})
+      assert attr(toolbar_tag(html), "data-draw-shortcuts") == "picker"
+      assert html =~ ">pick</button>"
+      assert html =~ ~s(<span class="mono toolbar-hint"><span class="kbd">I</span> pick</span>)
+
+      refute toolbar(%{tool: @brush, controls: [:eraser], shortcuts: true}) =~
+               ~s(<span class="kbd">I</span>)
 
       html = toolbar(%{tool: @brush, controls: [:colors, :clear], shortcuts: true})
       assert toolbar_tag(html) == ~s(<div class="toolbar">)
@@ -278,6 +297,20 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
       # Colour and size kept; already the brush, nothing changes.
       assert DrawingToolbar.select_brush(@eraser) == @brush
       assert DrawingToolbar.select_brush(@brush) == @brush
+    end
+
+    test "the picker toggles like the eraser; a pick is the brush in the picked colour" do
+      assert DrawingToolbar.toggle_picker(@brush) == @picker
+      assert DrawingToolbar.toggle_picker(@eraser) == @picker
+      assert DrawingToolbar.toggle_picker(@picker) == @brush
+      # A pick (:color_picked, :select_color): the brush, the eraser too.
+      assert DrawingToolbar.select_color(@picker, "#123456") == %{@brush | color: "#123456"}
+      assert DrawingToolbar.select_color(@picker, "#ffffff") == %{@brush | color: "#ffffff"}
+      # The other tools from the picker; a size keeps it.
+      assert DrawingToolbar.toggle_eraser(@picker) == @eraser
+      assert DrawingToolbar.select_brush(@picker) == @brush
+      assert DrawingToolbar.select_size(@picker, 30) == %{@picker | size: 30}
+      assert DrawingToolbar.js_tool(@picker) == %{tool: "picker", color: "#2563eb", size: 10}
     end
 
     test "the size is clamped to 1..40; anything but a whole number changes nothing" do
@@ -358,9 +391,11 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
             select_size: %{event: %{value: "33"}},
             select_size: %{event: %{value: "99"}},
             toggle_eraser: %{},
-            select_brush: %{}
+            toggle_picker: %{},
+            select_brush: %{},
+            color_picked: %{color: "#ffffff"}
           ],
-          tool <- [@brush, @eraser] do
+          tool <- [@brush, @eraser, @picker] do
         game = GamePage.action(name, params, %Component{state: %{draw_tool: tool}})
         home = HomePage.action(name, params, %Component{state: %{draw_tool: tool}})
         assert game.state.draw_tool == home.state.draw_tool, "#{name} from #{inspect(tool)}"
@@ -525,6 +560,68 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
 
       for value <- [:ok, nil, "#123456", %{}] do
         assert DrawingToolbar.saved_colors(value) == nil
+      end
+    end
+  end
+
+  describe "the colour picker" do
+    test "pick and I select the picker on both pages, pushed; again, the brush" do
+      for {result, calls} <- both(:toggle_picker, %{}, %{draw_tool: @brush}) do
+        assert result.state.draw_tool == @picker
+        assert calls == [{:setDrawTool, [%{tool: "picker", color: "#2563eb", size: 10}]}]
+      end
+
+      for {result, calls} <- both(:toggle_picker, %{}, %{draw_tool: @picker}) do
+        assert result.state.draw_tool == @brush
+        assert calls == [{:setDrawTool, [%{tool: "brush", color: "#2563eb", size: 10}]}]
+      end
+    end
+
+    test "a pick comes back as :color_picked: the brush in that colour, no push, no command" do
+      # eyedropper.mjs has set the model; white (the canvas, erased paint)
+      # is a colour like any other.
+      for color <- ["#123456", "#ffffff"],
+          {result, calls} <- both(:color_picked, %{color: color}, %{draw_tool: @picker}) do
+        assert result.state.draw_tool == %{@brush | color: color}
+        assert calls == []
+        assert result.next_command == nil
+      end
+    end
+
+    test "each canvas has its swatch beside the svg, hidden until JS shows it" do
+      for {html, svg_id, pick_id} <- [
+            {canvas(), "game-canvas-svg", "game-canvas-pick"},
+            {board(@brush), "demo-board-svg", "demo-board-pick"}
+          ] do
+        [canvas_svg] = Regex.run(~r/<svg[^>]*id="#{svg_id}".*?<\/svg>/s, html)
+        refute canvas_svg =~ pick_id
+        assert html =~ ~s(<span id="#{pick_id}" class="pick-swatch" aria-hidden="true"></span>)
+      end
+
+      css = File.read!(Path.join(@root, "assets/css/app.css"))
+      [rule] = Regex.run(~r/\n\.pick-swatch \{([^}]*)\}/, css, capture: :all_but_first)
+
+      for decl <- [
+            "will-change: transform",
+            "visibility: hidden",
+            "pointer-events: none",
+            "position: absolute",
+            "width: 22px",
+            "height: 22px"
+          ] do
+        assert rule =~ decl
+      end
+
+      # SWATCH_SIZE in eyedropper.mjs is the CSS size.
+      js = File.read!(Path.join(@root, "lib/scrawly_web/pages/eyedropper.mjs"))
+      assert js =~ "export const SWATCH_SIZE = 22;"
+    end
+
+    test "the canvases' templates hold no picker logic: no binding, no colour in markup" do
+      for html <- [canvas(), board(@brush)] do
+        [swatch] = Regex.run(~r/<span id="[a-z-]+-pick"[^>]*>/, html)
+        refute swatch =~ "style="
+        refute swatch =~ "$"
       end
     end
   end

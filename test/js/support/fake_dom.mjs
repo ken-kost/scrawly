@@ -24,6 +24,18 @@ export class FakeEl {
     this.children.push(c);
     return c;
   }
+  insertBefore(c, ref) {
+    if (!ref) return this.appendChild(c);
+    if (c.parentNode) c.parentNode.removeChild(c);
+    c.parentNode = this;
+    this.children.splice(this.children.indexOf(ref), 0, c);
+    return c;
+  }
+  get nextSibling() {
+    if (!this.parentNode) return null;
+    const s = this.parentNode.children;
+    return s[s.indexOf(this) + 1] || null;
+  }
   removeChild(c) {
     const i = this.children.indexOf(c);
     if (i >= 0) this.children.splice(i, 1);

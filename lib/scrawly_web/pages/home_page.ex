@@ -646,7 +646,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # ── Demo board tools (DrawingToolbar) ─────────────────────────────
   # Pointer input is native (stroke_engine.mjs via demo_board.mjs); only the
   # tool lives here, and every change reaches JS (draw_tools.mjs) at once.
-  # The toolbar's shortcuts ([ / ], B, E) dispatch the same actions
+  # The toolbar's shortcuts ([ / ], B, E, I) dispatch the same actions
   # (draw_controls.mjs, which ignores them while the user types anywhere).
 
   def action(:clear_canvas, _params, component) do
@@ -662,8 +662,9 @@ defmodule ScrawlyWeb.Pages.HomePage do
         DrawingToolbar.select_color(draw_tool(component.state), Map.get(params, :color))
       )
 
-  # The colour panel's native controls (color_picker.mjs) have set the
-  # model already; the state follows, throttled, without a push.
+  # The colour panel's native controls (color_picker.mjs) and a pick from
+  # the board (eyedropper.mjs) have set the model already; the state
+  # follows, throttled, without a push.
   def action(:color_picked, params, component),
     do:
       put_state(
@@ -697,6 +698,11 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # B (draw_controls.mjs).
   def action(:select_brush, _params, component),
     do: put_tool(component, DrawingToolbar.select_brush(draw_tool(component.state)))
+
+  # The "pick" button, and I (draw_controls.mjs). The pick itself is native
+  # (eyedropper.mjs) and comes back as :color_picked.
+  def action(:toggle_picker, _params, component),
+    do: put_tool(component, DrawingToolbar.toggle_picker(draw_tool(component.state)))
 
   # ── Lobby & Room Actions ──────────────────────────────────────────
 

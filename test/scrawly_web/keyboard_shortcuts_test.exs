@@ -144,7 +144,7 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
   end
 
   describe "drawing shortcuts" do
-    # B, E, Ctrl+Z / Cmd+Z and [ / ] are handled by draw_controls.mjs: one
+    # B, E, I, Ctrl+Z / Cmd+Z and [ / ] are handled by draw_controls.mjs: one
     # native keydown listener behind one typing guard, which dispatches the
     # toolbar's own actions (the size keys step the slider). The keys, their
     # modifiers and the guard are tested in test/js/draw_controls.test.mjs;
@@ -188,6 +188,20 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
         # Already the brush: it stays the brush.
         {again, _calls} = js_calls(fn -> page.action(:select_brush, %{}, brush) end)
         assert again.state.draw_tool == brush.state.draw_tool
+      end
+    end
+
+    test "I's action (:toggle_picker) toggles the colour picker and pushes it, on both pages" do
+      for page <- [GamePage, HomePage] do
+        {on, calls} = js_calls(fn -> page.action(:toggle_picker, %{}, drawer()) end)
+
+        assert on.state.draw_tool == %{tool: :picker, color: "#d63838", size: 5}
+        assert calls == [{:setDrawTool, [%{tool: "picker", color: "#d63838", size: 5}]}]
+
+        {off, calls} = js_calls(fn -> page.action(:toggle_picker, %{}, on) end)
+
+        assert off.state.draw_tool == %{tool: :brush, color: "#d63838", size: 5}
+        assert calls == [{:setDrawTool, [%{tool: "brush", color: "#d63838", size: 5}]}]
       end
     end
 

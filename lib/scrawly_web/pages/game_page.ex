@@ -1103,9 +1103,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
         DrawingToolbar.select_color(draw_tool(component.state), Map.get(params, :color))
       )
 
-  # The colour panel's native controls (color_picker.mjs) have set the
-  # model already; the state follows, throttled, without a push (a push
-  # could put an older colour back over a newer one mid-drag).
+  # The colour panel's native controls (color_picker.mjs) and a pick from
+  # the canvas (eyedropper.mjs) have set the model already; the state
+  # follows, throttled, without a push (a push could put an older colour
+  # back over a newer one mid-drag).
   def action(:color_picked, params, component),
     do:
       put_state(
@@ -1140,6 +1141,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # B (draw_controls.mjs).
   def action(:select_brush, _params, component),
     do: put_tool(component, DrawingToolbar.select_brush(draw_tool(component.state)))
+
+  # The "pick" button, and I (draw_controls.mjs). The pick itself is native
+  # (eyedropper.mjs, the drawer's history) and comes back as :color_picked;
+  # nothing reaches the room.
+  def action(:toggle_picker, _params, component),
+    do: put_tool(component, DrawingToolbar.toggle_picker(draw_tool(component.state)))
 
   def action(:undo_drawing, _params, component), do: undo_last_stroke(component)
 

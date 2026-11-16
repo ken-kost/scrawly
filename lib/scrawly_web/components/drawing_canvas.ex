@@ -22,7 +22,9 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
   Beside the svg, above the grid, `#game-canvas-ring` is the size ring
   (size_ring.mjs): its own small svg on its own composited layer, so moving
   it never repaints the strokes. Hidden until JS shows it (the drawer, in
-  `:drawing`, with a mouse or a pen over the canvas).
+  `:drawing`, with a mouse or a pen over the canvas). `#game-canvas-pick` is
+  the colour picker's swatch beside the pointer (eyedropper.mjs), on its
+  own layer too, shown under the same rules while a click would pick.
   """
   use Hologram.Component
 
@@ -57,6 +59,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
         <circle class="size-ring-outer" />
         <circle class="size-ring-inner" />
       </svg>
+      <span id="game-canvas-pick" class="pick-swatch" aria-hidden="true"></span>
     </div>
     """
   end

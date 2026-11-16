@@ -4,12 +4,13 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   canvas (GamePage) and the home page's shared board (GameDemo). The colour
   presets, the size range and the tool model are defined here once.
 
-  The tool model is `%{tool: :brush | :eraser, color: "#rrggbb", size: 1..40}`
+  The tool model is
+  `%{tool: :brush | :eraser | :picker, color: "#rrggbb", size: 1..40}`
   (`default_tool/0`); the size is one for the brush and the eraser, and the
   colour any `#rrggbb`. The page showing the canvas keeps it in its state as
   `draw_tool`, passes it in as `tool`, changes it with `select_color/2`,
-  `select_size/2`, `select_brush/1` and `toggle_eraser/1`, and pushes every
-  change to the canvas:
+  `select_size/2`, `select_brush/1`, `toggle_eraser/1` and
+  `toggle_picker/1`, and pushes every change to the canvas:
   `JS.call(:setDrawTool, [js_tool(tool)])` (draw_tools.mjs, which also
   defines the eraser's stroke: white, at the tool's size).
 
@@ -56,28 +57,43 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
       (color_picker.mjs has stored it);
     * `:select_size` (`size`, or the slider's `event.value`, see
       `size_param/1`): that size, brush or eraser alike;
-    * `:toggle_eraser`, `:undo_drawing`, `:clear_canvas`;
+    * `:toggle_eraser`, `:toggle_picker`, `:undo_drawing`, `:clear_canvas`;
     * `:select_brush` (B, see below).
 
   A gesture pressed with the right mouse button, or with Ctrl held, erases
   without selecting the eraser (draw_tools.mjs `gestureTool`): the tool
   shown here doesn't change for it.
 
+  ## The colour picker
+
+  "pick" (`:picker`, a toggle like "erase", key I) selects the picker: a
+  click on the canvas takes the colour under the pointer instead of
+  drawing, and the tool goes back to the brush in that colour (the tool
+  used before the picker; the eraser comes back as the brush). With the
+  brush, an Alt+click picks without changing tools. Natively
+  (eyedropper.mjs, from the canvas's stroke list, paint_model.mjs): the
+  colour goes into the model at once and the page's state follows with
+  `:color_picked`, as from the colour panel. A swatch beside the pointer
+  shows the colour under it while a click would pick. Picking is local:
+  nothing goes to the server, and viewers see nothing of it.
+
   With `shortcuts`, the toolbar names its shortcuts in `data-draw-shortcuts`
   and the hint shows them: `[` / `]` the size (with `:sizes`), B the brush
-  and E the eraser, a toggle like its button (both with `:eraser`), Ctrl+Z /
-  Cmd+Z undo (`:undo`). draw_controls.mjs handles the
+  and E the eraser, a toggle like its button (both with `:eraser`), I the
+  picker, a toggle too (`:picker`), Ctrl+Z / Cmd+Z undo (`:undo`).
+  draw_controls.mjs handles the
   keys, all of them behind one typing guard (nothing while focus is in a
   text field, a select or a contenteditable), and dispatches the toolbar's
   own actions to the page; the size keys step the slider.
 
   `controls` lists what the surface offers, in any order: `:colors`,
-  `:sizes`, `:eraser`, `:undo`, `:clear` (all by default, `controls/0`). A
-  shortcut is live, and named in the hint, only with its control.
+  `:sizes`, `:eraser`, `:picker`, `:undo`, `:clear` (all by default,
+  `controls/0`). A shortcut is live, and named in the hint, only with its
+  control.
   """
   use Hologram.Component
 
-  @controls [:colors, :sizes, :eraser, :undo, :clear]
+  @controls [:colors, :sizes, :eraser, :picker, :undo, :clear]
   # The presets, {colour, accessible name}: the darker row, then the lighter
   # one, column by column (black over white, dark grey over light grey).
   @presets [
@@ -123,6 +139,7 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
     {:undo, "undo", ["⌘/Ctrl+Z"], "undo"},
     {:eraser, "brush", ["B"], "brush"},
     {:eraser, "eraser", ["E"], "eraser"},
+    {:picker, "picker", ["I"], "pick"},
     {:sizes, "size", ["[", "]"], "size"}
   ]
 
@@ -218,6 +235,13 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   def toggle_eraser(%{tool: :eraser} = tool), do: %{tool | tool: :brush}
   def toggle_eraser(tool), do: %{tool | tool: :eraser}
 
+  @doc """
+  The colour picker, or back to the brush (its colour and size kept). A pick
+  itself is `select_color/2`: the brush in the picked colour.
+  """
+  def toggle_picker(%{tool: :picker} = tool), do: %{tool | tool: :brush}
+  def toggle_picker(tool), do: %{tool | tool: :picker}
+
   @doc "The tool as draw_tools.mjs's `setDrawTool` takes it."
   def js_tool(tool), do: %{tool: Atom.to_string(tool.tool), color: tool.color, size: tool.size}
 
@@ -267,10 +291,13 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
           <span class="size-value mono">{@tool.size}</span>
         </div>
       {/if}
-      {%if :eraser in @controls or :undo in @controls or :clear in @controls}
+      {%if :eraser in @controls or :picker in @controls or :undo in @controls or :clear in @controls}
         <div class="tool-group">
           {%if :eraser in @controls}
             <button type="button" class={"tool-btn" <> active(@tool.tool == :eraser)} $click={:toggle_eraser}>erase</button>
+          {/if}
+          {%if :picker in @controls}
+            <button type="button" class={"tool-btn" <> active(@tool.tool == :picker)} title="pick a colour from the canvas" $click={:toggle_picker}>pick</button>
           {/if}
           {%if :undo in @controls}
             <button type="button" class="tool-btn" $click={:undo_drawing}>undo</button>
