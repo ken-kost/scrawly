@@ -110,26 +110,30 @@ export function installFakeDom() {
   return { root, dispatched };
 }
 
-// GamePage's markup: the marker (with the instance's mount id) and the svg,
-// with the drawer's group for a drawer. Replaces whatever was rendered.
+// GamePage's markup (DrawingCanvas): the marker (with the instance's mount
+// id), the svg of committed strokes (the drawer's group for a drawer) and,
+// over it, the input svg (the active path for a drawer, the overlay).
+// Replaces whatever was rendered; returns the input svg.
 export function renderGamePage(root, { mount = 1, drawer = true } = {}) {
   root.children = [];
   const marker = new FakeEl("span", "game-page-marker");
   marker.setAttribute("data-mount", mount);
+  const paint = new FakeEl("svg", "game-canvas-paint");
+  paint.appendChild(new FakeEl("g", "game-canvas-strokes"));
+  const drawerG = new FakeEl("g", "game-canvas-drawer");
+  if (drawer) drawerG.appendChild(new FakeEl("g", "game-canvas-drawer-strokes"));
+  paint.appendChild(drawerG);
   const svg = new FakeEl("svg", "game-canvas-svg");
   svg.getScreenCTM = () => ({ inverse: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }) });
   svg.setPointerCapture = () => {};
   svg.hasPointerCapture = () => false;
   svg.releasePointerCapture = () => {};
-  svg.appendChild(new FakeEl("g", "game-canvas-strokes"));
-  const drawerG = new FakeEl("g", "game-canvas-drawer");
-  if (drawer) {
-    drawerG.appendChild(new FakeEl("g", "game-canvas-drawer-strokes"));
-    drawerG.appendChild(new FakeEl("path", "drawing-path"));
-  }
-  svg.appendChild(drawerG);
+  const active = new FakeEl("g", "game-canvas-active");
+  if (drawer) active.appendChild(new FakeEl("path", "drawing-path"));
+  svg.appendChild(active);
   svg.appendChild(new FakeEl("g", "game-canvas-overlay"));
   root.appendChild(marker);
+  root.appendChild(paint);
   root.appendChild(svg);
   return svg;
 }

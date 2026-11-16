@@ -10,22 +10,26 @@ defmodule BenchRpc do
   alias Scrawly.Games.{DemoBoardServer, RoomServer}
   alias Scrawly.Games.RoomServer.GameFlow
 
-  def strokes(dir, canvas) do
-    key = {__MODULE__, canvas}
+  # `set`: a fixture set's name ("game", "demo", "game-fills",
+  # "demo-fills"); its 500-stroke file. A fill keeps `fill: true`.
+  def strokes(dir, set) do
+    key = {__MODULE__, set}
 
     case :persistent_term.get(key, nil) do
       nil ->
         %{"strokes" => list} =
-          Path.join(dir, "#{canvas}-500.json") |> File.read!() |> Jason.decode!()
+          Path.join(dir, "#{set}-500.json") |> File.read!() |> Jason.decode!()
 
         list =
           Enum.map(list, fn s ->
-            %{
+            stroke = %{
               id: :binary.copy(s["id"]),
               path: :binary.copy(s["path"]),
               color: s["color"],
               width: s["width"]
             }
+
+            if s["fill"] == true, do: Map.put(stroke, :fill, true), else: stroke
           end)
 
         :persistent_term.put(key, list)
@@ -39,7 +43,9 @@ defmodule BenchRpc do
   # Two registered users, a room and a game in :drawing whose round timers
   # are cancelled (no time-up, no hint reveals during the run). Prints JSON.
   def setup(password) do
-    n = System.unique_integer([:positive])
+    # Unique across restarts of the release too (the scratch database keeps
+    # the users of earlier runs; unique_integer starts over with the node).
+    n = System.unique_integer([:positive]) * 100_000 + :rand.uniform(99_999)
 
     mk = fn tag ->
       email = "bench-#{tag}-#{n}@example.com"
@@ -110,13 +116,13 @@ defmodule BenchRpc do
   # Clears the room and commits its first `count` fixture strokes as the
   # drawer, through RoomServer (each one published as :stroke_completed). The
   # drawer's op rate limit is reset between commits: it isn't measured.
-  def load_room(dir, room_id, drawer_id, count) do
+  def load_room(dir, room_id, drawer_id, count, set \\ "game") do
     pid = room_pid(room_id)
     freeze(pid)
     reset_rate(pid)
     :ok = RoomServer.clear_drawing(room_id, drawer_id)
 
-    strokes(dir, "game")
+    strokes(dir, set)
     |> Enum.take(count)
     |> Enum.with_index(1)
     |> Enum.each(fn {s, i} ->
@@ -130,13 +136,13 @@ defmodule BenchRpc do
 
   # The demo board: cleared, then its first `count` fixture strokes added
   # through DemoBoardServer (what DemoBoardChannel does for each stroke).
-  def load_demo(dir, count) do
+  def load_demo(dir, count, set \\ "demo") do
     DemoBoardServer.clear()
 
-    strokes(dir, "demo")
+    strokes(dir, set)
     |> Enum.take(count)
     |> Enum.each(fn s ->
-      DemoBoardServer.add_stroke(%{path: s.path, color: s.color, width: s.width, stroke_id: s.id})
+      :ok = DemoBoardServer.add_stroke(demo_stroke(s))
     end)
 
     IO.puts(Jason.encode!(%{demo_strokes: length(DemoBoardServer.get_strokes())}))
@@ -164,20 +170,22 @@ defmodule BenchRpc do
         :ok = RoomServer.append_drawing(room_id, drawer_id, s)
       end)
 
-      Enum.each(demo, fn s ->
-        DemoBoardServer.add_stroke(%{
-          path: s.path,
-          color: s.color,
-          width: s.width,
-          stroke_id: s.id
-        })
-      end)
+      Enum.each(demo, fn s -> :ok = DemoBoardServer.add_stroke(demo_stroke(s)) end)
 
       Process.sleep(pause_ms)
     end
 
     reset_rate(pid)
     IO.puts(Jason.encode!(%{cycles: cycles}))
+  end
+
+  # A fixture stroke as DemoBoardChannel stores it: a bench owner (no
+  # visitor's own strokes, so nobody's undo takes them), its own gesture.
+  defp demo_stroke(s) do
+    Map.merge(
+      %{path: s.path, color: s.color, width: s.width, stroke_id: s.id, owner: "anon:bench-fixtures"},
+      Map.take(s, [:fill])
+    )
   end
 
   # Ends the bench game: the room process is stopped (its rows stay in the

@@ -120,3 +120,21 @@ test("a right-button or Ctrl stroke on the board erases; the toolbar's brush sta
   assert.deepEqual([completed().at(-1).color, completed().at(-1).width], ["#1f9a4a", 8]);
   assert.deepEqual(tools.currentTool(), { tool: "brush", color: "#1f9a4a", size: 8 });
 });
+
+// ── The board's limits (#44): 500 strokes and MAX_BYTES path bytes ─────
+
+test("overLimit: the oldest entries go until both the count and the path bytes fit", () => {
+  const { overLimit, MAX_BYTES } = board;
+  const s = (n) => ({ path: "x".repeat(n) });
+  assert.equal(MAX_BYTES, 450000);
+  assert.equal(overLimit([]), 0);
+  assert.equal(overLimit([s(10), s(10)], 500, 100), 0);
+  // By count.
+  assert.equal(overLimit([s(1), s(1), s(1)], 2, 100), 1);
+  // By bytes: 60 + 30 + 30 = 120 > 100, dropping the 60 is enough.
+  assert.equal(overLimit([s(60), s(30), s(30)], 500, 100), 1);
+  // Both at once, never more than the store holds.
+  assert.equal(overLimit([s(50), s(50), s(50)], 2, 40), 3);
+  // Entries without a path count no bytes.
+  assert.equal(overLimit([{}, s(90)], 500, 100), 0);
+});

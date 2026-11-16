@@ -35,8 +35,12 @@ const opt = (name, dflt) => {
 const QUICK = args.includes("--quick");
 const BASE = opt("--base", `http://localhost:${process.env.BENCH_PORT || 4100}`);
 const OUT = opt("--out", path.join(HERE, "results", `client-${new Date().toISOString().slice(0, 10)}.json`));
-const SIZES = QUICK ? [0, 300] : [0, 100, 300, 500];
-const RATES = [1, 4];
+const list = (name) => (opt(name, null) === null ? null : opt(name).split(",").filter(Boolean));
+// --only drawer,tools,demo,viewer,fills,leak,leak_tools: those groups only.
+const ONLY = list("--only") ? new Set(list("--only")) : null;
+const want = (group) => !ONLY || ONLY.has(group);
+const SIZES = list("--sizes") ? list("--sizes").map(Number) : QUICK ? [0, 300] : [0, 100, 300, 500];
+const RATES = list("--rates") ? list("--rates").map(Number) : [1, 4];
 const JOINS = QUICK ? 2 : 4;
 const GESTURES = QUICK ? 1 : 4;
 const SAMPLES = QUICK ? 4 : 20;
@@ -44,6 +48,20 @@ const SNAPSHOTS = QUICK ? 2 : 5;
 const MOVES = 300;
 const MOVE_MS = 8;
 const LEAK_CYCLES = QUICK ? 4 : 20;
+// Tools (#38-#43): picks per size, fills per point, the fill points
+// (viewBox units; the corner is the white around the drawing) and colours.
+const PICKS = QUICK ? 4 : 10;
+const FILLS = QUICK ? 2 : 4;
+const FILL_POINTS = [
+  ["background", 3, 3],
+  ["centre", 400, 225],
+];
+// Not in the fixtures' palette, so never the colour already under the point.
+const FILL_COLORS = ["#123456", "#7a3e10", "#0f7f6f", "#6f0f7f"];
+// The sets with fills are measured at this size.
+const FILLS_SIZE = 500;
+// Rounds that use every tool, for the second leak check.
+const TOOL_ROUNDS = QUICK ? 4 : 20;
 const LEAK_ROOM = 100;
 const LEAK_DEMO = 500;
 const PASSWORD = "bench-password-36";
@@ -461,6 +479,215 @@ function applyStats(rows) {
   return out;
 }
 
+// ── Tools on the drawer's canvas (since #38-#43) ────────────────────────
+
+// The size ring following a mouse over the canvas, no button held (300
+// moves, the gesture's path): ms per frame from a trace, as for a gesture.
+async function hoverGesture(p, svgId, canvas) {
+  return traced(p, () =>
+    p.page.evaluate(
+      async ([svgId, pts, ms]) => {
+        const B = window.__bench;
+        B.startFrames();
+        await new Promise((r) => requestAnimationFrame(() => r()));
+        const g = await B.gesture(svgId, pts, ms, null, true);
+        const f = B.stopFrames();
+        const intervals = [];
+        for (let i = 1; i < f.raf.length; i++) intervals.push(f.raf[i] - f.raf[i - 1]);
+        return { gesture_ms: g.ms, intervals, work: f.work };
+      },
+      [svgId, scribble(canvas), MOVE_MS]
+    )
+  );
+}
+
+// Eyedropper picks (Alt + click with the brush, eyedropper.mjs) at points
+// spread over the canvas: the pointerdown handler (the canvas's colour at
+// the point, the tool model, the queued :color_picked) and that plus the
+// next frame's rendering.
+async function picks(p, svgId) {
+  const rows = [];
+  for (let i = 0; i < PICKS; i++) {
+    const x = 40 + ((i * 97) % 720);
+    const y = 30 + ((i * 53) % 390);
+    rows.push(await p.page.evaluate(([svgId, x, y]) => window.__bench.press(svgId, x, y, { altKey: true }), [svgId, x, y]));
+    await sleep(150 * p.rate);
+  }
+  return {
+    samples: rows.length,
+    handler_ms: summary(rows.map((r) => r.handler)),
+    paint_ms: summary(rows.map((r) => r.handler + r.frame)),
+  };
+}
+
+// Main-thread and fill-worker busy time between two performance marks, from
+// a trace (top-level tasks of the renderer's main thread and of the
+// dedicated worker).
+async function tracedTasks(p, fn) {
+  await p.cdp.send("Tracing.start", {
+    categories: "toplevel,blink.user_timing,__metadata",
+    transferMode: "ReturnAsStream",
+  });
+  const result = await fn();
+  const done = new Promise((r) => p.cdp.once("Tracing.tracingComplete", r));
+  await p.cdp.send("Tracing.end");
+  const { stream } = await done;
+  let data = "";
+  for (;;) {
+    const chunk = await p.cdp.send("IO.read", { handle: stream });
+    data += chunk.data;
+    if (chunk.eof) break;
+  }
+  await p.cdp.send("IO.close", { handle: stream });
+  const events = JSON.parse(data).traceEvents || [];
+  const names = {};
+  for (const e of events) if (e.ph === "M" && e.name === "thread_name") names[e.pid + ":" + e.tid] = e.args.name;
+  const marks = {};
+  for (const e of events) if (e.name === "bench-start" || e.name === "bench-end") marks[e.name] = e.ts;
+  let main = 0;
+  let worker = 0;
+  let longest = 0;
+  if (marks["bench-start"] && marks["bench-end"]) {
+    const a = marks["bench-start"];
+    const b = marks["bench-end"];
+    for (const e of events) {
+      if (e.ph !== "X" || e.name !== "ThreadControllerImpl::RunTask") continue;
+      const s = Math.max(a, e.ts);
+      const t = Math.min(b, e.ts + (e.dur || 0));
+      if (t <= s) continue;
+      const n = names[e.pid + ":" + e.tid] || "";
+      if (n === "CrRendererMain") {
+        main += t - s;
+        longest = Math.max(longest, e.dur || 0);
+      } else if (/DedicatedWorker/.test(n)) worker += t - s;
+    }
+  }
+  return { ...result, main_ms: main / 1000, worker_ms: worker / 1000, longest_task_ms: longest / 1000 };
+}
+
+// Fills (the fill tool, F) at a point: from the pointerdown to the frame
+// after the shape's node was added (worker round trip included), with the
+// main thread's and the worker's busy time in that window; each fill is
+// then undone. "background" is the white around the drawing (the corner):
+// the biggest area, around every stroke.
+async function fills(p, n) {
+  await p.page.keyboard.press("f");
+  await p.page.waitForFunction(() => window.__scrawlyDrawTool && window.__scrawlyDrawTool.tool === "fill", null, {
+    timeout: 10000 * p.rate,
+  });
+  // The worker starts and rasters the canvas ahead ("prepare").
+  await sleep(1500 * p.rate);
+  const out = {};
+  for (const [name, x, y] of FILL_POINTS) {
+    const rows = [];
+    for (let k = 0; k < FILLS; k++) {
+      const before = await drawerHistory(p);
+      const r = await tracedTasks(p, () =>
+        p.page.evaluate(
+          async ([x, y, color, before, timeout]) => {
+            const B = window.__bench;
+            window.__scrawlyDrawTool.color = color;
+            const wait = B.waitCount("game-canvas-drawer-strokes", before + 1, timeout);
+            performance.mark("bench-start");
+            const press = await B.press("game-canvas-svg", x, y);
+            const hit = await wait;
+            performance.mark("bench-end");
+            return hit ? { press: press.handler, total: hit.tPaint - press.t0, dom: hit.tDom - press.t0 } : null;
+          },
+          [x, y, FILL_COLORS[k % FILL_COLORS.length], before, 15000 * p.rate]
+        )
+      );
+      if (r.press === undefined) {
+        log(`  fill ${name} at ${n}: no shape came`);
+        continue;
+      }
+      rows.push(r);
+      await waitQueue(p);
+      await drawerUndo(p, before);
+      await sleep(200 * p.rate);
+    }
+    out[name] = {
+      samples: rows.length,
+      press_ms: summary(rows.map((r) => r.press)),
+      total_ms: summary(rows.map((r) => r.total)),
+      main_thread_ms: summary(rows.map((r) => r.main_ms)),
+      worker_ms: summary(rows.map((r) => r.worker_ms)),
+      longest_task_ms: summary(rows.map((r) => r.longest_task_ms)),
+    };
+  }
+  await p.page.keyboard.press("b");
+  await p.page.waitForFunction(() => window.__scrawlyDrawTool.tool === "brush", null, { timeout: 10000 * p.rate });
+  return out;
+}
+
+// A one-second mouse drag (60 moves, real input through CDP) along `pointAt`
+// (f in [0, 1] -> client {x, y}).
+async function mouseDrag(p, pointAt) {
+  const steps = 60;
+  const p0 = pointAt(0);
+  await p.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: p0.x, y: p0.y, button: "none", buttons: 0 });
+  await p.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: p0.x, y: p0.y, button: "left", buttons: 1, clickCount: 1 });
+  const start = Date.now();
+  for (let i = 1; i <= steps; i++) {
+    const wait = start + (1000 * i) / steps - Date.now();
+    if (wait > 0) await sleep(wait);
+    const q = pointAt(i / steps);
+    await p.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: q.x, y: q.y, button: "left", buttons: 1 });
+  }
+  const p1 = pointAt(1);
+  await p.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: p1.x, y: p1.y, button: "left", buttons: 0, clickCount: 1 });
+}
+
+// A control drag (the size slider, the colour wheel) traced like a
+// gesture, with the Hologram actions it ran.
+async function controlDrag(p, pointAt) {
+  const r = await traced(p, async () => {
+    await p.page.evaluate(() => {
+      window.__bench.actions = {};
+      window.__bench.startFrames();
+    });
+    await mouseDrag(p, pointAt);
+    await sleep(150);
+    return p.page.evaluate(() => {
+      const f = window.__bench.stopFrames();
+      const intervals = [];
+      for (let i = 1; i < f.raf.length; i++) intervals.push(f.raf[i] - f.raf[i - 1]);
+      return { intervals, work: f.work, actions: window.__bench.actions };
+    });
+  });
+  const stats = frameStats([r]);
+  delete stats.gesture_ms;
+  // The page's own timers (countdown, presence) aren't the drag's.
+  const { countdown_tick: _c, presence_ping: _p, ...actions } = r.actions || {};
+  stats.actions = actions;
+  return stats;
+}
+
+async function sliderDrag(p, shell) {
+  const box = await p.page.locator(`${shell} input[data-draw-size]`).boundingBox();
+  const out = await controlDrag(p, (f) => ({ x: box.x + 4 + (box.width - 8) * (0.1 + 0.8 * Math.sin(Math.PI * f)), y: box.y + box.height / 2 }));
+  // Back to the default size (the page's action pushes it to the model).
+  await p.page.evaluate(() => globalThis.Hologram.dispatchAction("select_size", "page", { size: 4 }));
+  await sleep(300 * p.rate);
+  return out;
+}
+
+async function wheelDrag(p, shell) {
+  await p.page.click(`${shell} .color-chip`);
+  await p.page.waitForSelector(`${shell} [data-color-wheel]`, { state: "visible", timeout: 10000 * p.rate });
+  await sleep(400 * p.rate);
+  const wb = await p.page.locator(`${shell} [data-color-wheel]`).boundingBox();
+  const out = await controlDrag(p, (f) => ({
+    x: wb.x + wb.width / 2 + 0.8 * (wb.width / 2) * Math.cos(2 * Math.PI * f),
+    y: wb.y + wb.height / 2 - 0.8 * (wb.height / 2) * Math.sin(2 * Math.PI * f),
+  }));
+  await p.page.keyboard.press("Escape");
+  await sleep(200 * p.rate);
+  await p.page.evaluate(() => globalThis.Hologram.dispatchAction("select_color", "page", { color: "#0a0a0a" }));
+  await sleep(300 * p.rate);
+  return out;
+}
+
 // ── Run ──────────────────────────────────────────────────────────────────
 const bundles = JSON.parse(execFileSync(path.join(HERE, "prod_server.sh"), ["bundles"], { encoding: "utf8" }));
 log("setup: room, users");
@@ -499,6 +726,7 @@ const results = {
     date: new Date().toISOString(),
     base: BASE,
     quick: QUICK,
+    only: ONLY ? [...ONLY] : null,
     browser: browsers[0].version(),
     moves: MOVES,
     move_interval_ms: MOVE_MS,
@@ -510,140 +738,206 @@ const results = {
   runs: {},
 };
 
-for (const n of SIZES) {
-  log(`== ${n} strokes`);
+// A phase that fails is logged and recorded (results.errors), and the run
+// goes on with the next one: a late failure never loses the figures
+// already taken. The results file is written after every phase.
+async function phase(name, fn) {
+  try {
+    await fn();
+  } catch (e) {
+    log(`PHASE ${name} FAILED: ${(e && e.message) || e}`);
+    (results.errors ||= []).push({ phase: name, error: String((e && e.stack) || e).slice(0, 2000) });
+  }
+  fs.mkdirSync(path.dirname(OUT), { recursive: true });
+  fs.writeFileSync(OUT, JSON.stringify(results, null, 2) + "\n");
+}
+
+// One canvas size `n` of fixture set `set` ("game"/"demo" or
+// "game-fills"/"demo-fills"), at every rate, into `target`. `extras`: the
+// glow and tool scenarios (the main sizes only); `on(group)`: the groups
+// to run ("drawer", "tools", "demo", "viewer").
+async function runSize(n, set, target, extras, on) {
+  log(`== ${n} strokes (${set})`);
   await blank(drawer);
   await blank(viewer);
   await blank(visitor);
-  const loaded = rpc(`BenchRpc.load_room(${JSON.stringify(FIXTURES)}, ${JSON.stringify(setup.room_id)}, ${JSON.stringify(setup.drawer.id)}, ${n})`);
+  const loaded = rpc(
+    `BenchRpc.load_room(${JSON.stringify(FIXTURES)}, ${JSON.stringify(setup.room_id)}, ${JSON.stringify(setup.drawer.id)}, ${n}, ${JSON.stringify(set)})`
+  );
   if (loaded.room_strokes !== n) throw new Error("room holds " + loaded.room_strokes);
+  const demoSet = set.replace(/^game/, "demo");
 
   for (const rate of RATES) {
     const key = `${rate}x`;
-    const row = (results.runs[key] ||= {})[n] = {};
+    const row = (target[key] ||= {})[n] = {};
     await setRate(drawer, rate);
     await setRate(viewer, rate);
     await setRate(visitor, rate);
-    rpc(`BenchRpc.load_demo(${JSON.stringify(FIXTURES)}, ${n})`);
+    // What the board holds: since #44 its byte cap keeps fewer than 500 of
+    // the fixture strokes.
+    const demoHeld = rpc(`BenchRpc.load_demo(${JSON.stringify(FIXTURES)}, ${n}, ${JSON.stringify(demoSet)})`).demo_strokes;
 
-    // Drawer: load (restoreStrokes), gestures, back to n strokes.
-    const drawerJoin = await join(drawer, roomUrl, "drawer", n, drawerReady);
-    row.drawer_load = drawerJoin;
-    if (rate === 1) row.drawer_memory = await freshMemory(drawer, roomUrl, "drawer", n, drawerReady);
-    const drawerIdle = await idleFrames(drawer, 1000);
-    const gestures = [];
-    for (let g = 0; g < GESTURES; g++) {
-      gestures.push(await drawGesture(drawer, "game-canvas-svg", "game"));
-      await waitQueue(drawer);
-      // A full room (500) rejects the commit and resets the canvas itself.
-      while ((await drawerHistory(drawer)) > n) await drawerUndo(drawer, (await drawerHistory(drawer)) - 1);
-      await sleep(200);
-    }
-    row.drawer_draw = frameStats(gestures);
-    row.drawer_draw.frame_aligned.idle = drawerIdle;
+    // Drawer: load (restoreStrokes), gestures, back to n strokes. The page
+    // is loaded whenever the viewer runs too (it draws the viewer's strokes).
+    if (on("drawer") || on("tools") || on("viewer")) {
+      const drawerJoin = await join(drawer, roomUrl, "drawer", n, drawerReady);
+      if (on("drawer")) {
+        row.drawer_load = drawerJoin;
+        if (rate === 1) row.drawer_memory = await freshMemory(drawer, roomUrl, "drawer", n, drawerReady);
+        const drawerIdle = await idleFrames(drawer, 1000);
+        const gestures = [];
+        for (let g = 0; g < GESTURES; g++) {
+          gestures.push(await drawGesture(drawer, "game-canvas-svg", "game"));
+          await waitQueue(drawer);
+          // A full room (500) rejects the commit and resets the canvas itself.
+          while ((await drawerHistory(drawer)) > n) await drawerUndo(drawer, (await drawerHistory(drawer)) - 1);
+          await sleep(200);
+        }
+        row.drawer_draw = frameStats(gestures);
+        row.drawer_draw.frame_aligned.idle = drawerIdle;
 
-    // The same gesture with the layout's glows shown (see page_probe.js).
-    if (rate === 1 && (n === SIZES[0] || n === SIZES[SIZES.length - 1])) {
-      await drawer.page.evaluate(() =>
-        document.querySelectorAll(".nav-glow, .footer-glow").forEach((el) => (el.style.display = ""))
-      );
-      await sleep(500);
-      const glowIdle = await idleFrames(drawer, 1000);
-      const glowGesture = await drawGesture(drawer, "game-canvas-svg", "game");
-      await waitQueue(drawer);
-      while ((await drawerHistory(drawer)) > n) await drawerUndo(drawer, (await drawerHistory(drawer)) - 1);
-      await hideGlow(drawer);
-      row.drawer_draw_with_glow = frameStats([glowGesture]);
-      row.drawer_draw_with_glow.frame_aligned.idle = glowIdle;
+        // The same gesture with the layout's glows shown (see page_probe.js).
+        if (extras && rate === 1 && (n === SIZES[0] || n === SIZES[SIZES.length - 1])) {
+          await drawer.page.evaluate(() =>
+            document.querySelectorAll(".nav-glow, .footer-glow").forEach((el) => (el.style.display = ""))
+          );
+          await sleep(500);
+          const glowIdle = await idleFrames(drawer, 1000);
+          const glowGesture = await drawGesture(drawer, "game-canvas-svg", "game");
+          await waitQueue(drawer);
+          while ((await drawerHistory(drawer)) > n) await drawerUndo(drawer, (await drawerHistory(drawer)) - 1);
+          await hideGlow(drawer);
+          row.drawer_draw_with_glow = frameStats([glowGesture]);
+          row.drawer_draw_with_glow.frame_aligned.idle = glowIdle;
+        }
+        log(
+          `  ${key} drawer draw p95 ${row.drawer_draw.frame_aligned.frame_ms.p95} ms, main/frame ${row.drawer_draw.main_thread_ms_per_frame.median}, ` +
+            `raster/frame ${row.drawer_draw.raster_ms_per_frame.median}`
+        );
+      }
+
+      // The tools of #38-#43 on the drawer's canvas.
+      if (extras && on("tools")) {
+        const hovers = [];
+        for (let g = 0; g < Math.max(1, GESTURES / 2); g++) hovers.push(await hoverGesture(drawer, "game-canvas-svg", "game"));
+        row.drawer_hover = frameStats(hovers);
+        row.drawer_pick = await picks(drawer, "game-canvas-svg");
+        await drawer.page.evaluate(() => globalThis.Hologram.dispatchAction("select_color", "page", { color: "#0a0a0a" }));
+        // A full canvas takes no fill: make room for it, and put the stroke
+        // back after.
+        if (n >= 500) await drawerUndo(drawer, n - 1);
+        row.drawer_fill = await fills(drawer, n);
+        if (n >= 500) {
+          await drawer.page.evaluate(([pts]) => window.__bench.gesture("game-canvas-svg", pts, 0), [MEDIUM[0]]);
+          await waitQueue(drawer);
+        }
+        row.drawer_slider_drag = await sliderDrag(drawer, ".canvas-shell");
+        row.drawer_wheel_drag = await wheelDrag(drawer, ".canvas-shell");
+        log(
+          `  ${key} tools: hover main/frame ${row.drawer_hover.main_thread_ms_per_frame.median}, pick ${row.drawer_pick.handler_ms.median} ms, ` +
+            `fill bg ${row.drawer_fill.background && row.drawer_fill.background.total_ms.median} ms, ` +
+            `slider over 16.7 ${row.drawer_slider_drag.frame_aligned.frames_over_16_7_pct}%, wheel ${row.drawer_wheel_drag.frame_aligned.frames_over_16_7_pct}%`
+        );
+      }
     }
-    log(
-      `  ${key} drawer draw p95 ${row.drawer_draw.frame_aligned.frame_ms.p95} ms, main/frame ${row.drawer_draw.main_thread_ms_per_frame.median}, ` +
-        `raster/frame ${row.drawer_draw.raster_ms_per_frame.median}`
-    );
 
     // Demo board: loads, gestures.
-    const demoJoins = [];
-    for (let j = 0; j < JOINS; j++) demoJoins.push(await join(visitor, BASE + "/", "demo", n, demoReady));
-    row.demo_load = loadStats(demoJoins);
-    if (rate === 1) row.demo_memory = await freshMemory(visitor, BASE + "/", "demo", n, demoReady);
-    const resnaps = [];
-    // An empty board's snapshot has nothing to render.
-    for (let j = 0; j < (n > 0 ? SNAPSHOTS : 0); j++) {
-      resnaps.push(await visitor.page.evaluate((ms) => window.__bench.resnapshot(ms), 15000 * rate));
-      await sleep(300);
+    if (on("demo")) {
+      const demoJoins = [];
+      for (let j = 0; j < JOINS; j++) demoJoins.push(await join(visitor, BASE + "/", "demo", demoHeld, demoReady));
+      row.demo_load = loadStats(demoJoins);
+      row.demo_load.strokes_held = demoHeld;
+      if (rate === 1) row.demo_memory = await freshMemory(visitor, BASE + "/", "demo", demoHeld, demoReady);
+      const resnaps = [];
+      // An empty board's snapshot has nothing to render.
+      for (let j = 0; j < (n > 0 ? SNAPSHOTS : 0); j++) {
+        resnaps.push(await visitor.page.evaluate((ms) => window.__bench.resnapshot(ms), 15000 * rate));
+        await sleep(300);
+      }
+      row.demo_snapshot = {
+        samples: resnaps.filter(Boolean).length,
+        handler_ms: summary(resnaps.filter(Boolean).map((r) => r.handler)),
+        // The snapshot handled and on screen: handler plus the next frame's
+        // rendering, without the wait for that frame.
+        paint_ms: summary(resnaps.filter(Boolean).map((r) => r.handler + r.frame)),
+        frame_aligned: { wall_paint_ms: summary(resnaps.filter(Boolean).map((r) => r.wall)) },
+      };
+      const demoIdle = await idleFrames(visitor, 1000);
+      const demoGestures = [];
+      for (let g = 0; g < GESTURES; g++) {
+        demoGestures.push(await drawGesture(visitor, "demo-board-svg", "demo"));
+        await sleep(400);
+      }
+      row.demo_draw = frameStats(demoGestures);
+      row.demo_draw.frame_aligned.idle = demoIdle;
+      log(
+        `  ${key} demo draw p95 ${row.demo_draw.frame_aligned.frame_ms.p95} ms, raster/frame ${row.demo_draw.raster_ms_per_frame.median}; ` +
+          `load paint ${row.demo_load.painted_ms.median} ms`
+      );
+      await blank(visitor);
     }
-    row.demo_snapshot = {
-      samples: resnaps.filter(Boolean).length,
-      handler_ms: summary(resnaps.filter(Boolean).map((r) => r.handler)),
-      // The snapshot handled and on screen: handler plus the next frame's
-      // rendering, without the wait for that frame.
-      paint_ms: summary(resnaps.filter(Boolean).map((r) => r.handler + r.frame)),
-      frame_aligned: { wall_paint_ms: summary(resnaps.filter(Boolean).map((r) => r.wall)) },
-    };
-    const demoIdle = await idleFrames(visitor, 1000);
-    const demoGestures = [];
-    for (let g = 0; g < GESTURES; g++) {
-      demoGestures.push(await drawGesture(visitor, "demo-board-svg", "demo"));
-      await sleep(400);
-    }
-    row.demo_draw = frameStats(demoGestures);
-    row.demo_draw.frame_aligned.idle = demoIdle;
-    log(
-      `  ${key} demo draw p95 ${row.demo_draw.frame_aligned.frame_ms.p95} ms, raster/frame ${row.demo_draw.raster_ms_per_frame.median}; ` +
-        `load paint ${row.demo_load.painted_ms.median} ms`
-    );
-    await blank(visitor);
 
     // Viewer: loads, idle cost, applied strokes and undos.
-    const viewerJoins = [];
-    for (let j = 0; j < JOINS; j++) viewerJoins.push(await join(viewer, roomUrl, "viewer", n, viewerReady));
-    row.viewer_load = loadStats(viewerJoins);
-    if (rate === 1) row.viewer_memory = await freshMemory(viewer, roomUrl, "viewer", n, viewerReady);
-    row.viewer_idle_busy_ms_per_s = await idleCost(viewer, 2000);
+    if (on("viewer")) {
+      const viewerJoins = [];
+      for (let j = 0; j < JOINS; j++) viewerJoins.push(await join(viewer, roomUrl, "viewer", n, viewerReady));
+      row.viewer_load = loadStats(viewerJoins);
+      if (rate === 1) row.viewer_memory = await freshMemory(viewer, roomUrl, "viewer", n, viewerReady);
+      row.viewer_idle_busy_ms_per_s = await idleCost(viewer, 2000);
 
-    // The room is full at 500: make room for the strokes the samples add.
-    let held = n;
-    if (n >= 500) {
-      await drawerUndo(drawer, 499);
-      await viewer.page.waitForFunction(() => window.__bench.counts().viewer === 499, null, { timeout: 20000 });
-      held = 499;
-    }
-    const applies = [];
-    const undos = [];
-    for (let s = 0; s < SAMPLES; s++) {
-      applies.push(await viewerApply(viewer, drawer, held + 1, s));
-      await waitQueue(drawer);
-      undos.push(await viewerUndo(viewer, drawer, held));
-      await sleep(150);
-    }
-    row.viewer_apply = applyStats(applies);
-    row.viewer_undo = applyStats(undos.map((u) => u.remote));
-    row.drawer_undo = applyStats(undos.map((u) => u.local));
-
-    // What the console logging costs when it is not dropped (1x, 300).
-    if (rate === 1 && n === 300 && !QUICK) {
-      await viewer.page.evaluate(() => (window.__bench.passLogs = true));
-      const logged = [];
-      for (let s = 0; s < 8; s++) {
-        logged.push(await viewerApply(viewer, drawer, held + 1, s));
-        await waitQueue(drawer);
-        await viewerUndo(viewer, drawer, held);
+      // The room is full at 500: make room for the strokes the samples add.
+      let held = n;
+      if (n >= 500) {
+        await drawerUndo(drawer, 499);
+        await viewer.page.waitForFunction(() => window.__bench.counts().viewer === 499, null, { timeout: 20000 });
+        held = 499;
       }
-      await viewer.page.evaluate(() => (window.__bench.passLogs = false));
-      row.viewer_apply_with_console_logs = applyStats(logged);
-    }
+      const applies = [];
+      const undos = [];
+      for (let s = 0; s < SAMPLES; s++) {
+        applies.push(await viewerApply(viewer, drawer, held + 1, s));
+        await waitQueue(drawer);
+        undos.push(await viewerUndo(viewer, drawer, held));
+        await sleep(150);
+      }
+      row.viewer_apply = applyStats(applies);
+      row.viewer_undo = applyStats(undos.map((u) => u.remote));
+      row.drawer_undo = applyStats(undos.map((u) => u.local));
 
-    if (n >= 500) {
-      // Back to 500 for the next pass.
-      await viewerApply(viewer, drawer, 500, 0);
-      await waitQueue(drawer);
+      // What the console logging costs when it is not dropped (1x, 300).
+      if (extras && rate === 1 && n === 300 && !QUICK) {
+        await viewer.page.evaluate(() => (window.__bench.passLogs = true));
+        const logged = [];
+        for (let s = 0; s < 8; s++) {
+          logged.push(await viewerApply(viewer, drawer, held + 1, s));
+          await waitQueue(drawer);
+          await viewerUndo(viewer, drawer, held);
+        }
+        await viewer.page.evaluate(() => (window.__bench.passLogs = false));
+        row.viewer_apply_with_console_logs = applyStats(logged);
+      }
+
+      if (n >= 500) {
+        // Back to 500 for the next pass.
+        await viewerApply(viewer, drawer, 500, 0);
+        await waitQueue(drawer);
+      }
+      log(
+        `  ${key} viewer apply dom ${row.viewer_apply.dom_ms.median}/${row.viewer_apply.dom_ms.p95} ms, ` +
+          `paint ${row.viewer_apply.paint_ms.median}; load paint ${row.viewer_load.painted_ms.median} ms`
+      );
+      await blank(viewer);
     }
-    log(
-      `  ${key} viewer apply dom ${row.viewer_apply.dom_ms.median}/${row.viewer_apply.dom_ms.p95} ms, ` +
-        `paint ${row.viewer_apply.paint_ms.median}; load paint ${row.viewer_load.painted_ms.median} ms`
-    );
-    await blank(viewer);
   }
+}
+
+if (["drawer", "tools", "demo", "viewer"].some(want)) {
+  for (const n of SIZES) await phase(`size ${n}`, () => runSize(n, "game", results.runs, true, want));
+}
+// The sets with fills (every tenth stroke a fill), at 500.
+if (want("fills")) {
+  results.runs_fills = {};
+  await phase("fills", () => runSize(FILLS_SIZE, "game-fills", results.runs_fills, false, (g) => g !== "tools"));
 }
 
 function loadStats(rows) {
@@ -683,53 +977,161 @@ function loadStats(rows) {
 }
 
 // ── Leak check (1x) ──────────────────────────────────────────────────────
-log("== leak check");
-for (const p of [drawer, viewer, visitor]) await setRate(p, 1);
-const n0 = SIZES[SIZES.length - 1];
-await join(drawer, roomUrl, "drawer", n0, drawerReady);
-await join(viewer, roomUrl, "viewer", n0, viewerReady);
-await visitor.page.goto(BASE + "/");
-await visitor.page.waitForFunction(demoReady, null, { timeout: 30000 });
-await hideGlow(visitor);
-
+const loadRoomCall = (k, set = "game") =>
+  rpc(
+    `BenchRpc.load_room(${JSON.stringify(FIXTURES)}, ${JSON.stringify(setup.room_id)}, ${JSON.stringify(setup.drawer.id)}, ${k}, ${JSON.stringify(set)})`
+  );
+const loadDemoCall = (k, set = "demo") => rpc(`BenchRpc.load_demo(${JSON.stringify(FIXTURES)}, ${k}, ${JSON.stringify(set)})`);
+const snap = async () => ({ drawer: await memory(drawer), viewer: await memory(viewer), demo: await memory(visitor) });
+const diff = (a, b) => ({
+  js_heap_bytes: b.js_heap_bytes - a.js_heap_bytes,
+  dom_nodes: b.dom_nodes - a.dom_nodes,
+  listeners: b.listeners - a.listeners,
+});
+function growth(out, before, half, after) {
+  for (const k of ["drawer", "viewer", "demo"]) {
+    out[k + "_growth"] = { first_half: diff(before[k], half[k]), second_half: diff(half[k], after[k]) };
+    log(
+      `  ${k}: heap ${before[k].js_heap_bytes} -> ${half[k].js_heap_bytes} -> ${after[k].js_heap_bytes}, ` +
+        `nodes ${before[k].dom_nodes} -> ${half[k].dom_nodes} -> ${after[k].dom_nodes}`
+    );
+  }
+}
 async function settle(roomCount, demoCount) {
   await drawer.page.waitForFunction((n) => window.__bench.counts().drawer === n, roomCount, { timeout: 120000 });
   await viewer.page.waitForFunction((n) => window.__bench.counts().viewer === n, roomCount, { timeout: 120000 });
   await visitor.page.waitForFunction((n) => window.__bench.counts().demo === n, demoCount, { timeout: 120000 });
   await sleep(1500);
 }
-const cyclesCall = (k) =>
-  rpc(
-    `BenchRpc.cycles(${JSON.stringify(FIXTURES)}, ${JSON.stringify(setup.room_id)}, ${JSON.stringify(setup.drawer.id)}, ${LEAK_ROOM}, ${LEAK_DEMO}, ${k}, 800)`
-  );
-// One cycle first (warms the code paths), then the cycles in two halves:
-// growth that goes on in the second half is a leak, growth that stops is
-// warm-up.
-const snap = async () => ({ drawer: await memory(drawer), viewer: await memory(viewer), demo: await memory(visitor) });
-cyclesCall(1);
-await settle(LEAK_ROOM, LEAK_DEMO);
-const before = await snap();
-cyclesCall(LEAK_CYCLES / 2);
-await settle(LEAK_ROOM, LEAK_DEMO);
-const half = await snap();
-cyclesCall(LEAK_CYCLES / 2);
-await settle(LEAK_ROOM, LEAK_DEMO);
-const after = await snap();
-results.leak = { cycles: LEAK_CYCLES, room_strokes: LEAK_ROOM, demo_strokes: LEAK_DEMO, before, half, after };
-const diff = (a, b) => ({
-  js_heap_bytes: b.js_heap_bytes - a.js_heap_bytes,
-  dom_nodes: b.dom_nodes - a.dom_nodes,
-  listeners: b.listeners - a.listeners,
+
+if (want("leak")) await phase("leak", async () => {
+  log("== leak check");
+  for (const p of [drawer, viewer, visitor]) await setRate(p, 1);
+  loadRoomCall(LEAK_ROOM);
+  // The board's byte cap keeps fewer than LEAK_DEMO fixture strokes.
+  const demoHeld = loadDemoCall(LEAK_DEMO).demo_strokes;
+  await join(drawer, roomUrl, "drawer", LEAK_ROOM, drawerReady);
+  await join(viewer, roomUrl, "viewer", LEAK_ROOM, viewerReady);
+  await join(visitor, BASE + "/", "demo", demoHeld, demoReady);
+
+  const cyclesCall = (k) =>
+    rpc(
+      `BenchRpc.cycles(${JSON.stringify(FIXTURES)}, ${JSON.stringify(setup.room_id)}, ${JSON.stringify(setup.drawer.id)}, ${LEAK_ROOM}, ${LEAK_DEMO}, ${k}, 800)`
+    );
+  // One cycle first (warms the code paths), then the cycles in two halves:
+  // growth that goes on in the second half is a leak, growth that stops is
+  // warm-up.
+  cyclesCall(1);
+  await settle(LEAK_ROOM, demoHeld);
+  const before = await snap();
+  cyclesCall(LEAK_CYCLES / 2);
+  await settle(LEAK_ROOM, demoHeld);
+  const half = await snap();
+  cyclesCall(LEAK_CYCLES / 2);
+  await settle(LEAK_ROOM, demoHeld);
+  const after = await snap();
+  results.leak = { cycles: LEAK_CYCLES, room_strokes: LEAK_ROOM, demo_strokes: LEAK_DEMO, demo_strokes_held: demoHeld, before, half, after };
+  growth(results.leak, before, half, after);
 });
-for (const k of ["drawer", "viewer", "demo"]) {
-  results.leak[k + "_growth"] = { first_half: diff(before[k], half[k]), second_half: diff(half[k], after[k]) };
-  log(
-    `  ${k}: heap ${before[k].js_heap_bytes} -> ${half[k].js_heap_bytes} -> ${after[k].js_heap_bytes}, ` +
-      `nodes ${before[k].dom_nodes} -> ${half[k].dom_nodes} -> ${after[k].dom_nodes}`
-  );
+
+// ── Leak check with every tool (1x) ──────────────────────────────────────
+// Rounds in which the drawer (game) and the visitor (home board) each use
+// every tool: three brush strokes, a Ctrl stroke and a right-button stroke
+// (erasing), an Alt+click pick, the size keys, a pick on the colour wheel,
+// a fill, an undo (the fill), then the toolbar's clear; the viewer follows
+// the game canvas. Heap and nodes after a first round, 10 more and 10 more.
+async function toolRound(p, svgId, group, shell, isGame) {
+  const count = () => p.page.evaluate((g) => window.__bench.counts()[g], group);
+  const settled = async (n) => {
+    try {
+      await p.page.waitForFunction(([g, n]) => window.__bench.counts()[g] === n, [group, n], { timeout: 30000 });
+    } catch (e) {
+      const why = await p.page.evaluate((g) => {
+        const f = window.__scrawlyFill;
+        return {
+          count: window.__bench.counts()[g],
+          tool: window.__scrawlyDrawTool,
+          fill: f && { ready: f.ready, pending: !!f.pending, canvases: [...f.canvases.keys()] },
+          notice: [...document.querySelectorAll(".canvas-notice")].map((el) => el.textContent),
+          active: document.activeElement && document.activeElement.outerHTML.slice(0, 120),
+        };
+      }, group);
+      throw new Error(`tool round on ${group}: ${n} expected, ${JSON.stringify(why)}`);
+    }
+    if (isGame) await waitQueue(p);
+  };
+  const gesture = async (pts, mods) => {
+    const n = await count();
+    await p.page.evaluate(([svgId, pts, mods]) => window.__bench.gesture(svgId, pts, 0, mods), [svgId, pts, mods]);
+    await settled(n + 1);
+  };
+  for (let k = 0; k < 3; k++) await gesture(MEDIUM[k], null);
+  await gesture(MEDIUM[3], { ctrlKey: true });
+  await gesture(MEDIUM[4], { button: 2 });
+  await p.page.evaluate((svgId) => window.__bench.press(svgId, 300, 200, { altKey: true }), svgId);
+  for (const key of ["]", "]", "]", "[", "[", "["]) await p.page.keyboard.press(key);
+  await p.page.click(`${shell} .color-chip`);
+  await p.page.waitForSelector(`${shell} [data-color-wheel]`, { state: "visible", timeout: 10000 });
+  const wb = await p.page.locator(`${shell} [data-color-wheel]`).boundingBox();
+  await p.page.mouse.click(wb.x + wb.width * 0.7, wb.y + wb.height * 0.4);
+  await p.page.keyboard.press("Escape");
+  await p.page.keyboard.press("f");
+  await p.page.waitForFunction(() => window.__scrawlyDrawTool.tool === "fill", null, { timeout: 10000 });
+  const n = await count();
+  await p.page.evaluate((svgId) => window.__bench.press(svgId, 3, 3), svgId);
+  await settled(n + 1);
+  await p.page.keyboard.press("b");
+  await p.page.keyboard.press("Control+z");
+  await settled(n);
+  // DemoBoardChannel takes one clear per socket every 5 s (and drops it
+  // silently), so a clear that didn't take is tried again after that.
+  for (let attempt = 1; ; attempt++) {
+    const wait = (p.lastClear || 0) + 5500 - Date.now();
+    if (wait > 0) await sleep(wait);
+    await p.page.locator(`${shell} .toolbar button`, { hasText: /^clear$/ }).click();
+    p.lastClear = Date.now();
+    try {
+      await p.page.waitForFunction((g) => window.__bench.counts()[g] === 0, group, { timeout: 4000 });
+      break;
+    } catch (e) {
+      if (attempt >= 3) {
+        const board = await p.page.evaluate(() => {
+          const b = window.__scrawlyDemoBoard;
+          return b && { canDraw: b.canDraw, token: !!b.usedToken, strokes: b.strokes.length };
+        });
+        throw new Error(`clear didn't take on ${group}: ${JSON.stringify(board)}`);
+      }
+    }
+  }
+  await settled(0);
 }
 
-rpc(`BenchRpc.teardown(${JSON.stringify(setup.room_id)})`);
+if (want("leak_tools")) await phase("leak_tools", async () => {
+  log("== leak check, every tool");
+  for (const p of [drawer, viewer, visitor]) await setRate(p, 1);
+  loadRoomCall(0);
+  loadDemoCall(0);
+  await join(drawer, roomUrl, "drawer", 0, drawerReady);
+  await join(viewer, roomUrl, "viewer", 0, viewerReady);
+  await join(visitor, BASE + "/", "demo", 0, demoReady);
+  const rounds = async (k) => {
+    for (let i = 0; i < k; i++) {
+      await toolRound(drawer, "game-canvas-svg", "drawer", ".canvas-shell", true);
+      await toolRound(visitor, "demo-board-svg", "demo", ".surface:has(#demo-board-svg)", false);
+    }
+    await settle(0, 0);
+  };
+  await rounds(1);
+  const before = await snap();
+  await rounds(TOOL_ROUNDS / 2);
+  const half = await snap();
+  await rounds(TOOL_ROUNDS / 2);
+  const after = await snap();
+  results.leak_tools = { rounds: TOOL_ROUNDS, before, half, after };
+  growth(results.leak_tools, before, half, after);
+});
+
+await phase("teardown", async () => rpc(`BenchRpc.teardown(${JSON.stringify(setup.room_id)})`));
 results.meta.duration_s = Math.round((Date.now() - t0) / 1000);
 for (const b of browsers) await b.close();
 fs.mkdirSync(path.dirname(OUT), { recursive: true });

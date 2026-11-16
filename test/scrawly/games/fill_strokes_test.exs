@@ -231,14 +231,12 @@ defmodule Scrawly.Games.FillStrokesTest do
   end
 
   describe "pages" do
-    test "a viewer's page keeps a pushed fill's flag; the canvas paints its inside" do
+    test "a viewer's page hands a pushed fill to its canvas with its flag" do
       component = %Hologram.Component{
         props: %{room_id: "r1"},
         state: %{
           is_drawer: false,
-          drawing_strokes: [],
           last_seq: 1,
-          strokes_seq: 1,
           resync_requested_at: nil,
           resync_owed_seq: nil,
           leaving?: false
@@ -254,30 +252,31 @@ defmodule Scrawly.Games.FillStrokesTest do
         seq: 2
       }
 
-      {result, _calls} = js_calls(fn -> GamePage.action(:stroke_completed, params, component) end)
-      assert result.state.drawing_strokes == [Map.put(@fill, :seq, 2)]
+      # drawing_manager.mjs draws a viewer's strokes (its inside, evenodd, for
+      # a fill: test/js/viewer_canvas.test.mjs); the page keeps none.
+      {result, calls} = js_calls(fn -> GamePage.action(:stroke_completed, params, component) end)
+
+      assert calls == [
+               applyViewerStroke: [
+                 %{id: @fill.id, path: @square, color: "#2563eb", width: 1, fill: true},
+                 2
+               ]
+             ]
 
       line = %{stroke_id: "s-l", path: "M 1 1 L 2 2", color: "#000000", width: 3, seq: 3}
-      {result, _calls} = js_calls(fn -> GamePage.action(:stroke_completed, line, result) end)
+      {_result, calls} = js_calls(fn -> GamePage.action(:stroke_completed, line, result) end)
 
-      assert List.last(result.state.drawing_strokes) == %{
-               id: "s-l",
-               path: "M 1 1 L 2 2",
-               color: "#000000",
-               width: 3,
-               seq: 3
-             }
+      assert calls == [
+               applyViewerStroke: [
+                 %{id: "s-l", path: "M 1 1 L 2 2", color: "#000000", width: 3, fill: false},
+                 3
+               ]
+             ]
 
-      html = render(DrawingCanvas, %{is_drawer: false, strokes: result.state.drawing_strokes})
-
-      assert html =~
-               ~s(<path data-stroke-id="s-fill-1" d="#{@square}" fill="#2563eb" fill-rule="evenodd" stroke="none"></path>)
-
-      assert html =~
-               ~s(<path data-stroke-id="s-l" d="M 1 1 L 2 2" stroke="#000000" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>)
-
-      # Fills first-to-last with the lines: the fill's path comes first.
-      assert :binary.match(html, "s-fill-1") < :binary.match(html, "s-l\"")
+      # Hologram renders no stroke at all: the canvas's groups are empty.
+      html = render(DrawingCanvas, %{is_drawer: false})
+      assert html =~ ~s(<g id="game-canvas-strokes"></g>)
+      refute html =~ "data-stroke-id"
     end
 
     test "the drawer's other tab adopts a fill as a fill" do

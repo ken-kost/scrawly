@@ -7,9 +7,9 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { installFakeDom } from "./support/fake_dom.mjs";
+import { installFakeDom, FakeEl } from "./support/fake_dom.mjs";
 
-const { dispatched } = installFakeDom();
+const { root, dispatched } = installFakeDom();
 
 const controls = await import("../../lib/scrawly_web/pages/draw_controls.mjs");
 const tools = await import("../../lib/scrawly_web/pages/draw_tools.mjs");
@@ -226,6 +226,32 @@ test("a shortcut dispatches the page's toolbar action and keeps the key from the
   assert.equal(e.defaultPrevented, true);
   assert.equal(b.defaultPrevented, true);
   assert.equal(z.defaultPrevented, true);
+});
+
+test("Ctrl/Cmd+Z undoes natively on the canvas in the document; without one, the page's action", () => {
+  const undone = [];
+  controls.registerCanvasUndo("game-canvas-svg", () => undone.push("game"));
+  copy.registerCanvasUndo("demo-board-svg", () => undone.push("board"));
+
+  // Neither canvas rendered: the page's action, as before.
+  keydown("z", { ctrlKey: true });
+  assert.deepEqual(actions(), [["undo_drawing", "page"]]);
+  assert.deepEqual(undone, []);
+
+  // The board in the document: its undo, in the key's own task, and no
+  // Hologram action at all.
+  dispatched.length = 0;
+  const svg = new FakeEl("svg", "demo-board-svg");
+  root.appendChild(svg);
+  const z = keydown("z", { metaKey: true });
+  assert.deepEqual(undone, ["board"]);
+  assert.deepEqual(actions(), []);
+  assert.equal(z.defaultPrevented, true);
+
+  // Typing in a field still keeps the key.
+  keydown("z", { ctrlKey: true }, el("INPUT", { type: "text" }));
+  assert.deepEqual(undone, ["board"]);
+  root.removeChild(svg);
 });
 
 test("Ctrl, held for a Ctrl+drag, is no shortcut", () => {

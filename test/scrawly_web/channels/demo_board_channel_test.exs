@@ -644,6 +644,59 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
       add_stroke!(me, "d-newer")
       assert undo!(me) == {:ok, %{stroke_ids: ["d-newer"]}}
     end
+
+    test "the board keeps at most max_bytes/0 path bytes: the oldest strokes go first" do
+      big = "M 1 1" <> String.duplicate(" L 2 2", 1_330)
+      per = byte_size(big)
+      fit = div(DemoBoardServer.max_bytes(), per)
+
+      for i <- 1..(fit + 3) do
+        :ok =
+          DemoBoardServer.add_stroke(%{
+            stroke_id: "d-big-#{i}",
+            path: big,
+            color: "#000000",
+            width: 2,
+            owner: @other
+          })
+      end
+
+      ids = board_ids()
+      assert length(ids) == fit
+      assert hd(ids) == "d-big-4"
+      assert List.last(ids) == "d-big-#{fit + 3}"
+
+      bytes = DemoBoardServer.get_strokes() |> Enum.map(&byte_size(&1.path)) |> Enum.sum()
+      assert bytes <= DemoBoardServer.max_bytes()
+
+      # Undo and clear keep the totals in step: the room they free is used
+      # again, up to the same limit.
+      {:ok, _, me} = join_board(@me)
+      add_stroke!(me, "d-mine")
+      assert undo!(me) == {:ok, %{stroke_ids: ["d-mine"]}}
+      assert length(board_ids()) == fit
+      DemoBoardServer.clear()
+      _ = DemoBoardServer.get_strokes()
+
+      for i <- 1..fit do
+        :ok =
+          DemoBoardServer.add_stroke(%{
+            stroke_id: "d-again-#{i}",
+            path: big,
+            color: "#000000",
+            width: 2,
+            owner: @other
+          })
+      end
+
+      assert length(board_ids()) == fit
+    end
+
+    test "demo_board.mjs trims its store by the board's own limits" do
+      source = File.read!("lib/scrawly_web/pages/demo_board.mjs")
+      assert source =~ "const MAX_STROKES = #{DemoBoardServer.max_strokes()};"
+      assert source =~ "export const MAX_BYTES = #{DemoBoardServer.max_bytes()};"
+    end
   end
 
   describe "fills (#43)" do

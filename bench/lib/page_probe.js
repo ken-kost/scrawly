@@ -4,6 +4,8 @@
 (() => {
   const B = (window.__bench = {
     silenced: 0,
+    // Hologram actions run, by name (from its "Hologram: action" log).
+    actions: {},
     passLogs: false,
     sse: [],
     ws: [],
@@ -21,6 +23,10 @@
   // in `silenced`) unless `passLogs` is set.
   const log = console.log;
   console.log = function (first) {
+    if (first === "Hologram: action" && arguments.length > 1) {
+      const name = String(arguments[1]).replace(/^:/, "");
+      B.actions[name] = (B.actions[name] || 0) + 1;
+    }
     if (!B.passLogs && typeof first === "string" && first.startsWith("Hologram:")) {
       B.silenced++;
       return;
@@ -250,34 +256,52 @@
     return B.frames;
   };
 
+  // Client coordinates of viewBox point [x, y] on svg `svgId`.
+  B.client = (svgId, x, y) => {
+    const m = document.getElementById(svgId).getScreenCTM();
+    return [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f];
+  };
+
+  const pointer = (type, p, buttons, button, mods) =>
+    new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      pointerId: 1,
+      pointerType: "mouse",
+      isPrimary: true,
+      button,
+      buttons,
+      clientX: p[0],
+      clientY: p[1],
+      ctrlKey: !!(mods && mods.ctrlKey),
+      altKey: !!(mods && mods.altKey),
+    });
+
   // A pointer gesture on svg `svgId` through `points` (viewBox units), as
   // native pointer events in client coordinates: one move every
   // `intervalMs` (all moves due are sent when the main thread gets to them,
   // as the browser's input queue would), or all in one task when 0.
-  B.gesture = (svgId, points, intervalMs) =>
+  // `mods`: {ctrlKey, altKey, button} for the whole gesture (button 2 is
+  // the right button), or nothing for the main button alone. `hover`: no
+  // button at all (moves only, no press or release: the size ring).
+  B.gesture = (svgId, points, intervalMs, mods, hover) =>
     new Promise((resolve) => {
       const svg = document.getElementById(svgId);
       const m = svg.getScreenCTM();
       const pts = points.map(([x, y]) => [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f]);
-      const ev = (type, p, buttons, button) =>
-        new PointerEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          pointerId: 1,
-          pointerType: "mouse",
-          isPrimary: true,
-          button,
-          buttons,
-          clientX: p[0],
-          clientY: p[1],
-        });
+      const button = mods && mods.button === 2 ? 2 : 0;
+      const held = hover ? 0 : button === 2 ? 2 : 1;
+      const ev = (type, p, buttons, b) => pointer(type, p, buttons, b, mods);
       const last = pts[pts.length - 1];
       const t0 = now();
-      svg.dispatchEvent(ev("pointerdown", pts[0], 1, 0));
+      svg.dispatchEvent(ev(hover ? "pointermove" : "pointerdown", pts[0], held, hover ? -1 : button));
+      const release = () => {
+        if (!hover) svg.dispatchEvent(ev("pointerup", last, 0, button));
+      };
       if (!intervalMs) {
-        for (let i = 1; i < pts.length; i++) svg.dispatchEvent(ev("pointermove", pts[i], 1, -1));
-        svg.dispatchEvent(ev("pointerup", last, 0, 0));
+        for (let i = 1; i < pts.length; i++) svg.dispatchEvent(ev("pointermove", pts[i], held, -1));
+        release();
         resolve({ moves: pts.length - 1, ms: now() - t0 });
         return;
       }
@@ -285,15 +309,29 @@
       const tick = () => {
         const due = Math.floor((now() - t0) / intervalMs);
         while (i < pts.length && i <= due) {
-          svg.dispatchEvent(ev("pointermove", pts[i], 1, -1));
+          svg.dispatchEvent(ev("pointermove", pts[i], held, -1));
           i++;
         }
         if (i < pts.length) setTimeout(tick, 1);
         else {
-          svg.dispatchEvent(ev("pointerup", last, 0, 0));
+          release();
           resolve({ moves: pts.length - 1, ms: now() - t0 });
         }
       };
       setTimeout(tick, intervalMs);
+    });
+
+  // One press and release at viewBox point [x, y] (a pick, a fill): the
+  // pointerdown handler's time (everything the canvas does in it), and the
+  // rendering of the next frame.
+  B.press = (svgId, x, y, mods) =>
+    new Promise((resolve) => {
+      const svg = document.getElementById(svgId);
+      const p = B.client(svgId, x, y);
+      const t0 = now();
+      svg.dispatchEvent(pointer("pointerdown", p, 1, 0, mods));
+      const handler = now() - t0;
+      svg.dispatchEvent(pointer("pointerup", p, 0, 0, mods));
+      B.nextFrame().then(({ tRaf, tPaint }) => resolve({ t0, handler, frame: tPaint - tRaf }));
     });
 })();

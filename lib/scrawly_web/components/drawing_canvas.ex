@@ -2,26 +2,36 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
   @moduledoc """
   SVG drawing canvas supporting multi-stroke rendering with color and width.
 
-  Markup contract with drawing_manager.mjs: the svg is `#game-canvas-svg`.
-  Its layers, bottom to top:
+  Markup contract with drawing_manager.mjs: two svgs stacked in the frame,
+  with the same viewBox, so a point is the same on both.
 
-    1. `#game-canvas-strokes`: the completed strokes Hologram renders for
-       viewers (`data-stroke-id`), in list order: a line stroked, a fill
-       (`StrokeRules.fill?/1`, the fill tool's closed shape) filled with its
-       colour, evenodd, no outline;
-    2. `#game-canvas-drawer` (drawer only inside): the JS-owned
-       `#game-canvas-drawer-strokes` group, where the drawer's committed
-       strokes are drawn, and `#drawing-path`, the stroke in progress;
-    3. `#game-canvas-overlay`, JS-owned, for everyone: live strokes from
-       other tabs.
+    1. `#game-canvas-paint`, below: the committed strokes, never touched by
+       a pointer (`pointer-events: none`), all of them JS-owned (one node
+       per stroke, `data-stroke-id`, in list order: a line stroked, a fill
+       filled with its colour, evenodd, no outline): `#game-canvas-strokes`
+       a viewer's, `#game-canvas-drawer` (drawer only inside) the
+       `#game-canvas-drawer-strokes` group, the drawer's. Hologram never
+       renders a stroke: the canvas arrives as JSON in the page's state and
+       drawing_manager.mjs draws it, then follows the room's broadcasts, so
+       a stroke, an undo or a countdown tick re-renders no stroke.
+    2. `#game-canvas-svg`, on top: the canvas the stroke engine listens to
+       and maps pointers on, holding only what changes while drawing:
+       `#drawing-path`, the stroke in progress (drawer only), and
+       `#game-canvas-overlay`, JS-owned, for everyone: live strokes from
+       other tabs. Its own compositor layer (app.css `.canvas-input`), so a
+       frame of a stroke in progress re-rasters that stroke alone, never
+       the committed strokes under it (notes/files/drawing-benchmarks.md,
+       "Rendering decision"); and the cursor attributes the tools set on it
+       (`data-size-ring`, `data-pick`, `data-fill`) restyle its few
+       children, not every committed stroke.
 
-  JS only ever inserts into the two empty groups, and styles `#drawing-path`
+  JS only ever inserts into the empty groups, and styles `#drawing-path`
   when a stroke starts (the tool in draw_tools.mjs). Pointer input is native
   (stroke_engine.mjs), so there are no pointer bindings here. The dot grid is
   drawn by CSS above the strokes (`.canvas-frame::after`), so the white eraser
   never paints over it.
 
-  Beside the svg, above the grid, `#game-canvas-ring` is the size ring
+  Beside the svgs, above the grid, `#game-canvas-ring` is the size ring
   (size_ring.mjs): its own small svg on its own composited layer, so moving
   it never repaints the strokes. Hidden until JS shows it (the drawer, in
   `:drawing`, with a mouse or a pen over the canvas). `#game-canvas-pick` is
@@ -32,31 +42,17 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
   """
   use Hologram.Component
 
-  alias Scrawly.Games.StrokeRules
-
   prop :is_drawer, :boolean, required: true
-  prop :strokes, :list, required: true
 
   def template do
     ~HOLO"""
     <div class="canvas-frame">
-      <svg
-        id="game-canvas-svg"
-        viewBox="0 0 800 450"
-        preserveAspectRatio="xMidYMid meet"
-        style="touch-action: none;"
-      >
-        <g id="game-canvas-strokes">
-          {%if !@is_drawer}
-            {%for stroke <- @strokes}{%if StrokeRules.fill?(stroke)}<path data-stroke-id={stroke.id} d={stroke.path} fill={stroke.color} fill-rule="evenodd" stroke="none" />{%else}<path data-stroke-id={stroke.id} d={stroke.path} stroke={stroke.color} stroke-width={stroke.width} fill="none" stroke-linecap="round" stroke-linejoin="round" />{/if}{/for}
-          {/if}
-        </g>
-        <g id="game-canvas-drawer">
-          {%if @is_drawer}
-            <g id="game-canvas-drawer-strokes"></g>
-            <path id="drawing-path" fill="none" stroke-linecap="round" stroke-linejoin="round" />
-          {/if}
-        </g>
+      <svg id="game-canvas-paint" class="canvas-paint" viewBox="0 0 800 450" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+        <g id="game-canvas-strokes"></g>
+        <g id="game-canvas-drawer">{%if @is_drawer}<g id="game-canvas-drawer-strokes"></g>{/if}</g>
+      </svg>
+      <svg id="game-canvas-svg" class="canvas-input" viewBox="0 0 800 450" preserveAspectRatio="xMidYMid meet" style="touch-action: none;">
+        <g id="game-canvas-active">{%if @is_drawer}<path id="drawing-path" fill="none" stroke-linecap="round" stroke-linejoin="round" />{/if}</g>
         <g id="game-canvas-overlay"></g>
       </svg>
       <svg id="game-canvas-ring" class="size-ring" aria-hidden="true" focusable="false">

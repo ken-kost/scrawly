@@ -12,9 +12,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
   js_import :clearDrawing, from: "./drawing_manager.mjs"
   js_import :setDrawingPath, from: "./drawing_manager.mjs"
   js_import :undoStroke, from: "./drawing_manager.mjs"
-  js_import :removeRemoteOverlay, from: "./drawing_manager.mjs"
-  js_import :settleRemoteStrokes, from: "./drawing_manager.mjs"
-  js_import :clearRemoteStrokes, from: "./drawing_manager.mjs"
+  js_import :showViewerStrokes, from: "./drawing_manager.mjs"
+  js_import :applyViewerStroke, from: "./drawing_manager.mjs"
+  js_import :undoViewerStroke, from: "./drawing_manager.mjs"
+  js_import :clearViewerStrokes, from: "./drawing_manager.mjs"
+  js_import :applyViewerSnapshot, from: "./drawing_manager.mjs"
   js_import :mountCanvas, from: "./drawing_manager.mjs"
   js_import :restoreStrokes, from: "./drawing_manager.mjs"
   js_import :restoreCanvas, from: "./drawing_manager.mjs"
@@ -117,8 +119,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:is_creator, is_creator)
               |> put_state(:creator_id, rs.creator_id)
               # Sequencing: the seq of the last broadcast applied, and of the
-              # last room state / full stroke list applied (stale snapshots,
-              # see :room_resynced).
+              # last room state applied (stale snapshots, see :room_resynced).
+              # The canvas's own (drawing_manager.mjs) starts at strokes_seq.
               |> put_state(:last_seq, rs.seq)
               |> put_state(:delta_seq, rs.seq)
               |> put_state(:strokes_seq, rs.seq)
@@ -179,7 +181,12 @@ defmodule ScrawlyWeb.Pages.GamePage do
                 is_creator and length(rs.players) >= 2 and rs.game_id == nil
               )
               |> put_state(:chat_messages, rs.chat_messages || [])
-              |> put_state(:drawing_strokes, rs.drawing_strokes || [])
+              # The canvas at load, as one JSON string: drawing_manager.mjs
+              # draws it on :mounted (the drawer's history, a viewer's list)
+              # and owns it from then on. One string is much cheaper for
+              # Hologram to carry and decode than a list of maps, and the
+              # page's HTML carries the strokes once (no rendered paths).
+              |> put_state(:canvas_strokes, strokes_json(rs.drawing_strokes))
               # The drawer's tool (DrawingToolbar's model): every page
               # instance starts with the default one.
               |> put_state(:draw_tool, DrawingToolbar.default_tool())
@@ -198,6 +205,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               |> put_state(:answer_kind, rs.answer_kind)
               |> put_state(:themes, Map.get(rs, :themes) || [])
               |> put_state(:word_source, rs.word_source || :local)
+              |> put_word_view()
               |> put_state(:prompt, rs.prompt || "")
               |> put_state(:creator_name, rs.creator_name || "")
               |> put_state(:round_duration, rs.round_duration || 60)
@@ -324,15 +332,20 @@ defmodule ScrawlyWeb.Pages.GamePage do
     JS.call(:noteRoomChannel, [component.props.room_id])
     push_tool(component.state)
     component = load_saved_colors(component)
+    canvas = Map.get(component.state, :canvas_strokes, "")
 
     if component.state.is_drawer do
-      JS.call(:restoreStrokes, [component.state.drawing_strokes])
+      JS.call(:restoreStrokes, [canvas])
+    else
+      JS.call(:showViewerStrokes, [canvas, Map.get(component.state, :strokes_seq)])
     end
 
     JS.call(:setDrawingEnabled, [can_draw?(component.state)])
 
     component =
       component
+      # drawing_manager.mjs holds the canvas now.
+      |> put_state(:canvas_strokes, "")
       |> put_state(:phase_entered_at, System.monotonic_time(:millisecond))
       |> anchor_countdowns(component.state)
 
@@ -470,10 +483,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
     end
   end
 
-  # Viewers render the completed strokes; a drawer's tab already holds its
-  # own (drawing_manager.mjs) and only takes in one drawn in another of the
-  # drawer's tabs (adoptStroke). Each viewer stroke keeps the seq it arrived
-  # with (stale snapshots, see :room_resynced).
+  # The canvas is drawing_manager.mjs's: a viewer's page hands the stroke
+  # over with its seq (applyViewerStroke: one node appended, the seq kept
+  # for stale snapshots, see :room_resynced); a drawer's tab already holds
+  # its own and only takes in one drawn in another of the drawer's tabs
+  # (adoptStroke).
   def action(:stroke_completed, params, component) do
     case accept_seq(component, params) do
       {:apply, component, seq, gap} ->
@@ -488,22 +502,14 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   # A drawer's tab only follows a clear made in another of the drawer's tabs
   # (`op_epoch` is the clearing tab's, see drawing_manager.mjs
-  # applyRoomClear). Viewers keep the live preview of a stroke started after
-  # the clear (clearRemoteStrokes).
+  # applyRoomClear). Viewers empty their canvas and keep the live preview of
+  # a stroke started after the clear (clearViewerStrokes).
   def action(:drawing_cleared, params, component) do
     case accept_seq(component, params) do
       {:apply, component, seq, gap} ->
-        component =
-          if component.state.is_drawer do
-            JS.call(:applyRoomClear, [Map.get(params, :op_epoch)])
-            component
-          else
-            JS.call(:clearRemoteStrokes, [])
-
-            component
-            |> put_state(:drawing_strokes, [])
-            |> put_state(:strokes_seq, seq)
-          end
+        if component.state.is_drawer,
+          do: JS.call(:applyRoomClear, [Map.get(params, :op_epoch)]),
+          else: JS.call(:clearViewerStrokes, [seq])
 
         after_gap(component, gap)
 
@@ -513,27 +519,16 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   # Only the undone stroke's id comes (the canvas is never re-sent): a
-  # viewer drops that stroke from the list it renders. Live overlays of the
-  # stroke being drawn stay. strokes_seq moves on, so a stale snapshot
-  # can't bring the stroke back. A drawer's tab drops it if another of the
+  # viewer's canvas drops that stroke and moves its seq on, so a stale
+  # snapshot can't bring it back (undoViewerStroke). Live overlays of the
+  # stroke being drawn stay. A drawer's tab drops it if another of the
   # drawer's tabs undid it (its own undo already did).
   def action(:drawing_undone, params, component) do
     case accept_seq(component, params) do
       {:apply, component, seq, gap} ->
-        component =
-          if component.state.is_drawer do
-            JS.call(:forgetStroke, [Map.get(params, :stroke_id)])
-            component
-          else
-            stroke_id = Map.get(params, :stroke_id)
-
-            component
-            |> put_state(
-              :drawing_strokes,
-              Enum.reject(component.state.drawing_strokes, &(&1.id == stroke_id))
-            )
-            |> put_state(:strokes_seq, seq)
-          end
+        if component.state.is_drawer,
+          do: JS.call(:forgetStroke, [Map.get(params, :stroke_id)]),
+          else: JS.call(:undoViewerStroke, [Map.get(params, :stroke_id), seq])
 
         after_gap(component, gap)
 
@@ -997,7 +992,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
 
   # Dispatched on every (re)join of the game channel. Never touches the
   # canvas: the drawer's strokes live in drawing_manager.mjs (restored once per
-  # mount by :mounted), the viewers' in :drawing_strokes.
+  # mount by :mounted), the viewers' too (showViewerStrokes).
   def action(:channel_connected, _params, component) do
     component
     |> put_state(:channel_connected, true)
@@ -1089,7 +1084,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
          Map.get(params, :game_id) == Map.get(state, :game_id) and
          Map.get(params, :round) == Map.get(state, :round) do
       JS.call(:applyRejectedStrokes, [Map.get(params, :op_seq), strokes])
-      put_state(component, :drawing_strokes, strokes)
+      component
     else
       component
     end
@@ -1098,7 +1093,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # The clear goes out through the op queue, after the ops queued before it.
   def action(:clear_canvas, _params, component) do
     JS.call(:clearDrawing, [])
-    put_state(component, :drawing_strokes, [])
+    component
   end
 
   # A preset or a saved colour.
@@ -1368,71 +1363,38 @@ defmodule ScrawlyWeb.Pages.GamePage do
   end
 
   defp add_viewer_stroke(component, params, seq) do
-    if component.state.is_drawer do
-      JS.call(:adoptStroke, [
-        %{
-          id: Map.get(params, :stroke_id),
-          path: Map.get(params, :path),
-          color: Map.get(params, :color),
-          width: Map.get(params, :width),
-          fill: Map.get(params, :fill) == true
-        }
-      ])
+    stroke = %{
+      id: Map.get(params, :stroke_id),
+      path: Map.get(params, :path),
+      color: Map.get(params, :color),
+      width: Map.get(params, :width),
+      fill: Map.get(params, :fill) == true
+    }
 
-      component
-    else
-      strokes = component.state.drawing_strokes
-      JS.call(:removeRemoteOverlay, [params.stroke_id])
+    if component.state.is_drawer,
+      do: JS.call(:adoptStroke, [stroke]),
+      else: JS.call(:applyViewerStroke, [stroke, seq])
 
-      if Enum.any?(strokes, &(&1.id == params.stroke_id)) do
-        component
-      else
-        stroke = %{
-          id: params.stroke_id,
-          path: params.path || "",
-          color: params.color || "#000000",
-          width: params.width || 2,
-          seq: seq
-        }
-
-        # A fill (StrokeRules.fill?/1) keeps its flag: DrawingCanvas paints
-        # its inside.
-        stroke = if Map.get(params, :fill) == true, do: Map.put(stroke, :fill, true), else: stroke
-
-        put_state(component, :drawing_strokes, strokes ++ [stroke])
-      end
-    end
+    component
   end
 
-  # Viewers take the snapshot's strokes, plus strokes that arrived after it
-  # (unless the list was replaced after it: then theirs is newer). The live
-  # overlays of strokes it holds go; those of strokes still being drawn stay.
+  # A viewer's canvas takes the snapshot's strokes, plus strokes that arrived
+  # after it, unless its list was replaced after it (drawing_manager.mjs
+  # applyViewerSnapshot); the live overlays of strokes it holds go, those of
+  # strokes still being drawn stay. The drawer's canvas is rebased on a
+  # restore only (finish_restore/2).
   defp apply_snapshot_strokes(component, view, seq) do
-    state = component.state
-
-    cond do
-      state.is_drawer ->
-        component
-
-      is_integer(state.strokes_seq) and state.strokes_seq > seq ->
-        component
-
-      true ->
-        room = view.drawing_strokes || []
-
-        newer =
-          Enum.filter(state.drawing_strokes, fn s ->
-            Map.get(s, :seq, 0) > seq and not Enum.any?(room, &(&1.id == s.id))
-          end)
-
-        strokes = room ++ newer
-        JS.call(:settleRemoteStrokes, [Enum.map(strokes, & &1.id)])
-
-        component
-        |> put_state(:drawing_strokes, strokes)
-        |> put_state(:strokes_seq, seq)
+    unless component.state.is_drawer do
+      JS.call(:applyViewerSnapshot, [view.drawing_strokes || [], seq])
     end
+
+    component
   end
+
+  # The strokes as one JSON string, for the page's state (init): the
+  # canvas drawing_manager.mjs draws on :mounted.
+  defp strokes_json(strokes) when is_list(strokes), do: Jason.encode!(strokes)
+  defp strokes_json(_strokes), do: "[]"
 
   # The word fields of the drawer, or of a player who has guessed the word,
   # in a snapshot, applied like a pushed slice.
@@ -1492,6 +1454,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
     if phase_rank(slice.phase) >= phase_rank(component.state.phase) do
       component
       |> put_state(:current_word, slice.current_word)
+      |> put_word_view()
       |> put_state(:word_choices, slice.word_choices || [])
       |> put_state(
         :guess_points,
@@ -1671,6 +1634,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
       |> put_state(:revealed_word, Map.get(view, :revealed_word))
       |> put_state(:word_difficulty, Map.get(view, :word_difficulty))
       |> put_state(:round_summary, Map.get(view, :round_summary))
+      |> put_word_view()
       |> put_settings(view)
 
     # The settings form is the lobby's: it goes when the room leaves it.
@@ -1729,16 +1693,37 @@ defmodule ScrawlyWeb.Pages.GamePage do
     }
   end
 
+  # The word's blocks and label (PlayFeedback.word_view/1), worked out again
+  # only when what they show has changed, never by a render: the template
+  # reads them from the state.
+  defp put_word_view(component) do
+    s = component.state
+    summary = Map.get(s, :round_summary)
+
+    inputs = %{
+      display: Map.get(s, :current_word_display),
+      letters: Map.get(s, :word_length),
+      word: Map.get(s, :current_word),
+      revealed: Map.get(s, :revealed_word),
+      summary: if(is_map(summary), do: Map.get(summary, :word))
+    }
+
+    current = Map.get(s, :word_view)
+
+    if is_map(current) and Map.get(current, :for) == inputs,
+      do: component,
+      else: put_state(component, :word_view, PlayFeedback.word_view(inputs))
+  end
+
   # A new game, a new turn or the end of the game: an empty canvas for
   # everyone (the drawer's local history and op queue included), no word
   # until the new drawer's slice arrives and no guess yet.
   defp reset_turn(component, seq) do
-    JS.call(:setDrawingPath, [""])
+    JS.call(:setDrawingPath, ["", seq])
 
     component
-    |> put_state(:drawing_strokes, [])
-    |> put_state(:strokes_seq, seq)
     |> put_state(:current_word, nil)
+    |> put_word_view()
     |> put_state(:word_choices, [])
     |> put_state(:guess_points, nil)
   end
@@ -2149,27 +2134,27 @@ defmodule ScrawlyWeb.Pages.GamePage do
             {%else}
               {%if @revealed_word}
                 <div class="word-letters">
-                  {%for w <- PlayFeedback.word_blocks(String.upcase(@revealed_word))}<span class="word-chunk">{w}</span>{/for}
+                  {%for w <- @word_view.revealed}<span class="word-chunk">{w}</span>{/for}
                 </div>
               {%else}
                 {%if @current_word}
                   <div class={"word-letters" <> if(@is_drawer, do: "", else: " got-it")}>
-                    {%for w <- PlayFeedback.word_blocks(String.upcase(@current_word))}<span class="word-chunk">{w}</span>{/for}
+                    {%for w <- @word_view.word}<span class="word-chunk">{w}</span>{/for}
                   </div>
                 {%else}
                   <div class="word-letters masked">
-                    {%for w <- PlayFeedback.mask_blocks(@current_word_display)}<span class="word-chunk">{w}</span>{/for}
+                    {%for w <- @word_view.mask}<span class="word-chunk">{w}</span>{/for}
                   </div>
                 {/if}
               {/if}
               <div class="word-meta">
                 {%if @is_drawer}
-                  your word · {PlayFeedback.word_label(@current_word_display, @word_length)}
+                  your word · {@word_view.label}
                 {%else}
                   {%if @phase == :drawing and PlayFeedback.guessed?(@correct_guessers, @current_user_id, @guess_points)}
                     <span class="got-it">{PlayFeedback.got_it(@guess_points)}</span>
                   {%else}
-                    round {@round} of {@total_rounds} · {PlayFeedback.word_label(@current_word_display, @word_length)}
+                    round {@round} of {@total_rounds} · {@word_view.label}
                   {/if}
                 {/if}
                 {%if @word_difficulty}<span class={PlayFeedback.difficulty_class(@word_difficulty)}>{PlayFeedback.difficulty_label(@word_difficulty)}</span>{/if}
@@ -2230,7 +2215,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               {%if @round_summary.difficulty}<span class={PlayFeedback.difficulty_class(@round_summary.difficulty)}>{PlayFeedback.difficulty_label(@round_summary.difficulty)}</span>{/if}
             </div>
             <div class="word-letters round-summary-answer">
-              {%for w <- PlayFeedback.word_blocks(String.upcase(@round_summary.word || ""))}<span class="word-chunk">{w}</span>{/for}
+              {%for w <- @word_view.summary}<span class="word-chunk">{w}</span>{/for}
             </div>
             <div class="round-summary-rows">
               {%for row <- @round_summary.players}
@@ -2294,7 +2279,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
             </span>
           </div>
 
-          <DrawingCanvas is_drawer={@is_drawer} strokes={@drawing_strokes} />
+          <DrawingCanvas is_drawer={@is_drawer} />
 
           {%if @is_drawer}
             <DrawingToolbar tool={@draw_tool} saved={@saved_colors} panel={@color_panel} can_undo={@can_undo} shortcuts={true} />

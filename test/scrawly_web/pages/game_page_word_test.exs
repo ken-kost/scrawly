@@ -274,7 +274,8 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
       for server <- [server_for(create_user()), anon_server("late-anon")] do
         component = init_page(ctx.room, server)
         assert component.state.watching? == true
-        assert component.state.drawing_strokes == [@stroke]
+        # The canvas, as JSON for drawing_manager.mjs (:mounted draws it).
+        assert Jason.decode!(component.state.canvas_strokes, keys: :atoms) == [@stroke]
         assert component.next_action.name == :mounted
         assert component.next_action.params.join == :watcher
 
@@ -282,9 +283,12 @@ defmodule ScrawlyWeb.Pages.GamePageWordTest do
         assert result.next_action.name == :room_resynced
         assert_no_secret(result.next_action.params)
 
-        refreshed = GamePage.action(:room_resynced, result.next_action.params, component)
+        {refreshed, calls} =
+          Scrawly.JsCallTrace.js_calls(fn ->
+            GamePage.action(:room_resynced, result.next_action.params, component)
+          end)
 
-        assert refreshed.state.drawing_strokes == [@stroke]
+        assert [[@stroke], _seq] = Keyword.fetch!(calls, :applyViewerSnapshot)
         assert refreshed.state.current_word == nil
         assert refreshed.state.current_word_display =~ ~r/^[_ ]+$/
         assert refreshed.state.word_length == 5

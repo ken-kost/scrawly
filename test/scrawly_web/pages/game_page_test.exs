@@ -86,7 +86,9 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert state.delta_seq == seq
       assert state.strokes_seq == seq
       assert state.chat_messages == []
-      assert state.drawing_strokes == []
+      # The canvas, as JSON for drawing_manager.mjs (:mounted draws it).
+      assert state.canvas_strokes == "[]"
+      refute Map.has_key?(state, :drawing_strokes)
       assert state.page_shown? == false
       assert is_integer(state.mount_id)
       # Every page instance starts with the default tool (a new game resets
@@ -333,7 +335,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
           word_choices: [],
           can_start_game: true,
           chat_messages: [],
-          drawing_strokes: [],
+          canvas_strokes: "",
           draw_tool: %{tool: :brush, color: "#0a0a0a", size: 2},
           leaving?: false,
           watchers: [],
@@ -449,7 +451,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
     test "game start: round, drawer, word fields, countdown; no word for a guesser" do
       {result, calls} =
         js_calls(fn ->
-          GamePage.action(:room_delta, choosing(1, 11), page(drawing_strokes: [@stroke]))
+          GamePage.action(:room_delta, choosing(1, 11), page())
         end)
 
       assert result.state.game_started == true
@@ -471,9 +473,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert result.state.current_word == nil
       assert result.state.word_choices == []
       assert result.state.choice_time_left == 15
-      assert result.state.drawing_strokes == []
       assert result.state.last_seq == 11
-      assert {:setDrawingPath, [""]} in calls
+      assert {:setDrawingPath, ["", 11]} in calls
       assert result.next_command == nil
       assert result.next_action.name == :countdown_tick
     end
@@ -493,7 +494,6 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert result.state.is_drawer == false
       assert result.state.current_word == nil
       assert result.state.word_choices == []
-      assert result.state.strokes_seq == 11
       assert :setDrawingPath in names
     end
 
@@ -556,13 +556,12 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
 
       {result, names} =
         js_call_names(fn ->
-          GamePage.action(:room_delta, lobby, playing(drawing_strokes: [@stroke]))
+          GamePage.action(:room_delta, lobby, playing([]))
         end)
 
       assert result.state.game_started == false
       assert result.state.game_id == ""
       assert result.state.current_drawer == nil
-      assert result.state.drawing_strokes == []
       assert result.state.can_start_game == true
       assert :setDrawingPath in names
       # Leaves through the gap rule only (seq 11 follows 10): no resync.
@@ -607,7 +606,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
 
   describe "the gap rule" do
     test "seq <= last_seq leaves the page unchanged, for every {:room} action" do
-      component = playing(drawing_strokes: [@stroke], chat_messages: [chat(9, "old")])
+      component = playing(chat_messages: [chat(9, "old")])
 
       for {action, params} <- @sequenced, seq <- [9, 10] do
         assert GamePage.action(action, params.(seq), component) == component,
@@ -751,55 +750,41 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
 
   # QA G14: the room publishes only the undone stroke's id.
   describe ":drawing_undone" do
-    test "a viewer removes that stroke by id and keeps the rest, live overlays included" do
-      s2 = %{@stroke | id: "s-2"}
-      component = playing(drawing_strokes: [@stroke, s2])
+    test "a viewer's canvas removes that stroke by id, with the undo's seq" do
+      component = playing([])
 
       {result, calls} =
         js_calls(fn ->
           GamePage.action(:drawing_undone, %{stroke_id: "s-1", seq: 11}, component)
         end)
 
-      assert result.state.drawing_strokes == [s2]
-      assert result.state.strokes_seq == 11
-      assert result.state.last_seq == 11
-      assert calls == []
-    end
-
-    test "an id the viewer doesn't hold changes no stroke" do
-      component = playing(drawing_strokes: [@stroke])
-      result = GamePage.action(:drawing_undone, %{stroke_id: "s-other", seq: 11}, component)
-
-      assert result.state.drawing_strokes == [@stroke]
+      # drawing_manager.mjs removes that node only, keeps the live overlays,
+      # and takes no snapshot older than seq 11 (undoViewerStroke).
+      assert calls == [undoViewerStroke: ["s-1", 11]]
       assert result.state.last_seq == 11
     end
 
     test "the drawer's tabs keep their own canvas; another tab's undo leaves it too" do
-      drawer = playing(current_user_id: @drawer, is_drawer: true, drawing_strokes: [@stroke])
+      drawer = playing(current_user_id: @drawer, is_drawer: true)
 
       {result, calls} =
         js_calls(fn -> GamePage.action(:drawing_undone, %{stroke_id: "s-1", seq: 11}, drawer) end)
 
-      assert result.state.drawing_strokes == [@stroke]
+      assert result.state.last_seq == 11
       # drawing_manager.mjs drops it only if this tab still holds it (another
       # of the drawer's tabs undid it).
       assert calls == [forgetStroke: ["s-1"]]
     end
 
-    test "a stale snapshot can't bring the undone stroke back" do
+    test "a stale snapshot goes to the canvas with its own seq (drawing_manager.mjs ignores it)" do
       s2 = %{@stroke | id: "s-2"}
-
-      undone =
-        GamePage.action(
-          :drawing_undone,
-          %{stroke_id: "s-1", seq: 11},
-          playing(drawing_strokes: [@stroke, s2])
-        )
-
+      undone = GamePage.action(:drawing_undone, %{stroke_id: "s-1", seq: 11}, playing([]))
       view = snapshot(@me, seq: 10, phase: :drawing, drawing_strokes: [@stroke, s2])
-      result = GamePage.action(:room_resynced, view, undone)
 
-      assert result.state.drawing_strokes == [s2]
+      {result, calls} = js_calls(fn -> GamePage.action(:room_resynced, view, undone) end)
+
+      assert {:applyViewerSnapshot, [[@stroke, s2], 10]} in calls
+      assert result.state.last_seq == 11
     end
   end
 
@@ -928,7 +913,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
 
   describe ":room_resynced" do
     test "after ~10 s offline a viewer recovers players, phase, countdown, chat and canvas" do
-      offline = playing(chat_messages: [chat(9, "old")], drawing_strokes: [@stroke])
+      offline = playing(chat_messages: [chat(9, "old")])
 
       # Broadcasts 11..15 were lost; 16 arrives: applied, and a resync goes out.
       gapped = GamePage.action(:chat_appended, chat_params(16), offline)
@@ -957,10 +942,11 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
       assert result.state.time_left == 30
       assert is_integer(result.state.round_deadline_local)
       assert result.state.chat_messages == lines
-      assert result.state.drawing_strokes == strokes
       assert result.state.resync_requested_at == nil
       assert result.state.resync_owed_seq == nil
-      assert {:settleRemoteStrokes, [["s-1", "s-2"]]} in calls
+      # The canvas: the room's strokes at the snapshot's seq (drawing_manager.mjs
+      # applyViewerSnapshot, which also settles their live overlays).
+      assert {:applyViewerSnapshot, [strokes, 16]} in calls
       assert result.next_command == nil
     end
 
@@ -969,8 +955,7 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
         playing(
           is_drawer: true,
           current_word: "zzyzx",
-          current_drawer: %{id: @me, username: "You"},
-          drawing_strokes: [@stroke]
+          current_drawer: %{id: @me, username: "You"}
         )
 
       view =
@@ -985,9 +970,14 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
 
       assert result.state.chat_messages == [chat(12, "new")]
       assert result.state.current_word == "zzyzx"
-      assert result.state.drawing_strokes == [@stroke]
 
-      for name <- [:setStrokes, :setDrawingPath, :restoreStrokes, :mountCanvas] do
+      for name <- [
+            :setStrokes,
+            :setDrawingPath,
+            :restoreStrokes,
+            :mountCanvas,
+            :applyViewerSnapshot
+          ] do
         refute name in names, "#{name} touched the drawer's canvas"
       end
     end
@@ -998,10 +988,8 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
         playing(
           last_seq: 14,
           delta_seq: 13,
-          strokes_seq: 10,
           players: [hd(@players)],
-          chat_messages: [chat(14, "after"), chat(9, "old")],
-          drawing_strokes: [%{@stroke | id: "s-12"}, Map.put(%{@stroke | id: "s-late"}, :seq, 12)]
+          chat_messages: [chat(14, "after"), chat(9, "old")]
         )
 
       view =
@@ -1011,25 +999,16 @@ defmodule ScrawlyWeb.Pages.GamePageTest do
           drawing_strokes: [@stroke, %{@stroke | id: "s-12"}]
         )
 
-      result = GamePage.action(:room_resynced, view, component)
+      {result, calls} = js_calls(fn -> GamePage.action(:room_resynced, view, component) end)
 
       assert result.state.last_seq == 14
       assert result.state.chat_messages == [chat(14, "after"), chat(12, "missed"), chat(9, "old")]
       # The room state of delta 13 is newer than the snapshot's.
       assert result.state.players == [hd(@players)]
-      # The snapshot's strokes, plus the one that arrived after it (seq 12 is
-      # not after 12: the snapshot has it).
-      assert Enum.map(result.state.drawing_strokes, & &1.id) == ["s-1", "s-12"]
-
-      after_it =
-        put_in(component.state.drawing_strokes, [Map.put(%{@stroke | id: "s-13"}, :seq, 13)])
-
-      merged = GamePage.action(:room_resynced, view, after_it)
-      assert Enum.map(merged.state.drawing_strokes, & &1.id) == ["s-1", "s-12", "s-13"]
-
-      replaced = put_in(component.state.strokes_seq, 13)
-      kept = GamePage.action(:room_resynced, view, replaced)
-      assert kept.state.drawing_strokes == replaced.state.drawing_strokes
+      # The canvas gets the snapshot with its seq: drawing_manager.mjs keeps
+      # the strokes that arrived after seq 12, or ignores the snapshot if
+      # its list was replaced after it (test/js/viewer_canvas.test.mjs).
+      assert {:applyViewerSnapshot, [[@stroke, %{@stroke | id: "s-12"}], 12]} in calls
     end
 
     test "a gap seen while the resync was in flight gets a new one unless the reply covers it" do

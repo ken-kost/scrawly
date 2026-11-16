@@ -1,0 +1,5110 @@
+{
+  "meta": {
+    "date": "2026-11-16T04:57:38.060Z",
+    "base": "http://localhost:4100",
+    "quick": false,
+    "only": null,
+    "browser": "139.0.7258.5",
+    "moves": 300,
+    "move_interval_ms": 8,
+    "joins": 4,
+    "gestures": 4,
+    "samples": 20,
+    "duration_s": 1082,
+    "note": "sizes 0-300, the tool leak rounds: run 1 (client-final-1); size 500, the fills set, the load-and-clear leak check: run 2 (client-final-2), after the bench learned the board keeps fewer than 500 strokes (#44 byte cap)"
+  },
+  "bundles": {
+    "runtime-I3HORYAL.js": {
+      "bytes": 588079,
+      "gzip": 137267
+    },
+    "page-ScrawlyWeb.Pages.GamePage-NC3IRMW6.js": {
+      "bytes": 696885,
+      "gzip": 79297
+    },
+    "page-ScrawlyWeb.Pages.GameScorePage-SIYMUVYN.js": {
+      "bytes": 338788,
+      "gzip": 44090
+    },
+    "page-ScrawlyWeb.Pages.HomePage-3LLAHWV6.js": {
+      "bytes": 522067,
+      "gzip": 61141
+    },
+    "page-ScrawlyWeb.Pages.PastGamesPage-IKTNW4CI.js": {
+      "bytes": 267158,
+      "gzip": 33841
+    },
+    "page-ScrawlyWeb.Pages.ProfilePage-6ZXJJTOJ.js": {
+      "bytes": 302265,
+      "gzip": 36981
+    },
+    "page-ScrawlyWeb.Pages.RoomLinkPage-WL7CJLRO.js": {
+      "bytes": 250837,
+      "gzip": 32374
+    }
+  },
+  "runs": {
+    "1x": {
+      "0": {
+        "drawer_load": {
+          "painted_ms": 39,
+          "data_ms": 10.700000017881393,
+          "data_to_paint_ms": 28.299999982118607,
+          "snapshot_handler_ms": null,
+          "first_frame_work_ms": 2,
+          "html_bytes": 41260,
+          "html_transfer_bytes": 10050,
+          "snapshot_bytes": null,
+          "long_tasks_ms": 0,
+          "busy_until_ms": 0
+        },
+        "drawer_memory": {
+          "js_heap_bytes": 5079664,
+          "dom_nodes": 1717,
+          "document_nodes": 832,
+          "listeners": 118
+        },
+        "drawer_draw": {
+          "frames": 576,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 576,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 580,
+              "median": 0.5,
+              "p95": 0.9,
+              "max": 6.1
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 0.63,
+            "p95": 0.78,
+            "max": 0.78
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.53,
+            "p95": 0.56,
+            "max": 0.56
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.71,
+            "p95": 0.91,
+            "max": 0.91
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2400.7,
+            "p95": 2403.1,
+            "max": 2403.1
+          }
+        },
+        "drawer_draw_with_glow": {
+          "frames": 144,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 144,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 145,
+              "median": 0.7,
+              "p95": 1.2,
+              "max": 1.8
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 0.87,
+            "p95": 0.87,
+            "max": 0.87
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.61,
+            "p95": 0.61,
+            "max": 0.61
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 2.9,
+            "p95": 2.9,
+            "max": 2.9
+          },
+          "gesture_ms": {
+            "n": 1,
+            "median": 2400.7,
+            "p95": 2400.7,
+            "max": 2400.7
+          }
+        },
+        "drawer_hover": {
+          "frames": 288,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 288,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 290,
+              "median": 0.4,
+              "p95": 0.7,
+              "max": 1.5
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 2,
+            "median": 0.38,
+            "p95": 0.47,
+            "max": 0.47
+          },
+          "raster_ms_per_frame": {
+            "n": 2,
+            "median": 0,
+            "p95": 0.01,
+            "max": 0.01
+          },
+          "compositor_ms_per_frame": {
+            "n": 2,
+            "median": 0.25,
+            "p95": 0.36,
+            "max": 0.36
+          },
+          "gesture_ms": {
+            "n": 2,
+            "median": 2401.5,
+            "p95": 2402.5,
+            "max": 2402.5
+          }
+        },
+        "drawer_pick": {
+          "samples": 10,
+          "handler_ms": {
+            "n": 10,
+            "median": 0.2,
+            "p95": 0.9,
+            "max": 0.9
+          },
+          "paint_ms": {
+            "n": 10,
+            "median": 0.6,
+            "p95": 1.5,
+            "max": 1.5
+          }
+        },
+        "drawer_fill": {
+          "background": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 0.2,
+              "p95": 0.3,
+              "max": 0.3
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 34.6,
+              "p95": 44.1,
+              "max": 44.1
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 14.38,
+              "p95": 22.32,
+              "max": 22.32
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 20.46,
+              "p95": 25.31,
+              "max": 25.31
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 4.87,
+              "p95": 9.15,
+              "max": 9.15
+            }
+          },
+          "centre": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 0.3,
+              "p95": 0.4,
+              "max": 0.4
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 33.9,
+              "p95": 49.8,
+              "max": 49.8
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 12.77,
+              "p95": 25.87,
+              "max": 25.87
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 20.96,
+              "p95": 24.68,
+              "max": 24.68
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 4.22,
+              "p95": 7.29,
+              "max": 7.29
+            }
+          }
+        },
+        "drawer_slider_drag": {
+          "frames": 70,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 70,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 71,
+              "median": 0.6,
+              "p95": 0.9,
+              "max": 1.1
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 0.94,
+            "p95": 0.94,
+            "max": 0.94
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.13,
+            "p95": 0.13,
+            "max": 0.13
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.59,
+            "p95": 0.59,
+            "max": 0.59
+          },
+          "actions": {
+            "select_size": 11
+          }
+        },
+        "drawer_wheel_drag": {
+          "frames": 70,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 70,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 71,
+              "median": 1.1,
+              "p95": 2.6,
+              "max": 17.4
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 1.44,
+            "p95": 1.44,
+            "max": 1.44
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.28,
+            "p95": 0.28,
+            "max": 0.28
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.91,
+            "p95": 0.91,
+            "max": 0.91
+          },
+          "actions": {
+            "color_picked": 12
+          }
+        },
+        "demo_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 0,
+            "median": null,
+            "p95": null,
+            "max": null
+          },
+          "during_load": {
+            "snapshot_handler_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "data_to_paint_ms": {
+              "n": 0,
+              "median": null,
+              "p95": null,
+              "max": null
+            },
+            "data_to_paint_wall_ms": {
+              "n": 0,
+              "median": null,
+              "p95": null,
+              "max": null
+            }
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            }
+          },
+          "html_bytes": 34075,
+          "html_transfer_bytes": 8668,
+          "snapshot_bytes": 48
+        },
+        "demo_memory": {
+          "js_heap_bytes": 4395872,
+          "dom_nodes": 1549,
+          "document_nodes": 765,
+          "listeners": 118
+        },
+        "demo_snapshot": {
+          "samples": 0,
+          "handler_ms": {
+            "n": 0,
+            "median": null,
+            "p95": null,
+            "max": null
+          },
+          "paint_ms": {
+            "n": 0,
+            "median": null,
+            "p95": null,
+            "max": null
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 0,
+              "median": null,
+              "p95": null,
+              "max": null
+            }
+          }
+        },
+        "demo_draw": {
+          "frames": 576,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 576,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 580,
+              "median": 0.6,
+              "p95": 0.9,
+              "max": 3.4
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 0.64,
+            "p95": 0.65,
+            "max": 0.65
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.54,
+            "p95": 0.56,
+            "max": 0.56
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.9,
+            "p95": 0.93,
+            "max": 0.93
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2401.2,
+            "p95": 2404.3,
+            "max": 2404.3
+          }
+        },
+        "viewer_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 35.5,
+            "p95": 36.4,
+            "max": 36.4
+          },
+          "data_to_paint_ms": {
+            "n": 4,
+            "median": 26.1,
+            "p95": 27.9,
+            "max": 27.9
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            }
+          },
+          "html_bytes": 36148,
+          "html_transfer_bytes": 9170,
+          "snapshot_bytes": null
+        },
+        "viewer_memory": {
+          "js_heap_bytes": 4764448,
+          "dom_nodes": 1406,
+          "document_nodes": 736,
+          "listeners": 86
+        },
+        "viewer_idle_busy_ms_per_s": 6.96,
+        "viewer_apply": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 4.1,
+            "p95": 5.2,
+            "max": 7.6
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 4.5,
+            "p95": 5.6,
+            "max": 8.4
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 14,
+              "p95": 16.8,
+              "max": 18.3
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          },
+          "sse_handler_ms": {
+            "n": 20,
+            "median": 0.2,
+            "p95": 0.4,
+            "max": 0.4
+          },
+          "hologram_logs_per_apply": 20
+        },
+        "viewer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 3.8,
+            "p95": 5.9,
+            "max": 6
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 4.1,
+            "p95": 6.3,
+            "max": 6.5
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 12.8,
+              "p95": 13,
+              "max": 13.2
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        },
+        "drawer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 0.4,
+            "p95": 0.5,
+            "max": 0.5
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 9.1,
+            "p95": 12,
+            "max": 26.9
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 17.1,
+              "p95": 18.9,
+              "max": 31.3
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        }
+      },
+      "100": {
+        "drawer_load": {
+          "painted_ms": 116.40000000596046,
+          "data_ms": 11.700000017881393,
+          "data_to_paint_ms": 104.69999998807907,
+          "snapshot_handler_ms": null,
+          "first_frame_work_ms": 1.699999988079071,
+          "html_bytes": 162585,
+          "html_transfer_bytes": 59384,
+          "snapshot_bytes": null,
+          "long_tasks_ms": 0,
+          "busy_until_ms": 0
+        },
+        "drawer_memory": {
+          "js_heap_bytes": 5324860,
+          "dom_nodes": 1816,
+          "document_nodes": 932,
+          "listeners": 118
+        },
+        "drawer_draw": {
+          "frames": 576,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 576,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 580,
+              "median": 0.7,
+              "p95": 1.1,
+              "max": 2.1
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 0.91,
+            "p95": 1.11,
+            "max": 1.11
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.63,
+            "p95": 0.69,
+            "max": 0.69
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.99,
+            "p95": 1.26,
+            "max": 1.26
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2401,
+            "p95": 2402.1,
+            "max": 2402.1
+          }
+        },
+        "drawer_hover": {
+          "frames": 288,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 288,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 290,
+              "median": 0.5,
+              "p95": 0.7,
+              "max": 2.2
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 2,
+            "median": 0.57,
+            "p95": 0.58,
+            "max": 0.58
+          },
+          "raster_ms_per_frame": {
+            "n": 2,
+            "median": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "compositor_ms_per_frame": {
+            "n": 2,
+            "median": 0.38,
+            "p95": 0.39,
+            "max": 0.39
+          },
+          "gesture_ms": {
+            "n": 2,
+            "median": 2400.1,
+            "p95": 2400.2,
+            "max": 2400.2
+          }
+        },
+        "drawer_pick": {
+          "samples": 10,
+          "handler_ms": {
+            "n": 10,
+            "median": 0.4,
+            "p95": 1.9,
+            "max": 1.9
+          },
+          "paint_ms": {
+            "n": 10,
+            "median": 0.9,
+            "p95": 9.2,
+            "max": 9.2
+          }
+        },
+        "drawer_fill": {
+          "background": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 0.3,
+              "p95": 0.5,
+              "max": 0.5
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 34.6,
+              "p95": 49.1,
+              "max": 49.1
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 11.05,
+              "p95": 23.25,
+              "max": 23.25
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 24.23,
+              "p95": 26.88,
+              "max": 26.88
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 5.17,
+              "p95": 7.94,
+              "max": 7.94
+            }
+          },
+          "centre": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 0.5,
+              "p95": 0.6,
+              "max": 0.6
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 36.8,
+              "p95": 39.4,
+              "max": 39.4
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 18.36,
+              "p95": 21.23,
+              "max": 21.23
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 18.21,
+              "p95": 18.43,
+              "max": 18.43
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 4.51,
+              "p95": 5.5,
+              "max": 5.5
+            }
+          }
+        },
+        "drawer_slider_drag": {
+          "frames": 70,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 70,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 71,
+              "median": 0.7,
+              "p95": 1,
+              "max": 1.2
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 1.08,
+            "p95": 1.08,
+            "max": 1.08
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.17,
+            "p95": 0.17,
+            "max": 0.17
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.74,
+            "p95": 0.74,
+            "max": 0.74
+          },
+          "actions": {
+            "select_size": 11
+          }
+        },
+        "drawer_wheel_drag": {
+          "frames": 70,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 70,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 71,
+              "median": 1.2,
+              "p95": 1.5,
+              "max": 17
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 1.38,
+            "p95": 1.38,
+            "max": 1.38
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.27,
+            "p95": 0.27,
+            "max": 0.27
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.87,
+            "p95": 0.87,
+            "max": 0.87
+          },
+          "actions": {
+            "color_picked": 12
+          }
+        },
+        "demo_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 275,
+            "p95": 277.3,
+            "max": 277.3
+          },
+          "during_load": {
+            "snapshot_handler_ms": {
+              "n": 4,
+              "median": 1,
+              "p95": 1.1,
+              "max": 1.1
+            },
+            "data_to_paint_ms": {
+              "n": 4,
+              "median": 4.9,
+              "p95": 5.6,
+              "max": 5.6
+            },
+            "data_to_paint_wall_ms": {
+              "n": 4,
+              "median": 12.9,
+              "p95": 17.8,
+              "max": 17.8
+            }
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            }
+          },
+          "html_bytes": 34075,
+          "html_transfer_bytes": 8677,
+          "snapshot_bytes": 121133
+        },
+        "demo_memory": {
+          "js_heap_bytes": 4537396,
+          "dom_nodes": 1649,
+          "document_nodes": 865,
+          "listeners": 118
+        },
+        "demo_snapshot": {
+          "samples": 5,
+          "handler_ms": {
+            "n": 5,
+            "median": 1,
+            "p95": 1.1,
+            "max": 1.1
+          },
+          "paint_ms": {
+            "n": 5,
+            "median": 4.4,
+            "p95": 4.5,
+            "max": 4.5
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 5,
+              "median": 8.2,
+              "p95": 10.6,
+              "max": 10.6
+            }
+          }
+        },
+        "demo_draw": {
+          "frames": 576,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 576,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 580,
+              "median": 0.7,
+              "p95": 1,
+              "max": 3.2
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 0.81,
+            "p95": 0.82,
+            "max": 0.82
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.61,
+            "p95": 0.66,
+            "max": 0.66
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.93,
+            "p95": 0.94,
+            "max": 0.94
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2401.3,
+            "p95": 2402.2,
+            "max": 2402.2
+          }
+        },
+        "viewer_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 121.7,
+            "p95": 124.5,
+            "max": 124.5
+          },
+          "data_to_paint_ms": {
+            "n": 4,
+            "median": 110,
+            "p95": 113.2,
+            "max": 113.2
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            }
+          },
+          "html_bytes": 157481,
+          "html_transfer_bytes": 58512,
+          "snapshot_bytes": null
+        },
+        "viewer_memory": {
+          "js_heap_bytes": 5036916,
+          "dom_nodes": 1506,
+          "document_nodes": 836,
+          "listeners": 86
+        },
+        "viewer_idle_busy_ms_per_s": 6.05,
+        "viewer_apply": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 3.9,
+            "p95": 5.3,
+            "max": 6.2
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 4.2,
+            "p95": 6,
+            "max": 6.9
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 4.9,
+              "p95": 6.9,
+              "max": 7.7
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          },
+          "sse_handler_ms": {
+            "n": 20,
+            "median": 0.2,
+            "p95": 0.3,
+            "max": 0.3
+          },
+          "hologram_logs_per_apply": 20
+        },
+        "viewer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 3.6,
+            "p95": 4.5,
+            "max": 4.6
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 4,
+            "p95": 4.8,
+            "max": 5
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 12.4,
+              "p95": 12.9,
+              "max": 12.9
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        },
+        "drawer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 0.3,
+            "p95": 0.6,
+            "max": 0.6
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 5.5,
+            "p95": 6,
+            "max": 21.6
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 12.5,
+              "p95": 14.2,
+              "max": 25.5
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        }
+      },
+      "300": {
+        "drawer_load": {
+          "painted_ms": 139.5,
+          "data_ms": 18.700000017881393,
+          "data_to_paint_ms": 120.7999999821186,
+          "snapshot_handler_ms": null,
+          "first_frame_work_ms": 1.699999988079071,
+          "html_bytes": 409937,
+          "html_transfer_bytes": 152285,
+          "snapshot_bytes": null,
+          "long_tasks_ms": 51,
+          "busy_until_ms": 126.40000000596046
+        },
+        "drawer_memory": {
+          "js_heap_bytes": 5815200,
+          "dom_nodes": 2016,
+          "document_nodes": 1132,
+          "listeners": 118
+        },
+        "drawer_draw": {
+          "frames": 576,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 576,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 580,
+              "median": 0.8,
+              "p95": 1,
+              "max": 5.1
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 0.95,
+            "p95": 1.08,
+            "max": 1.08
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.74,
+            "p95": 0.8,
+            "max": 0.8
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.96,
+            "p95": 1.14,
+            "max": 1.14
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2401.2,
+            "p95": 2401.6,
+            "max": 2401.6
+          }
+        },
+        "drawer_hover": {
+          "frames": 288,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 288,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 290,
+              "median": 0.5,
+              "p95": 0.7,
+              "max": 1
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 2,
+            "median": 0.56,
+            "p95": 0.56,
+            "max": 0.56
+          },
+          "raster_ms_per_frame": {
+            "n": 2,
+            "median": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "compositor_ms_per_frame": {
+            "n": 2,
+            "median": 0.37,
+            "p95": 0.38,
+            "max": 0.38
+          },
+          "gesture_ms": {
+            "n": 2,
+            "median": 2400.1,
+            "p95": 2400.2,
+            "max": 2400.2
+          }
+        },
+        "drawer_pick": {
+          "samples": 10,
+          "handler_ms": {
+            "n": 10,
+            "median": 0.3,
+            "p95": 2.4,
+            "max": 2.4
+          },
+          "paint_ms": {
+            "n": 10,
+            "median": 1,
+            "p95": 3.2,
+            "max": 3.2
+          }
+        },
+        "drawer_fill": {
+          "background": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 0.5,
+              "p95": 1,
+              "max": 1
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 34,
+              "p95": 45.8,
+              "max": 45.8
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 20.76,
+              "p95": 21.41,
+              "max": 21.41
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 13.96,
+              "p95": 24.35,
+              "max": 24.35
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 5.9,
+              "p95": 7.24,
+              "max": 7.24
+            }
+          },
+          "centre": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 0.8,
+              "p95": 1,
+              "max": 1
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 15.4,
+              "p95": 18.5,
+              "max": 18.5
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 14.79,
+              "p95": 17.63,
+              "max": 17.63
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 0.57,
+              "p95": 0.9,
+              "max": 0.9
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 4.53,
+              "p95": 4.71,
+              "max": 4.71
+            }
+          }
+        },
+        "drawer_slider_drag": {
+          "frames": 70,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 70,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 71,
+              "median": 0.7,
+              "p95": 0.9,
+              "max": 1.3
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 1.09,
+            "p95": 1.09,
+            "max": 1.09
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.22,
+            "p95": 0.22,
+            "max": 0.22
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.7,
+            "p95": 0.7,
+            "max": 0.7
+          },
+          "actions": {
+            "select_size": 11
+          }
+        },
+        "drawer_wheel_drag": {
+          "frames": 70,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 70,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 71,
+              "median": 1.2,
+              "p95": 3.9,
+              "max": 17.4
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 1.49,
+            "p95": 1.49,
+            "max": 1.49
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.31,
+            "p95": 0.31,
+            "max": 0.31
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.94,
+            "p95": 0.94,
+            "max": 0.94
+          },
+          "actions": {
+            "color_picked": 12
+          }
+        },
+        "demo_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 274.8,
+            "p95": 276.9,
+            "max": 276.9
+          },
+          "during_load": {
+            "snapshot_handler_ms": {
+              "n": 4,
+              "median": 2.6,
+              "p95": 3,
+              "max": 3
+            },
+            "data_to_paint_ms": {
+              "n": 4,
+              "median": 8,
+              "p95": 8.8,
+              "max": 8.8
+            },
+            "data_to_paint_wall_ms": {
+              "n": 4,
+              "median": 11.1,
+              "p95": 14,
+              "max": 14
+            }
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            }
+          },
+          "html_bytes": 34075,
+          "html_transfer_bytes": 8668,
+          "snapshot_bytes": 382301
+        },
+        "demo_memory": {
+          "js_heap_bytes": 4810840,
+          "dom_nodes": 1849,
+          "document_nodes": 1065,
+          "listeners": 118
+        },
+        "demo_snapshot": {
+          "samples": 5,
+          "handler_ms": {
+            "n": 5,
+            "median": 2.7,
+            "p95": 3,
+            "max": 3
+          },
+          "paint_ms": {
+            "n": 5,
+            "median": 7.5,
+            "p95": 8,
+            "max": 8
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 5,
+              "median": 21.1,
+              "p95": 23.5,
+              "max": 23.5
+            }
+          }
+        },
+        "demo_draw": {
+          "frames": 576,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 576,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 580,
+              "median": 0.8,
+              "p95": 1.1,
+              "max": 3.8
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 0.88,
+            "p95": 0.9,
+            "max": 0.9
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.68,
+            "p95": 0.74,
+            "max": 0.74
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 1.05,
+            "p95": 1.05,
+            "max": 1.05
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2402.1,
+            "p95": 2402.8,
+            "max": 2402.8
+          }
+        },
+        "viewer_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 149,
+            "p95": 153,
+            "max": 153
+          },
+          "data_to_paint_ms": {
+            "n": 4,
+            "median": 130.9,
+            "p95": 135.8,
+            "max": 135.8
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            }
+          },
+          "html_bytes": 404825,
+          "html_transfer_bytes": 151441,
+          "snapshot_bytes": null
+        },
+        "viewer_memory": {
+          "js_heap_bytes": 5509632,
+          "dom_nodes": 1706,
+          "document_nodes": 1036,
+          "listeners": 86
+        },
+        "viewer_idle_busy_ms_per_s": 6.31,
+        "viewer_apply": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 4.1,
+            "p95": 5.7,
+            "max": 5.7
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 4.5,
+            "p95": 6.1,
+            "max": 6.2
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 5.4,
+              "p95": 16.4,
+              "max": 18.8
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          },
+          "sse_handler_ms": {
+            "n": 20,
+            "median": 0.2,
+            "p95": 0.3,
+            "max": 0.3
+          },
+          "hologram_logs_per_apply": 20
+        },
+        "viewer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 3.8,
+            "p95": 4.8,
+            "max": 5.5
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 4.3,
+            "p95": 5.2,
+            "max": 5.8
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 12.6,
+              "p95": 13.2,
+              "max": 13.5
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        },
+        "drawer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 0.4,
+            "p95": 0.5,
+            "max": 0.6
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 5.9,
+            "p95": 21.6,
+            "max": 22.1
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 12.7,
+              "p95": 26.5,
+              "max": 26.7
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        },
+        "viewer_apply_with_console_logs": {
+          "samples": 8,
+          "dom_ms": {
+            "n": 8,
+            "median": 5.1,
+            "p95": 7.9,
+            "max": 7.9
+          },
+          "paint_ms": {
+            "n": 8,
+            "median": 5.6,
+            "p95": 11.7,
+            "max": 11.7
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 8,
+              "median": 6.2,
+              "p95": 18.3,
+              "max": 18.3
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          },
+          "sse_handler_ms": {
+            "n": 8,
+            "median": 0.2,
+            "p95": 0.3,
+            "max": 0.3
+          },
+          "hologram_logs_per_apply": 0
+        }
+      },
+      "500": {
+        "drawer_load": {
+          "painted_ms": 139.40000000596046,
+          "data_ms": 25.099999994039536,
+          "data_to_paint_ms": 114.30000001192093,
+          "snapshot_handler_ms": null,
+          "first_frame_work_ms": 2.0999999940395355,
+          "html_bytes": 698429,
+          "html_transfer_bytes": 262612,
+          "snapshot_bytes": null,
+          "long_tasks_ms": 50,
+          "busy_until_ms": 125.80000001192093
+        },
+        "drawer_memory": {
+          "js_heap_bytes": 8370704,
+          "dom_nodes": 2216,
+          "document_nodes": 1332,
+          "listeners": 118
+        },
+        "drawer_draw": {
+          "frames": 576,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 576,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 580,
+              "median": 0.8,
+              "p95": 1.2,
+              "max": 9.3
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 0.95,
+            "p95": 1.13,
+            "max": 1.13
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 1.26,
+            "p95": 1.28,
+            "max": 1.28
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.96,
+            "p95": 1.08,
+            "max": 1.08
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2400.9,
+            "p95": 2402.4,
+            "max": 2402.4
+          }
+        },
+        "drawer_draw_with_glow": {
+          "frames": 144,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 144,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 145,
+              "median": 0.9,
+              "p95": 1.2,
+              "max": 8.8
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 1.2,
+            "p95": 1.2,
+            "max": 1.2
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 1.37,
+            "p95": 1.37,
+            "max": 1.37
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 3.25,
+            "p95": 3.25,
+            "max": 3.25
+          },
+          "gesture_ms": {
+            "n": 1,
+            "median": 2402,
+            "p95": 2402,
+            "max": 2402
+          }
+        },
+        "drawer_hover": {
+          "frames": 288,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 288,
+              "median": 16.7,
+              "p95": 16.73,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 290,
+              "median": 0.6,
+              "p95": 0.8,
+              "max": 1.4
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 2,
+            "median": 0.65,
+            "p95": 0.68,
+            "max": 0.68
+          },
+          "raster_ms_per_frame": {
+            "n": 2,
+            "median": 0,
+            "p95": 0.01,
+            "max": 0.01
+          },
+          "compositor_ms_per_frame": {
+            "n": 2,
+            "median": 0.52,
+            "p95": 0.55,
+            "max": 0.55
+          },
+          "gesture_ms": {
+            "n": 2,
+            "median": 2400,
+            "p95": 2400.3,
+            "max": 2400.3
+          }
+        },
+        "drawer_pick": {
+          "samples": 10,
+          "handler_ms": {
+            "n": 10,
+            "median": 0.4,
+            "p95": 5.2,
+            "max": 5.2
+          },
+          "paint_ms": {
+            "n": 10,
+            "median": 1.2,
+            "p95": 6.1,
+            "max": 6.1
+          }
+        },
+        "drawer_fill": {
+          "background": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 0.6,
+              "p95": 1.9,
+              "max": 1.9
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 33.7,
+              "p95": 35.9,
+              "max": 35.9
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 18.61,
+              "p95": 21.55,
+              "max": 21.55
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 13.89,
+              "p95": 20.18,
+              "max": 20.18
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 5.5,
+              "p95": 6.95,
+              "max": 6.95
+            }
+          },
+          "centre": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 0.7,
+              "p95": 1,
+              "max": 1
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 19.4,
+              "p95": 21,
+              "max": 21
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 17.17,
+              "p95": 19.24,
+              "max": 19.24
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 1.18,
+              "p95": 2.52,
+              "max": 2.52
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 5.22,
+              "p95": 6.63,
+              "max": 6.63
+            }
+          }
+        },
+        "drawer_slider_drag": {
+          "frames": 70,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 70,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 71,
+              "median": 0.8,
+              "p95": 1,
+              "max": 16.7
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 1.18,
+            "p95": 1.18,
+            "max": 1.18
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.26,
+            "p95": 0.26,
+            "max": 0.26
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.73,
+            "p95": 0.73,
+            "max": 0.73
+          },
+          "actions": {
+            "select_size": 11
+          }
+        },
+        "drawer_wheel_drag": {
+          "frames": 70,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 70,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 71,
+              "median": 1.2,
+              "p95": 1.7,
+              "max": 18.4
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 1.5,
+            "p95": 1.5,
+            "max": 1.5
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.28,
+            "p95": 0.28,
+            "max": 0.28
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.91,
+            "p95": 0.91,
+            "max": 0.91
+          },
+          "actions": {
+            "color_picked": 12
+          }
+        },
+        "demo_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 275,
+            "p95": 276.4,
+            "max": 276.4
+          },
+          "during_load": {
+            "snapshot_handler_ms": {
+              "n": 4,
+              "median": 2.8,
+              "p95": 3.4,
+              "max": 3.4
+            },
+            "data_to_paint_ms": {
+              "n": 4,
+              "median": 8.5,
+              "p95": 9.2,
+              "max": 9.2
+            },
+            "data_to_paint_wall_ms": {
+              "n": 4,
+              "median": 12.9,
+              "p95": 16.7,
+              "max": 16.7
+            }
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            }
+          },
+          "html_bytes": 34075,
+          "html_transfer_bytes": 8670,
+          "snapshot_bytes": 469748,
+          "strokes_held": 360
+        },
+        "demo_memory": {
+          "js_heap_bytes": 4900660,
+          "dom_nodes": 1909,
+          "document_nodes": 1125,
+          "listeners": 118
+        },
+        "demo_snapshot": {
+          "samples": 5,
+          "handler_ms": {
+            "n": 5,
+            "median": 2.8,
+            "p95": 2.9,
+            "max": 2.9
+          },
+          "paint_ms": {
+            "n": 5,
+            "median": 8,
+            "p95": 8.2,
+            "max": 8.2
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 5,
+              "median": 22.1,
+              "p95": 23.1,
+              "max": 23.1
+            }
+          }
+        },
+        "demo_draw": {
+          "frames": 576,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 576,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 580,
+              "median": 0.9,
+              "p95": 1.2,
+              "max": 4.8
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 0.98,
+            "p95": 1.02,
+            "max": 1.02
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.81,
+            "p95": 1.08,
+            "max": 1.08
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 1.16,
+            "p95": 1.2,
+            "max": 1.2
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2401,
+            "p95": 2403.6,
+            "max": 2403.6
+          }
+        },
+        "viewer_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 192.5,
+            "p95": 199.3,
+            "max": 199.3
+          },
+          "data_to_paint_ms": {
+            "n": 4,
+            "median": 166.5,
+            "p95": 174.5,
+            "max": 174.5
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            }
+          },
+          "html_bytes": 694775,
+          "html_transfer_bytes": 261609,
+          "snapshot_bytes": null
+        },
+        "viewer_memory": {
+          "js_heap_bytes": 6112068,
+          "dom_nodes": 1906,
+          "document_nodes": 1236,
+          "listeners": 86
+        },
+        "viewer_idle_busy_ms_per_s": 11.03,
+        "viewer_apply": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 4.5,
+            "p95": 6.9,
+            "max": 8.9
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 5.2,
+            "p95": 7.7,
+            "max": 9.5
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 6.3,
+              "p95": 18.6,
+              "max": 18.6
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          },
+          "sse_handler_ms": {
+            "n": 20,
+            "median": 0.2,
+            "p95": 0.3,
+            "max": 0.4
+          },
+          "hologram_logs_per_apply": 20
+        },
+        "viewer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 4.6,
+            "p95": 5.1,
+            "max": 5.3
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 5.1,
+            "p95": 5.9,
+            "max": 5.9
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 12.4,
+              "p95": 13.5,
+              "max": 13.5
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        },
+        "drawer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 0.4,
+            "p95": 0.6,
+            "max": 0.8
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 20,
+            "p95": 21.9,
+            "max": 22.1
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 25.5,
+              "p95": 27.8,
+              "max": 28
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        }
+      }
+    },
+    "4x": {
+      "0": {
+        "drawer_load": {
+          "painted_ms": 186.90000000596046,
+          "data_ms": 9.800000011920929,
+          "data_to_paint_ms": 177.09999999403954,
+          "snapshot_handler_ms": null,
+          "first_frame_work_ms": 31.80000001192093,
+          "html_bytes": 41252,
+          "html_transfer_bytes": 10050,
+          "snapshot_bytes": null,
+          "long_tasks_ms": 209,
+          "busy_until_ms": 380.80000001192093
+        },
+        "drawer_draw": {
+          "frames": 564,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 564,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 50
+            },
+            "frames_over_16_7": 4,
+            "frames_over_16_7_pct": 0.71,
+            "frame_work_ms": {
+              "n": 565,
+              "median": 2.6,
+              "p95": 4,
+              "max": 43.1
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 2.88,
+            "p95": 3.23,
+            "max": 3.23
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.59,
+            "p95": 0.62,
+            "max": 0.62
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.86,
+            "p95": 0.88,
+            "max": 0.88
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2405.5,
+            "p95": 2409.4,
+            "max": 2409.4
+          }
+        },
+        "drawer_hover": {
+          "frames": 288,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 288,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 290,
+              "median": 2,
+              "p95": 3.1,
+              "max": 20
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 2,
+            "median": 2.07,
+            "p95": 2.11,
+            "max": 2.11
+          },
+          "raster_ms_per_frame": {
+            "n": 2,
+            "median": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "compositor_ms_per_frame": {
+            "n": 2,
+            "median": 0.38,
+            "p95": 0.38,
+            "max": 0.38
+          },
+          "gesture_ms": {
+            "n": 2,
+            "median": 2401.6,
+            "p95": 2403.1,
+            "max": 2403.1
+          }
+        },
+        "drawer_pick": {
+          "samples": 10,
+          "handler_ms": {
+            "n": 10,
+            "median": 0.8,
+            "p95": 1.9,
+            "max": 1.9
+          },
+          "paint_ms": {
+            "n": 10,
+            "median": 2.7,
+            "p95": 22.9,
+            "max": 22.9
+          }
+        },
+        "drawer_fill": {
+          "background": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 0.9,
+              "p95": 1,
+              "max": 1
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 79.2,
+              "p95": 84,
+              "max": 84
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 55.67,
+              "p95": 69.04,
+              "max": 69.04
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 21.53,
+              "p95": 27.59,
+              "max": 27.59
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 18.19,
+              "p95": 21.33,
+              "max": 21.33
+            }
+          },
+          "centre": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 0.2,
+              "p95": 0.7,
+              "max": 0.7
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 74,
+              "p95": 78.5,
+              "max": 78.5
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 54.35,
+              "p95": 58.67,
+              "max": 58.67
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 21.07,
+              "p95": 21.6,
+              "max": 21.6
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 18.54,
+              "p95": 21.94,
+              "max": 21.94
+            }
+          }
+        },
+        "drawer_slider_drag": {
+          "frames": 72,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 72,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 73,
+              "median": 2.5,
+              "p95": 17.6,
+              "max": 25.1
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 3.83,
+            "p95": 3.83,
+            "max": 3.83
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.13,
+            "p95": 0.13,
+            "max": 0.13
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.63,
+            "p95": 0.63,
+            "max": 0.63
+          },
+          "actions": {
+            "select_size": 11
+          }
+        },
+        "drawer_wheel_drag": {
+          "frames": 72,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 72,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 73,
+              "median": 4.5,
+              "p95": 22,
+              "max": 44
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 5.61,
+            "p95": 5.61,
+            "max": 5.61
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.26,
+            "p95": 0.26,
+            "max": 0.26
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.84,
+            "p95": 0.84,
+            "max": 0.84
+          },
+          "actions": {
+            "color_picked": 12
+          }
+        },
+        "demo_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 0,
+            "median": null,
+            "p95": null,
+            "max": null
+          },
+          "during_load": {
+            "snapshot_handler_ms": {
+              "n": 4,
+              "median": 0.1,
+              "p95": 1,
+              "max": 1
+            },
+            "data_to_paint_ms": {
+              "n": 0,
+              "median": null,
+              "p95": null,
+              "max": null
+            },
+            "data_to_paint_wall_ms": {
+              "n": 0,
+              "median": null,
+              "p95": null,
+              "max": null
+            }
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 184,
+              "p95": 205,
+              "max": 205
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 285.5,
+              "p95": 327.6,
+              "max": 327.6
+            }
+          },
+          "html_bytes": 34069,
+          "html_transfer_bytes": 8670,
+          "snapshot_bytes": 48
+        },
+        "demo_snapshot": {
+          "samples": 0,
+          "handler_ms": {
+            "n": 0,
+            "median": null,
+            "p95": null,
+            "max": null
+          },
+          "paint_ms": {
+            "n": 0,
+            "median": null,
+            "p95": null,
+            "max": null
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 0,
+              "median": null,
+              "p95": null,
+              "max": null
+            }
+          }
+        },
+        "demo_draw": {
+          "frames": 576,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 576,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 579,
+              "median": 2.7,
+              "p95": 3.7,
+              "max": 13.1
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 2.69,
+            "p95": 2.74,
+            "max": 2.74
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.54,
+            "p95": 0.57,
+            "max": 0.57
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.94,
+            "p95": 0.99,
+            "max": 0.99
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2402.1,
+            "p95": 2404.4,
+            "max": 2404.4
+          }
+        },
+        "viewer_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 132.5,
+            "p95": 137.9,
+            "max": 137.9
+          },
+          "data_to_paint_ms": {
+            "n": 4,
+            "median": 123.5,
+            "p95": 128.8,
+            "max": 128.8
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 175,
+              "p95": 218,
+              "max": 218
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 284.8,
+              "p95": 344.9,
+              "max": 344.9
+            }
+          },
+          "html_bytes": 36140,
+          "html_transfer_bytes": 9176,
+          "snapshot_bytes": null
+        },
+        "viewer_idle_busy_ms_per_s": 19.92,
+        "viewer_apply": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 15.6,
+            "p95": 18.9,
+            "max": 21.4
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 17.1,
+            "p95": 21.1,
+            "max": 23.6
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 20,
+              "p95": 23.3,
+              "max": 26.6
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          },
+          "sse_handler_ms": {
+            "n": 20,
+            "median": 0.9,
+            "p95": 1.3,
+            "max": 1.5
+          },
+          "hologram_logs_per_apply": 20
+        },
+        "viewer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 14.9,
+            "p95": 18.2,
+            "max": 22.6
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 16.5,
+            "p95": 20.2,
+            "max": 24
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 18.7,
+              "p95": 23,
+              "max": 26.5
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        },
+        "drawer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 1.1,
+            "p95": 2.3,
+            "max": 14.9
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 42.9,
+            "p95": 54.1,
+            "max": 57.8
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 54.2,
+              "p95": 67.3,
+              "max": 71.4
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        }
+      },
+      "100": {
+        "drawer_load": {
+          "painted_ms": 646,
+          "data_ms": 12.899999976158142,
+          "data_to_paint_ms": 633.1000000238419,
+          "snapshot_handler_ms": null,
+          "first_frame_work_ms": 35.900000005960464,
+          "html_bytes": 162593,
+          "html_transfer_bytes": 59372,
+          "snapshot_bytes": null,
+          "long_tasks_ms": 225,
+          "busy_until_ms": 406.19999998807907
+        },
+        "drawer_draw": {
+          "frames": 572,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 572,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 33.4
+            },
+            "frames_over_16_7": 4,
+            "frames_over_16_7_pct": 0.7,
+            "frame_work_ms": {
+              "n": 573,
+              "median": 3,
+              "p95": 4.4,
+              "max": 25.8
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 3.27,
+            "p95": 3.58,
+            "max": 3.58
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.65,
+            "p95": 0.7,
+            "max": 0.7
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.96,
+            "p95": 1.02,
+            "max": 1.02
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2411.3,
+            "p95": 2423,
+            "max": 2423
+          }
+        },
+        "drawer_hover": {
+          "frames": 288,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 288,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 290,
+              "median": 2.4,
+              "p95": 3.3,
+              "max": 23.8
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 2,
+            "median": 2.37,
+            "p95": 2.39,
+            "max": 2.39
+          },
+          "raster_ms_per_frame": {
+            "n": 2,
+            "median": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "compositor_ms_per_frame": {
+            "n": 2,
+            "median": 0.42,
+            "p95": 0.42,
+            "max": 0.42
+          },
+          "gesture_ms": {
+            "n": 2,
+            "median": 2400.1,
+            "p95": 2401.2,
+            "max": 2401.2
+          }
+        },
+        "drawer_pick": {
+          "samples": 10,
+          "handler_ms": {
+            "n": 10,
+            "median": 1.7,
+            "p95": 8.9,
+            "max": 8.9
+          },
+          "paint_ms": {
+            "n": 10,
+            "median": 4,
+            "p95": 29.2,
+            "max": 29.2
+          }
+        },
+        "drawer_fill": {
+          "background": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 1.5,
+              "p95": 2.3,
+              "max": 2.3
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 63.7,
+              "p95": 97.2,
+              "max": 97.2
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 43.69,
+              "p95": 71.56,
+              "max": 71.56
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 20.45,
+              "p95": 31,
+              "max": 31
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 19.91,
+              "p95": 22.88,
+              "max": 22.88
+            }
+          },
+          "centre": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 1.8,
+              "p95": 2.1,
+              "max": 2.1
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 62.7,
+              "p95": 78.6,
+              "max": 78.6
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 43.43,
+              "p95": 60.93,
+              "max": 60.93
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 19.91,
+              "p95": 20.43,
+              "max": 20.43
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 19.29,
+              "p95": 19.94,
+              "max": 19.94
+            }
+          }
+        },
+        "drawer_slider_drag": {
+          "frames": 72,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 72,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 73,
+              "median": 2.5,
+              "p95": 4,
+              "max": 20.4
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 3.64,
+            "p95": 3.64,
+            "max": 3.64
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.15,
+            "p95": 0.15,
+            "max": 0.15
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.67,
+            "p95": 0.67,
+            "max": 0.67
+          },
+          "actions": {
+            "select_size": 11
+          }
+        },
+        "drawer_wheel_drag": {
+          "frames": 72,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 72,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 73,
+              "median": 4.3,
+              "p95": 19.1,
+              "max": 46.6
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 5.04,
+            "p95": 5.04,
+            "max": 5.04
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.26,
+            "p95": 0.26,
+            "max": 0.26
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.83,
+            "p95": 0.83,
+            "max": 0.83
+          },
+          "actions": {
+            "color_picked": 12
+          }
+        },
+        "demo_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 588.5,
+            "p95": 622.8,
+            "max": 622.8
+          },
+          "during_load": {
+            "snapshot_handler_ms": {
+              "n": 4,
+              "median": 0.7,
+              "p95": 4.8,
+              "max": 4.8
+            },
+            "data_to_paint_ms": {
+              "n": 4,
+              "median": 16.7,
+              "p95": 20.5,
+              "max": 20.5
+            },
+            "data_to_paint_wall_ms": {
+              "n": 4,
+              "median": 24.6,
+              "p95": 28.2,
+              "max": 28.2
+            }
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 190,
+              "p95": 209,
+              "max": 209
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 297.9,
+              "p95": 332.4,
+              "max": 332.4
+            }
+          },
+          "html_bytes": 34075,
+          "html_transfer_bytes": 8667,
+          "snapshot_bytes": 121133
+        },
+        "demo_snapshot": {
+          "samples": 5,
+          "handler_ms": {
+            "n": 5,
+            "median": 3.7,
+            "p95": 3.9,
+            "max": 3.9
+          },
+          "paint_ms": {
+            "n": 5,
+            "median": 18.2,
+            "p95": 18.5,
+            "max": 18.5
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 5,
+              "median": 21,
+              "p95": 32.6,
+              "max": 32.6
+            }
+          }
+        },
+        "demo_draw": {
+          "frames": 575,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 575,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 33.3
+            },
+            "frames_over_16_7": 1,
+            "frames_over_16_7_pct": 0.17,
+            "frame_work_ms": {
+              "n": 577,
+              "median": 3,
+              "p95": 3.9,
+              "max": 14.9
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 2.92,
+            "p95": 3.06,
+            "max": 3.06
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.59,
+            "p95": 0.69,
+            "max": 0.69
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 1.01,
+            "p95": 1.03,
+            "max": 1.03
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2403.3,
+            "p95": 2413.6,
+            "max": 2413.6
+          }
+        },
+        "viewer_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 469.2,
+            "p95": 480.9,
+            "max": 480.9
+          },
+          "data_to_paint_ms": {
+            "n": 4,
+            "median": 459.2,
+            "p95": 469.2,
+            "max": 469.2
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 152,
+              "p95": 184,
+              "max": 184
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 289.2,
+              "p95": 328.1,
+              "max": 328.1
+            }
+          },
+          "html_bytes": 157481,
+          "html_transfer_bytes": 58506,
+          "snapshot_bytes": null
+        },
+        "viewer_idle_busy_ms_per_s": 20.89,
+        "viewer_apply": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 16.3,
+            "p95": 22.1,
+            "max": 23.2
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 18.1,
+            "p95": 32.1,
+            "max": 39.4
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 21.2,
+              "p95": 34.6,
+              "max": 42
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          },
+          "sse_handler_ms": {
+            "n": 20,
+            "median": 0.8,
+            "p95": 1.1,
+            "max": 1.2
+          },
+          "hologram_logs_per_apply": 20
+        },
+        "viewer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 14.4,
+            "p95": 18,
+            "max": 20.3
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 15.9,
+            "p95": 19.8,
+            "max": 22.4
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 18.4,
+              "p95": 22.9,
+              "max": 25.2
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        },
+        "drawer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 1,
+            "p95": 1.8,
+            "max": 2.4
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 29.1,
+            "p95": 36.4,
+            "max": 36.9
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 43.5,
+              "p95": 50.4,
+              "max": 50.5
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        }
+      },
+      "300": {
+        "drawer_load": {
+          "painted_ms": 712.4000000059605,
+          "data_ms": 16.69999998807907,
+          "data_to_paint_ms": 695.7000000178814,
+          "snapshot_handler_ms": null,
+          "first_frame_work_ms": 42,
+          "html_bytes": 409937,
+          "html_transfer_bytes": 152296,
+          "snapshot_bytes": null,
+          "long_tasks_ms": 285,
+          "busy_until_ms": 645.7999999821186
+        },
+        "drawer_draw": {
+          "frames": 567,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 567,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 50
+            },
+            "frames_over_16_7": 6,
+            "frames_over_16_7_pct": 1.06,
+            "frame_work_ms": {
+              "n": 568,
+              "median": 3.2,
+              "p95": 4.7,
+              "max": 31.7
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 3.5,
+            "p95": 3.64,
+            "max": 3.64
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.73,
+            "p95": 0.75,
+            "max": 0.75
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.94,
+            "p95": 0.99,
+            "max": 0.99
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2409.1,
+            "p95": 2424.4,
+            "max": 2424.4
+          }
+        },
+        "drawer_hover": {
+          "frames": 288,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 288,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 290,
+              "median": 2.2,
+              "p95": 3.1,
+              "max": 19.7
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 2,
+            "median": 2.22,
+            "p95": 2.22,
+            "max": 2.22
+          },
+          "raster_ms_per_frame": {
+            "n": 2,
+            "median": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "compositor_ms_per_frame": {
+            "n": 2,
+            "median": 0.41,
+            "p95": 0.42,
+            "max": 0.42
+          },
+          "gesture_ms": {
+            "n": 2,
+            "median": 2401.9,
+            "p95": 2402.4,
+            "max": 2402.4
+          }
+        },
+        "drawer_pick": {
+          "samples": 10,
+          "handler_ms": {
+            "n": 10,
+            "median": 1.8,
+            "p95": 8.9,
+            "max": 8.9
+          },
+          "paint_ms": {
+            "n": 10,
+            "median": 5,
+            "p95": 29.9,
+            "max": 29.9
+          }
+        },
+        "drawer_fill": {
+          "background": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 2.4,
+              "p95": 5.1,
+              "max": 5.1
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 58.2,
+              "p95": 88.7,
+              "max": 88.7
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 44.73,
+              "p95": 79.81,
+              "max": 79.81
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 14.07,
+              "p95": 24.1,
+              "max": 24.1
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 19.67,
+              "p95": 23,
+              "max": 23
+            }
+          },
+          "centre": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 2.9,
+              "p95": 4.2,
+              "max": 4.2
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 47,
+              "p95": 67.2,
+              "max": 67.2
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 45.54,
+              "p95": 65.42,
+              "max": 65.42
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 0.62,
+              "p95": 1.08,
+              "max": 1.08
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 18.24,
+              "p95": 22.07,
+              "max": 22.07
+            }
+          }
+        },
+        "drawer_slider_drag": {
+          "frames": 72,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 72,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 73,
+              "median": 2.6,
+              "p95": 5.6,
+              "max": 24.3
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 3.83,
+            "p95": 3.83,
+            "max": 3.83
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.19,
+            "p95": 0.19,
+            "max": 0.19
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.69,
+            "p95": 0.69,
+            "max": 0.69
+          },
+          "actions": {
+            "select_size": 11
+          }
+        },
+        "drawer_wheel_drag": {
+          "frames": 71,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 71,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 33.4
+            },
+            "frames_over_16_7": 1,
+            "frames_over_16_7_pct": 1.41,
+            "frame_work_ms": {
+              "n": 72,
+              "median": 4.4,
+              "p95": 22.6,
+              "max": 48.5
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 5.1,
+            "p95": 5.1,
+            "max": 5.1
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.25,
+            "p95": 0.25,
+            "max": 0.25
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.85,
+            "p95": 0.85,
+            "max": 0.85
+          },
+          "actions": {
+            "color_picked": 12
+          }
+        },
+        "demo_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 573.9,
+            "p95": 631.1,
+            "max": 631.1
+          },
+          "during_load": {
+            "snapshot_handler_ms": {
+              "n": 4,
+              "median": 10.8,
+              "p95": 14,
+              "max": 14
+            },
+            "data_to_paint_ms": {
+              "n": 4,
+              "median": 36,
+              "p95": 37.6,
+              "max": 37.6
+            },
+            "data_to_paint_wall_ms": {
+              "n": 4,
+              "median": 41.6,
+              "p95": 43.6,
+              "max": 43.6
+            }
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 192,
+              "p95": 213,
+              "max": 213
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 308.4,
+              "p95": 339.5,
+              "max": 339.5
+            }
+          },
+          "html_bytes": 34061,
+          "html_transfer_bytes": 8662,
+          "snapshot_bytes": 382301
+        },
+        "demo_snapshot": {
+          "samples": 5,
+          "handler_ms": {
+            "n": 5,
+            "median": 9.5,
+            "p95": 9.6,
+            "max": 9.6
+          },
+          "paint_ms": {
+            "n": 5,
+            "median": 29.9,
+            "p95": 30,
+            "max": 30
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 5,
+              "median": 35.1,
+              "p95": 40.8,
+              "max": 40.8
+            }
+          }
+        },
+        "demo_draw": {
+          "frames": 575,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 575,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 33.4
+            },
+            "frames_over_16_7": 1,
+            "frames_over_16_7_pct": 0.17,
+            "frame_work_ms": {
+              "n": 577,
+              "median": 3.2,
+              "p95": 4.1,
+              "max": 30.1
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 3.02,
+            "p95": 3.28,
+            "max": 3.28
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.68,
+            "p95": 0.92,
+            "max": 0.92
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.97,
+            "p95": 0.98,
+            "max": 0.98
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2403.4,
+            "p95": 2410,
+            "max": 2410
+          }
+        },
+        "viewer_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 553.3,
+            "p95": 555.7,
+            "max": 555.7
+          },
+          "data_to_paint_ms": {
+            "n": 4,
+            "median": 537.4,
+            "p95": 539.3,
+            "max": 539.3
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 180,
+              "p95": 217,
+              "max": 217
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 323.9,
+              "p95": 376.7,
+              "max": 376.7
+            }
+          },
+          "html_bytes": 404825,
+          "html_transfer_bytes": 151438,
+          "snapshot_bytes": null
+        },
+        "viewer_idle_busy_ms_per_s": 23.17,
+        "viewer_apply": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 15.8,
+            "p95": 21,
+            "max": 22.5
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 17.8,
+            "p95": 23,
+            "max": 24.1
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 20.9,
+              "p95": 26.7,
+              "max": 27
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          },
+          "sse_handler_ms": {
+            "n": 20,
+            "median": 0.8,
+            "p95": 1.2,
+            "max": 1.4
+          },
+          "hologram_logs_per_apply": 20
+        },
+        "viewer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 15.3,
+            "p95": 20.1,
+            "max": 20.6
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 17.1,
+            "p95": 23.4,
+            "max": 32
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 19.6,
+              "p95": 29.7,
+              "max": 34.9
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        },
+        "drawer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 1.2,
+            "p95": 2,
+            "max": 20.6
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 26.8,
+            "p95": 37,
+            "max": 53.3
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 44.7,
+              "p95": 54.8,
+              "max": 65.4
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        }
+      },
+      "500": {
+        "drawer_load": {
+          "painted_ms": 793.5,
+          "data_ms": 22.100000023841858,
+          "data_to_paint_ms": 771.3999999761581,
+          "snapshot_handler_ms": null,
+          "first_frame_work_ms": 55.79999998211861,
+          "html_bytes": 699887,
+          "html_transfer_bytes": 262516,
+          "snapshot_bytes": null,
+          "long_tasks_ms": 283,
+          "busy_until_ms": 707.2000000178814
+        },
+        "drawer_draw": {
+          "frames": 568,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 568,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 33.3
+            },
+            "frames_over_16_7": 4,
+            "frames_over_16_7_pct": 0.7,
+            "frame_work_ms": {
+              "n": 568,
+              "median": 3.4,
+              "p95": 4.4,
+              "max": 14.1
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 3.8,
+            "p95": 3.85,
+            "max": 3.85
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.89,
+            "p95": 0.95,
+            "max": 0.95
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.92,
+            "p95": 0.94,
+            "max": 0.94
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2408.5,
+            "p95": 2419.9,
+            "max": 2419.9
+          }
+        },
+        "drawer_hover": {
+          "frames": 288,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 288,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 290,
+              "median": 2.1,
+              "p95": 2.9,
+              "max": 19.2
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 2,
+            "median": 2.11,
+            "p95": 2.12,
+            "max": 2.12
+          },
+          "raster_ms_per_frame": {
+            "n": 2,
+            "median": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "compositor_ms_per_frame": {
+            "n": 2,
+            "median": 0.37,
+            "p95": 0.37,
+            "max": 0.37
+          },
+          "gesture_ms": {
+            "n": 2,
+            "median": 2401.3,
+            "p95": 2402.3,
+            "max": 2402.3
+          }
+        },
+        "drawer_pick": {
+          "samples": 10,
+          "handler_ms": {
+            "n": 10,
+            "median": 1.7,
+            "p95": 10.3,
+            "max": 10.3
+          },
+          "paint_ms": {
+            "n": 10,
+            "median": 5.5,
+            "p95": 30.5,
+            "max": 30.5
+          }
+        },
+        "drawer_fill": {
+          "background": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 3.6,
+              "p95": 10.2,
+              "max": 10.2
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 87.3,
+              "p95": 102.4,
+              "max": 102.4
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 69.47,
+              "p95": 80.48,
+              "max": 80.48
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 15.12,
+              "p95": 22.55,
+              "max": 22.55
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 21.92,
+              "p95": 22.66,
+              "max": 22.66
+            }
+          },
+          "centre": {
+            "samples": 4,
+            "press_ms": {
+              "n": 4,
+              "median": 3,
+              "p95": 3.8,
+              "max": 3.8
+            },
+            "total_ms": {
+              "n": 4,
+              "median": 50.8,
+              "p95": 69.3,
+              "max": 69.3
+            },
+            "main_thread_ms": {
+              "n": 4,
+              "median": 48.68,
+              "p95": 65.88,
+              "max": 65.88
+            },
+            "worker_ms": {
+              "n": 4,
+              "median": 1.69,
+              "p95": 2.38,
+              "max": 2.38
+            },
+            "longest_task_ms": {
+              "n": 4,
+              "median": 20.78,
+              "p95": 21.39,
+              "max": 21.39
+            }
+          }
+        },
+        "drawer_slider_drag": {
+          "frames": 72,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 72,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 73,
+              "median": 2.7,
+              "p95": 4.5,
+              "max": 26.7
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 3.89,
+            "p95": 3.89,
+            "max": 3.89
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.25,
+            "p95": 0.25,
+            "max": 0.25
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.65,
+            "p95": 0.65,
+            "max": 0.65
+          },
+          "actions": {
+            "select_size": 11
+          }
+        },
+        "drawer_wheel_drag": {
+          "frames": 72,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 72,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 33.3
+            },
+            "frames_over_16_7": 1,
+            "frames_over_16_7_pct": 1.39,
+            "frame_work_ms": {
+              "n": 73,
+              "median": 4.8,
+              "p95": 27.2,
+              "max": 58.5
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 1,
+            "median": 5.26,
+            "p95": 5.26,
+            "max": 5.26
+          },
+          "raster_ms_per_frame": {
+            "n": 1,
+            "median": 0.26,
+            "p95": 0.26,
+            "max": 0.26
+          },
+          "compositor_ms_per_frame": {
+            "n": 1,
+            "median": 0.84,
+            "p95": 0.84,
+            "max": 0.84
+          },
+          "actions": {
+            "color_picked": 12
+          }
+        },
+        "demo_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 591.6,
+            "p95": 643.2,
+            "max": 643.2
+          },
+          "during_load": {
+            "snapshot_handler_ms": {
+              "n": 4,
+              "median": 10.7,
+              "p95": 14.5,
+              "max": 14.5
+            },
+            "data_to_paint_ms": {
+              "n": 4,
+              "median": 33.5,
+              "p95": 38.1,
+              "max": 38.1
+            },
+            "data_to_paint_wall_ms": {
+              "n": 4,
+              "median": 40.5,
+              "p95": 45.5,
+              "max": 45.5
+            }
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 184,
+              "p95": 204,
+              "max": 204
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 284.6,
+              "p95": 383.1,
+              "max": 383.1
+            }
+          },
+          "html_bytes": 34075,
+          "html_transfer_bytes": 8667,
+          "snapshot_bytes": 469748,
+          "strokes_held": 360
+        },
+        "demo_snapshot": {
+          "samples": 5,
+          "handler_ms": {
+            "n": 5,
+            "median": 13,
+            "p95": 13.4,
+            "max": 13.4
+          },
+          "paint_ms": {
+            "n": 5,
+            "median": 35.6,
+            "p95": 37.4,
+            "max": 37.4
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 5,
+              "median": 48.2,
+              "p95": 49.9,
+              "max": 49.9
+            }
+          }
+        },
+        "demo_draw": {
+          "frames": 575,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 575,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 33.3
+            },
+            "frames_over_16_7": 1,
+            "frames_over_16_7_pct": 0.17,
+            "frame_work_ms": {
+              "n": 579,
+              "median": 3.2,
+              "p95": 4.2,
+              "max": 19.4
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 3.2,
+            "p95": 3.26,
+            "max": 3.26
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.73,
+            "p95": 1.07,
+            "max": 1.07
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.99,
+            "p95": 1.02,
+            "max": 1.02
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2403.2,
+            "p95": 2403.9,
+            "max": 2403.9
+          }
+        },
+        "viewer_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 650.4,
+            "p95": 676.8,
+            "max": 676.8
+          },
+          "data_to_paint_ms": {
+            "n": 4,
+            "median": 630.2,
+            "p95": 653.8,
+            "max": 653.8
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 230,
+              "p95": 233,
+              "max": 233
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 411.6,
+              "p95": 639.8,
+              "max": 639.8
+            }
+          },
+          "html_bytes": 694783,
+          "html_transfer_bytes": 261610,
+          "snapshot_bytes": null
+        },
+        "viewer_idle_busy_ms_per_s": 46.34,
+        "viewer_apply": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 15.3,
+            "p95": 22.9,
+            "max": 27.9
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 17.8,
+            "p95": 26.6,
+            "max": 52.6
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 20.7,
+              "p95": 30.5,
+              "max": 56.1
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          },
+          "sse_handler_ms": {
+            "n": 20,
+            "median": 0.7,
+            "p95": 1.3,
+            "max": 1.4
+          },
+          "hologram_logs_per_apply": 20
+        },
+        "viewer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 14.3,
+            "p95": 21.5,
+            "max": 23.1
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 16.6,
+            "p95": 28.7,
+            "max": 31.9
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 19.8,
+              "p95": 31.1,
+              "max": 34.7
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        },
+        "drawer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 1.4,
+            "p95": 2.7,
+            "max": 3
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 30.5,
+            "p95": 36.2,
+            "max": 38.2
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 50.8,
+              "p95": 56.1,
+              "max": 57.5
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        }
+      }
+    }
+  },
+  "errors": [],
+  "runs_fills": {
+    "1x": {
+      "500": {
+        "drawer_load": {
+          "painted_ms": 175,
+          "data_ms": 26,
+          "data_to_paint_ms": 149,
+          "snapshot_handler_ms": null,
+          "first_frame_work_ms": 1.5,
+          "html_bytes": 813086,
+          "html_transfer_bytes": 302904,
+          "snapshot_bytes": null,
+          "long_tasks_ms": 51,
+          "busy_until_ms": 162.5
+        },
+        "drawer_memory": {
+          "js_heap_bytes": 6618560,
+          "dom_nodes": 2216,
+          "document_nodes": 1332,
+          "listeners": 118
+        },
+        "drawer_draw": {
+          "frames": 576,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 576,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 580,
+              "median": 0.8,
+              "p95": 1.1,
+              "max": 10.3
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 1.05,
+            "p95": 1.12,
+            "max": 1.12
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 1.29,
+            "p95": 1.33,
+            "max": 1.33
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.85,
+            "p95": 0.92,
+            "max": 0.92
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2401.8,
+            "p95": 2402.4,
+            "max": 2402.4
+          }
+        },
+        "demo_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 275.6,
+            "p95": 278,
+            "max": 278
+          },
+          "during_load": {
+            "snapshot_handler_ms": {
+              "n": 4,
+              "median": 2.9,
+              "p95": 3,
+              "max": 3
+            },
+            "data_to_paint_ms": {
+              "n": 4,
+              "median": 8.2,
+              "p95": 9.1,
+              "max": 9.1
+            },
+            "data_to_paint_wall_ms": {
+              "n": 4,
+              "median": 12.6,
+              "p95": 15.2,
+              "max": 15.2
+            }
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            }
+          },
+          "html_bytes": 34075,
+          "html_transfer_bytes": 8661,
+          "snapshot_bytes": 466806,
+          "strokes_held": 300
+        },
+        "demo_memory": {
+          "js_heap_bytes": 4893996,
+          "dom_nodes": 1849,
+          "document_nodes": 1065,
+          "listeners": 118
+        },
+        "demo_snapshot": {
+          "samples": 5,
+          "handler_ms": {
+            "n": 5,
+            "median": 2.7,
+            "p95": 2.8,
+            "max": 2.8
+          },
+          "paint_ms": {
+            "n": 5,
+            "median": 7.9,
+            "p95": 8.3,
+            "max": 8.3
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 5,
+              "median": 22.2,
+              "p95": 23.1,
+              "max": 23.1
+            }
+          }
+        },
+        "demo_draw": {
+          "frames": 576,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 576,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 16.8
+            },
+            "frames_over_16_7": 0,
+            "frames_over_16_7_pct": 0,
+            "frame_work_ms": {
+              "n": 580,
+              "median": 0.9,
+              "p95": 1.1,
+              "max": 4.2
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 0.92,
+            "p95": 0.98,
+            "max": 0.98
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.75,
+            "p95": 0.78,
+            "max": 0.78
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 1.18,
+            "p95": 1.24,
+            "max": 1.24
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2400.8,
+            "p95": 2403,
+            "max": 2403
+          }
+        },
+        "viewer_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 184.9,
+            "p95": 192.7,
+            "max": 192.7
+          },
+          "data_to_paint_ms": {
+            "n": 4,
+            "median": 158.9,
+            "p95": 166.1,
+            "max": 166.1
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            }
+          },
+          "html_bytes": 807974,
+          "html_transfer_bytes": 302024,
+          "snapshot_bytes": null
+        },
+        "viewer_memory": {
+          "js_heap_bytes": 6340152,
+          "dom_nodes": 1906,
+          "document_nodes": 1236,
+          "listeners": 86
+        },
+        "viewer_idle_busy_ms_per_s": 8.1,
+        "viewer_apply": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 3.8,
+            "p95": 5.6,
+            "max": 5.7
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 4.3,
+            "p95": 6.3,
+            "max": 7.9
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 5.1,
+              "p95": 7.3,
+              "max": 8.5
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          },
+          "sse_handler_ms": {
+            "n": 20,
+            "median": 0.2,
+            "p95": 0.3,
+            "max": 0.4
+          },
+          "hologram_logs_per_apply": 20
+        },
+        "viewer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 3.8,
+            "p95": 5.6,
+            "max": 6
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 4.3,
+            "p95": 6.1,
+            "max": 6.5
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 12.7,
+              "p95": 13.2,
+              "max": 15.5
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        },
+        "drawer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 0.4,
+            "p95": 0.5,
+            "max": 0.7
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 5.6,
+            "p95": 20.6,
+            "max": 21.9
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 13.1,
+              "p95": 26.7,
+              "max": 28.4
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        }
+      }
+    },
+    "4x": {
+      "500": {
+        "drawer_load": {
+          "painted_ms": 828.1999999880791,
+          "data_ms": 26.80000001192093,
+          "data_to_paint_ms": 801.3999999761581,
+          "snapshot_handler_ms": null,
+          "first_frame_work_ms": 57.39999997615814,
+          "html_bytes": 811595,
+          "html_transfer_bytes": 302088,
+          "snapshot_bytes": null,
+          "long_tasks_ms": 288,
+          "busy_until_ms": 746
+        },
+        "drawer_draw": {
+          "frames": 569,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 569,
+              "median": 16.7,
+              "p95": 16.8,
+              "max": 33.4
+            },
+            "frames_over_16_7": 5,
+            "frames_over_16_7_pct": 0.88,
+            "frame_work_ms": {
+              "n": 569,
+              "median": 3.3,
+              "p95": 4.6,
+              "max": 30.3
+            },
+            "idle": {
+              "frames": 59,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 3.71,
+            "p95": 3.83,
+            "max": 3.83
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.93,
+            "p95": 0.98,
+            "max": 0.98
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 0.97,
+            "p95": 0.99,
+            "max": 0.99
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2415.9,
+            "p95": 2466.2,
+            "max": 2466.2
+          }
+        },
+        "demo_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 599.6,
+            "p95": 624.2,
+            "max": 624.2
+          },
+          "during_load": {
+            "snapshot_handler_ms": {
+              "n": 4,
+              "median": 11.7,
+              "p95": 12.7,
+              "max": 12.7
+            },
+            "data_to_paint_ms": {
+              "n": 4,
+              "median": 35.9,
+              "p95": 36.7,
+              "max": 36.7
+            },
+            "data_to_paint_wall_ms": {
+              "n": 4,
+              "median": 42.7,
+              "p95": 43.5,
+              "max": 43.5
+            }
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 186,
+              "p95": 207,
+              "max": 207
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 299.4,
+              "p95": 379.8,
+              "max": 379.8
+            }
+          },
+          "html_bytes": 34075,
+          "html_transfer_bytes": 8670,
+          "snapshot_bytes": 466806,
+          "strokes_held": 300
+        },
+        "demo_snapshot": {
+          "samples": 5,
+          "handler_ms": {
+            "n": 5,
+            "median": 11.3,
+            "p95": 11.4,
+            "max": 11.4
+          },
+          "paint_ms": {
+            "n": 5,
+            "median": 32.8,
+            "p95": 34.3,
+            "max": 34.3
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 5,
+              "median": 40.6,
+              "p95": 44.7,
+              "max": 44.7
+            }
+          }
+        },
+        "demo_draw": {
+          "frames": 574,
+          "frame_aligned": {
+            "frame_ms": {
+              "n": 574,
+              "median": 16.7,
+              "p95": 16.7,
+              "max": 50
+            },
+            "frames_over_16_7": 1,
+            "frames_over_16_7_pct": 0.17,
+            "frame_work_ms": {
+              "n": 576,
+              "median": 3.2,
+              "p95": 4.3,
+              "max": 18.9
+            },
+            "idle": {
+              "frames": 60,
+              "frames_over_16_7_pct": 0
+            }
+          },
+          "main_thread_ms_per_frame": {
+            "n": 4,
+            "median": 3.16,
+            "p95": 3.33,
+            "max": 3.33
+          },
+          "raster_ms_per_frame": {
+            "n": 4,
+            "median": 0.72,
+            "p95": 0.93,
+            "max": 0.93
+          },
+          "compositor_ms_per_frame": {
+            "n": 4,
+            "median": 1.03,
+            "p95": 1.04,
+            "max": 1.04
+          },
+          "gesture_ms": {
+            "n": 4,
+            "median": 2403.7,
+            "p95": 2404.2,
+            "max": 2404.2
+          }
+        },
+        "viewer_load": {
+          "loads": 4,
+          "painted_ms": {
+            "n": 4,
+            "median": 699.4,
+            "p95": 712.8,
+            "max": 712.8
+          },
+          "data_to_paint_ms": {
+            "n": 4,
+            "median": 677.2,
+            "p95": 690,
+            "max": 690
+          },
+          "thresholded": {
+            "long_tasks_ms": {
+              "n": 4,
+              "median": 239,
+              "p95": 254,
+              "max": 254
+            },
+            "busy_until_ms": {
+              "n": 4,
+              "median": 434.6,
+              "p95": 642.5,
+              "max": 642.5
+            }
+          },
+          "html_bytes": 806483,
+          "html_transfer_bytes": 301215,
+          "snapshot_bytes": null
+        },
+        "viewer_idle_busy_ms_per_s": 22.68,
+        "viewer_apply": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 14.2,
+            "p95": 22.3,
+            "max": 27.6
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 16.7,
+            "p95": 25,
+            "max": 30
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 19.6,
+              "p95": 29.5,
+              "max": 33.3
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          },
+          "sse_handler_ms": {
+            "n": 20,
+            "median": 0.8,
+            "p95": 1.3,
+            "max": 1.7
+          },
+          "hologram_logs_per_apply": 20
+        },
+        "viewer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 13.9,
+            "p95": 15.7,
+            "max": 16.1
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 16.1,
+            "p95": 17.8,
+            "max": 18.3
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 19,
+              "p95": 21.3,
+              "max": 21.4
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        },
+        "drawer_undo": {
+          "samples": 20,
+          "dom_ms": {
+            "n": 20,
+            "median": 1.2,
+            "p95": 1.8,
+            "max": 2.3
+          },
+          "paint_ms": {
+            "n": 20,
+            "median": 25.9,
+            "p95": 35.9,
+            "max": 36.2
+          },
+          "frame_aligned": {
+            "wall_paint_ms": {
+              "n": 20,
+              "median": 45.1,
+              "p95": 54.1,
+              "max": 54.6
+            }
+          },
+          "thresholded": {
+            "long_tasks": 0,
+            "long_task_max_ms": 0
+          }
+        }
+      }
+    }
+  },
+  "leak_tools": {
+    "rounds": 20,
+    "before": {
+      "drawer": {
+        "js_heap_bytes": 9994352,
+        "dom_nodes": 1747,
+        "document_nodes": 845,
+        "listeners": 133
+      },
+      "viewer": {
+        "js_heap_bytes": 7817224,
+        "dom_nodes": 1406,
+        "document_nodes": 736,
+        "listeners": 86
+      },
+      "demo": {
+        "js_heap_bytes": 12096836,
+        "dom_nodes": 4773,
+        "document_nodes": 778,
+        "listeners": 173
+      }
+    },
+    "half": {
+      "drawer": {
+        "js_heap_bytes": 10005624,
+        "dom_nodes": 1747,
+        "document_nodes": 845,
+        "listeners": 133
+      },
+      "viewer": {
+        "js_heap_bytes": 8016308,
+        "dom_nodes": 1406,
+        "document_nodes": 736,
+        "listeners": 86
+      },
+      "demo": {
+        "js_heap_bytes": 12604836,
+        "dom_nodes": 4773,
+        "document_nodes": 778,
+        "listeners": 173
+      }
+    },
+    "after": {
+      "drawer": {
+        "js_heap_bytes": 10905284,
+        "dom_nodes": 1747,
+        "document_nodes": 845,
+        "listeners": 133
+      },
+      "viewer": {
+        "js_heap_bytes": 8232264,
+        "dom_nodes": 1406,
+        "document_nodes": 736,
+        "listeners": 86
+      },
+      "demo": {
+        "js_heap_bytes": 12789716,
+        "dom_nodes": 4773,
+        "document_nodes": 778,
+        "listeners": 173
+      }
+    },
+    "drawer_growth": {
+      "first_half": {
+        "js_heap_bytes": 11272,
+        "dom_nodes": 0,
+        "listeners": 0
+      },
+      "second_half": {
+        "js_heap_bytes": 899660,
+        "dom_nodes": 0,
+        "listeners": 0
+      }
+    },
+    "viewer_growth": {
+      "first_half": {
+        "js_heap_bytes": 199084,
+        "dom_nodes": 0,
+        "listeners": 0
+      },
+      "second_half": {
+        "js_heap_bytes": 215956,
+        "dom_nodes": 0,
+        "listeners": 0
+      }
+    },
+    "demo_growth": {
+      "first_half": {
+        "js_heap_bytes": 508000,
+        "dom_nodes": 0,
+        "listeners": 0
+      },
+      "second_half": {
+        "js_heap_bytes": 184880,
+        "dom_nodes": 0,
+        "listeners": 0
+      }
+    }
+  },
+  "leak": {
+    "cycles": 20,
+    "room_strokes": 100,
+    "demo_strokes": 500,
+    "demo_strokes_held": 360,
+    "before": {
+      "drawer": {
+        "js_heap_bytes": 9276760,
+        "dom_nodes": 1816,
+        "document_nodes": 932,
+        "listeners": 118
+      },
+      "viewer": {
+        "js_heap_bytes": 7972108,
+        "dom_nodes": 1506,
+        "document_nodes": 836,
+        "listeners": 86
+      },
+      "demo": {
+        "js_heap_bytes": 11843280,
+        "dom_nodes": 5663,
+        "document_nodes": 1125,
+        "listeners": 158
+      }
+    },
+    "half": {
+      "drawer": {
+        "js_heap_bytes": 9983064,
+        "dom_nodes": 1816,
+        "document_nodes": 932,
+        "listeners": 118
+      },
+      "viewer": {
+        "js_heap_bytes": 8609684,
+        "dom_nodes": 1506,
+        "document_nodes": 836,
+        "listeners": 86
+      },
+      "demo": {
+        "js_heap_bytes": 11920820,
+        "dom_nodes": 5663,
+        "document_nodes": 1125,
+        "listeners": 158
+      }
+    },
+    "after": {
+      "drawer": {
+        "js_heap_bytes": 10030068,
+        "dom_nodes": 1816,
+        "document_nodes": 932,
+        "listeners": 118
+      },
+      "viewer": {
+        "js_heap_bytes": 8658288,
+        "dom_nodes": 1506,
+        "document_nodes": 836,
+        "listeners": 86
+      },
+      "demo": {
+        "js_heap_bytes": 11778152,
+        "dom_nodes": 5663,
+        "document_nodes": 1125,
+        "listeners": 158
+      }
+    },
+    "drawer_growth": {
+      "first_half": {
+        "js_heap_bytes": 706304,
+        "dom_nodes": 0,
+        "listeners": 0
+      },
+      "second_half": {
+        "js_heap_bytes": 47004,
+        "dom_nodes": 0,
+        "listeners": 0
+      }
+    },
+    "viewer_growth": {
+      "first_half": {
+        "js_heap_bytes": 637576,
+        "dom_nodes": 0,
+        "listeners": 0
+      },
+      "second_half": {
+        "js_heap_bytes": 48604,
+        "dom_nodes": 0,
+        "listeners": 0
+      }
+    },
+    "demo_growth": {
+      "first_half": {
+        "js_heap_bytes": 77540,
+        "dom_nodes": 0,
+        "listeners": 0
+      },
+      "second_half": {
+        "js_heap_bytes": -142668,
+        "dom_nodes": 0,
+        "listeners": 0
+      }
+    }
+  }
+}

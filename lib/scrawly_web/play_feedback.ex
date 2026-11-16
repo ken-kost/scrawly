@@ -52,6 +52,35 @@ defmodule ScrawlyWeb.PlayFeedback do
   def word_blocks(_text), do: []
 
   @doc """
+  Everything the page shows of the word, in blocks, worked out once from
+  `inputs` (`display` the masked display, `letters` its letter count,
+  `word` the drawer's or guesser's word, `revealed` the word revealed at
+  the end of a turn, `summary` the round summary's word): `%{for: inputs,
+  mask: mask_blocks(display), label: word_label(display, letters), word:,
+  revealed:, summary:}`, the last three upper-cased word blocks.
+
+  GamePage keeps it in its state and works it out again only when the
+  inputs change (`for`): `String.split/2` compiles a binary pattern, which
+  Hologram 0.12.8's client runtime registers and never frees (about 2 KB a
+  call), so calling these from the template, on every render, grew the
+  page's memory with every action.
+  """
+  @spec word_view(map) :: map
+  def word_view(inputs) do
+    %{
+      for: inputs,
+      mask: mask_blocks(inputs.display),
+      label: word_label(inputs.display, inputs.letters),
+      word: upper_blocks(inputs.word),
+      revealed: upper_blocks(inputs.revealed),
+      summary: upper_blocks(inputs.summary)
+    }
+  end
+
+  defp upper_blocks(text) when is_binary(text), do: text |> String.upcase() |> word_blocks()
+  defp upper_blocks(_text), do: []
+
+  @doc """
   What the blanks hold: the letters, and the words too for a phrase. The
   words are counted on the masked display, so they match the blocks shown.
 

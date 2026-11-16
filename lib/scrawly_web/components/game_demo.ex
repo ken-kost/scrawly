@@ -15,11 +15,17 @@ defmodule ScrawlyWeb.Components.GameDemo do
   `can_undo` whether the visitor has a stroke of their own on the board (undo
   takes back only the visitor's own strokes, demo_board.mjs).
 
-  The svg's layers, bottom to top: the JS-owned `#demo-board-strokes` and
-  `#demo-board-overlay` groups (JS only inserts into these), then
-  `#demo-board-active-path` (styled by JS when a stroke starts). The dot grid
-  is drawn by CSS above the strokes (`.demo-canvas::after`), so the white
-  eraser never paints over it. `#demo-board-ring`, beside the svg, is the
+  Two svgs stacked, with the same viewBox (the game canvas's split,
+  DrawingCanvas): below, `#demo-board-paint` (no pointer events) holds the
+  committed strokes in the JS-owned `#demo-board-strokes` group; on top,
+  `#demo-board-svg`, the canvas the stroke engine listens to, holds what
+  changes while drawing, the JS-owned `#demo-board-overlay` group (peers'
+  strokes in progress) and `#demo-board-active-path` (styled by JS when a
+  stroke starts), on a compositor layer of its own (app.css
+  `.canvas-input`), so a frame of a stroke in progress never re-rasters the
+  committed strokes. JS only inserts into the groups. The dot grid is drawn
+  by CSS above the strokes (`.demo-canvas::after`), so the white eraser
+  never paints over it. `#demo-board-ring`, beside the svg, is the
   size ring (size_ring.mjs, on its own layer, hidden until JS shows it),
   `#demo-board-pick` the colour picker's swatch (eyedropper.mjs, the same),
   and `#demo-board-notice` the fill tool's status line (fill_tool.mjs: why
@@ -47,12 +53,8 @@ defmodule ScrawlyWeb.Components.GameDemo do
       </div>
 
       <div class="demo-canvas" style="aspect-ratio: 16/9; min-height: 220px; position: relative;">
-        <svg
-          id="demo-board-svg"
-          viewBox="0 0 800 450"
-          preserveAspectRatio="xMidYMid meet"
-          style="touch-action: none; width: 100%; height: 100%;">
-          <g id="demo-board-strokes"></g>
+        <svg id="demo-board-paint" class="canvas-paint" viewBox="0 0 800 450" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><g id="demo-board-strokes"></g></svg>
+        <svg id="demo-board-svg" class="canvas-input" viewBox="0 0 800 450" preserveAspectRatio="xMidYMid meet" style="touch-action: none;">
           <g id="demo-board-overlay"></g>
           <path id="demo-board-active-path" d="" fill="none" stroke-linecap="round" stroke-linejoin="round" />
         </svg>

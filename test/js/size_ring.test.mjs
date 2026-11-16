@@ -76,7 +76,14 @@ globalThis.document = { getElementById: (id) => elements[id] || null };
 let enabled = true;
 let drawing = null;
 globalThis.__scrawlyStrokeEngines = new Map([
-  ["game-canvas-svg", { isEnabled: () => enabled, gestureStyle: () => (drawing ? { ...drawing } : null) }],
+  [
+    "game-canvas-svg",
+    {
+      isEnabled: () => enabled,
+      isDrawing: () => drawing !== null,
+      gestureStyle: () => (drawing ? { ...drawing } : null),
+    },
+  ],
 ]);
 
 const sizeRing = await import("../../lib/scrawly_web/pages/size_ring.mjs");
@@ -377,32 +384,38 @@ test("Ctrl with the pointer off the canvas draws nothing", () => {
   assert.equal(shown(), false);
 });
 
-test("while a stroke is drawn the ring is the stroke's: an eraser stroke stays dashed after Ctrl comes up", () => {
+test("while a stroke is drawn the ring hides, the crosshair stays; on release the selected tool's ring is back", () => {
+  move(500, 300);
+  flushFrame();
+  assert.equal(shown(), true);
+  assert.equal(svg.getAttribute("data-size-ring"), "");
+
   // A Ctrl press started an eraser stroke at 20 (the size has changed since).
   ctrlDown();
   drawing = { color: "#ffffff", width: 20, tool: "eraser" };
-  move(500, 300);
+  move(505, 300);
   ctrlUp();
   flushFrame();
-  assert.equal(dashed(), true);
-  // 20 units at 1.1 px: 22 px across.
-  assert.equal(ring.style.width, "24px");
+  assert.equal(shown(), false, "no ring over the stroke in progress");
+  assert.equal(svg.getAttribute("data-size-ring"), "", "the canvas keeps its crosshair");
 
   // Released: the selected brush again, without a move.
   drawing = null;
   fire("pointerup", { pointerId: 1 });
   flushFrame();
+  assert.equal(shown(), true);
   assert.equal(dashed(), false);
   assert.equal(ring.style.width, "13px");
 
-  // A right-button stroke, with no Ctrl at all.
+  // A right-button stroke, with no Ctrl at all: hidden too, back after.
   drawing = { color: "#ffffff", width: 10, tool: "eraser" };
-  move(505, 300);
+  move(510, 300);
   flushFrame();
-  assert.equal(dashed(), true);
+  assert.equal(shown(), false);
   drawing = null;
   fire("pointercancel", { pointerId: 1 });
   flushFrame();
+  assert.equal(shown(), true);
   assert.equal(dashed(), false);
 });
 

@@ -37,6 +37,41 @@ defmodule ScrawlyWeb.PlayFeedbackTest do
     end
   end
 
+  describe "word_view/1" do
+    test "the blocks and the label of every word the page shows, from one set of inputs" do
+      inputs = %{
+        display: "_ _ _   _ _ _ _ _",
+        letters: 8,
+        word: "chicken run",
+        revealed: nil,
+        summary: "bird's nest"
+      }
+
+      assert PlayFeedback.word_view(inputs) == %{
+               for: inputs,
+               mask: ["_ _ _", "_ _ _ _ _"],
+               label: "2 words · 8 letters",
+               word: ["CHICKEN", "RUN"],
+               revealed: [],
+               summary: ["BIRD'S", "NEST"]
+             }
+    end
+
+    test "nothing to show is empty blocks" do
+      view =
+        PlayFeedback.word_view(%{
+          display: nil,
+          letters: nil,
+          word: nil,
+          revealed: nil,
+          summary: nil
+        })
+
+      assert view.mask == [] and view.word == [] and view.revealed == [] and view.summary == []
+      assert view.label == "0 letters"
+    end
+  end
+
   describe "difficulty_label/1 and difficulty_class/1" do
     test "each difficulty reads with its points bonus; an AI word has no chip" do
       assert Enum.map([:easy, :medium, :hard, nil], &PlayFeedback.difficulty_label/1) ==

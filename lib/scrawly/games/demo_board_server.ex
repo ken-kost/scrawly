@@ -1,7 +1,9 @@
 defmodule Scrawly.Games.DemoBoardServer do
   @moduledoc """
   Single shared canvas for the home page. Holds an ordered list of completed
-  strokes in memory, oldest first, at most 500 (the oldest go first). State
+  strokes in memory, oldest first, at most 500 strokes and 450,000 path bytes
+  (the oldest go first, whichever limit a new stroke passes: the board's
+  snapshot, sent to every visitor who joins, stays under 500 KB). State
   changes are broadcast over an internal PubSub topic (`demo:board:state`)
   which the channel subscribes to alongside its standard channel-topic
   subscription.
@@ -30,6 +32,11 @@ defmodule Scrawly.Games.DemoBoardServer do
   # through `handle_out/3` and crashes on un-intercepted events.
   @topic "demo:board:state"
   @max_strokes 500
+  # Path bytes kept: with each stroke's JSON around its path (~90 bytes:
+  # id, colour, width), the 500-stroke snapshot stays under 500 KB
+  # (notes/files/drawing-benchmarks.md, "Budgets"). demo_board.mjs trims
+  # its own store by the same two limits.
+  @max_bytes 450_000
 
   @typedoc """
   A stored stroke (`fill: true` for a fill). `owner` and `gesture` never
@@ -60,6 +67,9 @@ defmodule Scrawly.Games.DemoBoardServer do
 
   @doc "How many strokes the board keeps (the newest)."
   def max_strokes, do: @max_strokes
+
+  @doc "How many path bytes the board keeps (the newest strokes')."
+  def max_bytes, do: @max_bytes
 
   @doc """
   Appends a stroke and broadcasts `{:stroke_added, stroke}` to the channel
@@ -95,8 +105,10 @@ defmodule Scrawly.Games.DemoBoardServer do
 
   # ── Server callbacks ───────────────────────────────────────────────
 
+  # The strokes, oldest first, with their count and path bytes kept beside
+  # them (the limits are checked without walking the list).
   @impl true
-  def init(_), do: {:ok, %{strokes: []}}
+  def init(_), do: {:ok, %{strokes: [], count: 0, bytes: 0}}
 
   @impl true
   def handle_call(:get_strokes, _from, state), do: {:reply, state.strokes, state}
@@ -106,9 +118,17 @@ defmodule Scrawly.Games.DemoBoardServer do
       {:reply, {:error, :duplicate}, state}
     else
       stroke = Map.put(stroke, :gesture, Map.get(stroke, :gesture) || stroke.stroke_id)
-      strokes = Enum.take(state.strokes ++ [stroke], -@max_strokes)
+
+      state =
+        trim(%{
+          state
+          | strokes: state.strokes ++ [stroke],
+            count: state.count + 1,
+            bytes: state.bytes + byte_size(stroke.path)
+        })
+
       Phoenix.PubSub.broadcast(Scrawly.PubSub, @topic, {:stroke_added, stroke})
-      {:reply, :ok, %{state | strokes: strokes}}
+      {:reply, :ok, state}
     end
   end
 
@@ -123,13 +143,30 @@ defmodule Scrawly.Games.DemoBoardServer do
 
         ids = Enum.map(removed, & &1.stroke_id)
         Phoenix.PubSub.broadcast(Scrawly.PubSub, @topic, {:strokes_removed, ids})
-        {:reply, {:ok, ids}, %{state | strokes: kept}}
+
+        {:reply, {:ok, ids},
+         %{
+           state
+           | strokes: kept,
+             count: state.count - length(removed),
+             bytes: state.bytes - path_bytes(removed)
+         }}
     end
   end
 
   @impl true
   def handle_cast(:clear, state) do
     Phoenix.PubSub.broadcast(Scrawly.PubSub, @topic, :strokes_cleared)
-    {:noreply, %{state | strokes: []}}
+    {:noreply, %{state | strokes: [], count: 0, bytes: 0}}
   end
+
+  # The oldest strokes go while the board holds too many, or too many path
+  # bytes. Clients drop the same ones from their own copies.
+  defp trim(%{strokes: [oldest | rest], count: count, bytes: bytes} = state)
+       when count > @max_strokes or bytes > @max_bytes,
+       do: trim(%{state | strokes: rest, count: count - 1, bytes: bytes - byte_size(oldest.path)})
+
+  defp trim(state), do: state
+
+  defp path_bytes(strokes), do: Enum.reduce(strokes, 0, &(byte_size(&1.path) + &2))
 end

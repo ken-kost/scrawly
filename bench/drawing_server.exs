@@ -69,9 +69,14 @@ defmodule Bench do
 
     bin_bytes = bins |> Enum.uniq_by(&elem(&1, 0)) |> Enum.map(&elem(&1, 1)) |> Enum.sum()
 
+    # The state's own size (a flat copy, in words), which unlike the heap
+    # doesn't move with the heap's allocation steps.
+    state_words = pid |> :sys.get_state() |> :erts_debug.flat_size()
+
     %{
       process_bytes: memory,
       heap_bytes: heap_words * :erlang.system_info(:wordsize),
+      state_term_bytes: state_words * :erlang.system_info(:wordsize),
       binary_bytes: bin_bytes,
       binary_count: length(Enum.uniq_by(bins, &elem(&1, 0))),
       total_bytes: memory + bin_bytes
@@ -83,13 +88,17 @@ defmodule Bench do
     %{"strokes" => strokes} = path |> File.read!() |> Jason.decode!()
 
     Enum.map(strokes, fn s ->
-      %{
+      stroke = %{
         id: :binary.copy(s["id"]),
         path: :binary.copy(s["path"]),
         color: :binary.copy(s["color"]),
         width: s["width"],
         kind: s["kind"]
       }
+
+      # The fills sets (bench/fixtures/generate_fills.mjs): a fill carries
+      # `fill: true`, as the room and the board store it.
+      if s["fill"] == true, do: Map.put(stroke, :fill, true), else: stroke
     end)
   end
 end
@@ -99,6 +108,11 @@ end
 {:module, ws_mod, ws_bin, _} =
   defmodule Bench.WS do
     @moduledoc false
+
+    # BENCH_WS_DEFLATE=1 (read in the peer): the visitors offer
+    # permessage-deflate, as browsers do; the server compresses only if its
+    # socket allows it (`websocket: [compress: true]`).
+    def deflate?, do: System.get_env("BENCH_WS_DEFLATE") == "1"
 
     def connect(port, path) do
       {:ok, sock} =
@@ -115,7 +129,9 @@ end
         :gen_tcp.send(
           sock,
           "GET #{path} HTTP/1.1\r\nHost: localhost:#{port}\r\nUpgrade: websocket\r\n" <>
-            "Connection: Upgrade\r\nSec-WebSocket-Key: #{key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+            "Connection: Upgrade\r\nSec-WebSocket-Key: #{key}\r\nSec-WebSocket-Version: 13\r\n" <>
+            if(deflate?(), do: "Sec-WebSocket-Extensions: permessage-deflate\r\n", else: "") <>
+            "\r\n"
         )
 
       {:ok, rest} = read_headers(sock, "")
@@ -153,21 +169,66 @@ end
       :crypto.exor(data, keystream)
     end
 
-    # Complete server frames (unmasked) from `buf`: {[payload], rest}.
+    # Complete server frames (unmasked) from `buf`: {[{rsv1, payload}], rest}.
+    # rsv1: the frame is compressed (permessage-deflate).
     def frames(buf, acc \\ []) do
       case buf do
-        <<_fin::1, _::3, _op::4, 0::1, 127::7, len::64, payload::binary-size(len), rest::binary>> ->
-          frames(rest, [payload | acc])
+        <<_fin::1, c::1, _::2, _op::4, 0::1, 127::7, len::64, payload::binary-size(len), rest::binary>> ->
+          frames(rest, [{c, payload} | acc])
 
-        <<_fin::1, _::3, _op::4, 0::1, 126::7, len::16, payload::binary-size(len), rest::binary>> ->
-          frames(rest, [payload | acc])
+        <<_fin::1, c::1, _::2, _op::4, 0::1, 126::7, len::16, payload::binary-size(len), rest::binary>> ->
+          frames(rest, [{c, payload} | acc])
 
-        <<_fin::1, _::3, _op::4, 0::1, len::7, payload::binary-size(len), rest::binary>>
+        <<_fin::1, c::1, _::2, _op::4, 0::1, len::7, payload::binary-size(len), rest::binary>>
         when len < 126 ->
-          frames(rest, [payload | acc])
+          frames(rest, [{c, payload} | acc])
 
         _ ->
           {Enum.reverse(acc), buf}
+      end
+    end
+
+    # A frame's message: inflated with the connection's inflater when it
+    # came compressed.
+    def message(_z, {0, payload}), do: payload
+
+    def message(z, {1, payload}),
+      do: z |> :zlib.inflate(payload <> <<0, 0, 255, 255>>) |> IO.iodata_to_binary()
+
+    def inflater do
+      z = :zlib.open()
+      :ok = :zlib.inflateInit(z, -15)
+      z
+    end
+
+    # With 500 strokes on the board: a visitor joins and gets the snapshot.
+    # Returns its size on the wire, its size, and join to receipt in ms.
+    def snapshot_probe(port) do
+      {sock, rest} = connect(port, "/socket/websocket?vsn=2.0.0")
+      z = inflater()
+      t0 = System.monotonic_time(:microsecond)
+      send_text(sock, ~s(["1","1","demo:board","phx_join",{}]))
+      result = await_snapshot(sock, z, rest, t0)
+      :gen_tcp.close(sock)
+      result
+    end
+
+    defp await_snapshot(sock, z, buf, t0) do
+      {got, rest} = frames(buf)
+
+      found =
+        Enum.find_value(got, fn {_c, payload} = f ->
+          msg = message(z, f)
+
+          if :binary.match(msg, "\"strokes\"") != :nomatch,
+            do: %{wire_bytes: byte_size(payload), bytes: byte_size(msg)}
+        end)
+
+      if found do
+        Map.put(found, :ms, (System.monotonic_time(:microsecond) - t0) / 1000)
+      else
+        {:ok, data} = :gen_tcp.recv(sock, 0, 10_000)
+        await_snapshot(sock, z, rest <> data, t0)
       end
     end
 
@@ -182,22 +243,34 @@ end
       send_text(sock, ~s(["1","1","demo:board","phx_join",{}]))
       :ok = :inet.setopts(sock, active: true)
       send(parent, {:joined, self()})
-      sub_loop(sock, rest, %{lat: [], frames: 0, bytes: 0})
+      sub_loop(sock, rest, %{lat: [], removed: [], frames: 0, bytes: 0, wire: 0, z: inflater()})
     end
 
     defp sub_loop(sock, buf, st) do
       receive do
         {:tcp, ^sock, data} ->
           now = System.os_time(:microsecond)
-          {payloads, rest} = frames(buf <> data)
+          {got, rest} = frames(buf <> data)
 
           st =
-            Enum.reduce(payloads, st, fn p, st ->
-              st = %{st | frames: st.frames + 1, bytes: st.bytes + byte_size(p)}
+            Enum.reduce(got, st, fn {_c, wire} = f, st ->
+              p = message(st.z, f)
+
+              st = %{
+                st
+                | frames: st.frames + 1,
+                  bytes: st.bytes + byte_size(p),
+                  wire: st.wire + byte_size(wire)
+              }
 
               case :binary.match(p, "\"stroke_chunk\"") do
                 :nomatch ->
-                  st
+                  # A board undo's push: when it arrived (in order, one per
+                  # undo).
+                  case :binary.match(p, "\"stroke_removed\"") do
+                    :nomatch -> st
+                    _ -> %{st | removed: [now | st.removed]}
+                  end
 
                 _ ->
                   case :binary.match(p, "\"seq\":") do
@@ -214,8 +287,8 @@ end
           sub_loop(sock, rest, st)
 
         {:report, from} ->
-          send(from, {:report, self(), st})
-          sub_loop(sock, buf, %{st | lat: [], frames: 0, bytes: 0})
+          send(from, {:report, self(), %{Map.delete(st, :z) | removed: Enum.reverse(st.removed)}})
+          sub_loop(sock, buf, %{st | lat: [], removed: [], frames: 0, bytes: 0, wire: 0})
 
         {:tcp_closed, ^sock} ->
           :closed
@@ -291,7 +364,7 @@ end
         receive do
           {:report, _pid, st} -> st
         after
-          10_000 -> %{lat: [], frames: 0, bytes: 0}
+          10_000 -> %{lat: [], removed: [], frames: 0, bytes: 0, wire: 0}
         end
       end
     end
@@ -364,6 +437,27 @@ end)
 
 game = Enum.map(game, &Map.take(&1, [:id, :path, :color, :width, :kind]))
 room_strokes = Enum.map(game, &Map.take(&1, [:id, :path, :color, :width]))
+
+# The sets with fills (every tenth stroke a fill): they pass the same
+# checks, and are stored as the room stores them (StrokeRules.validate/1).
+game_fills = Bench.load_fixture("game-fills-500")
+demo_fills = Bench.load_fixture("demo-fills-500")
+
+room_fill_strokes =
+  game_fills
+  |> Enum.reduce([], fn s, acc ->
+    {:ok, stroke} = StrokeRules.check_append(acc, Map.take(s, [:id, :path, :color, :width, :fill]))
+    [stroke | acc]
+  end)
+  |> Enum.reverse()
+
+demo_fill_strokes =
+  Enum.map(demo_fills, fn s ->
+    Map.merge(
+      %{path: s.path, color: s.color, width: s.width, stroke_id: s.id, owner: "anon:bench", gesture: s.id},
+      Map.take(s, [:fill])
+    )
+  end)
 
 # DemoBoardServer stores every stroke with its owner (an actor key) and
 # gesture.
@@ -459,9 +553,36 @@ end
 
 demo_pid = Process.whereis(DemoBoardServer)
 
+# Since #44 the board keeps its count and path bytes beside the list (and
+# caps the bytes): kept in step here (unused keys before that).
 set_demo = fn strokes ->
-  :sys.replace_state(demo_pid, fn s -> %{s | strokes: strokes} end)
+  :sys.replace_state(demo_pid, fn s ->
+    Map.merge(s, %{
+      strokes: strokes,
+      count: length(strokes),
+      bytes: Enum.reduce(strokes, 0, &(byte_size(&1.path) + &2))
+    })
+  end)
+
   :ok
+end
+
+# The newest strokes within the board's byte cap (DemoBoardServer.max_bytes/0,
+# since #44; no cap before).
+cap_demo = fn strokes ->
+  if function_exported?(DemoBoardServer, :max_bytes, 0) do
+    max = DemoBoardServer.max_bytes()
+
+    strokes
+    |> Enum.reverse()
+    |> Enum.reduce_while({[], 0}, fn s, {kept, bytes} ->
+      size = bytes + byte_size(s.path)
+      if size > max, do: {:halt, {kept, bytes}}, else: {:cont, {[s | kept], size}}
+    end)
+    |> elem(0)
+  else
+    strokes
+  end
 end
 
 # A cheap round trip to the demo board (a system message, no state copied):
@@ -486,7 +607,9 @@ Bench.log("commit: room and demo board at 0/100/300/499 strokes")
 commit =
   for held <- [0, 100, 300, 499], into: %{} do
     prefix = Enum.take(room_strokes, held)
-    demo_prefix = Enum.take(demo_strokes, held)
+    # What the board holds after taking `held` strokes: since #44 its byte
+    # cap keeps only the newest that fit (at 499 fixture strokes, fewer).
+    demo_prefix = demo_strokes |> Enum.take(held) |> cap_demo.()
 
     room_stats =
       Bench.sample(
@@ -518,10 +641,30 @@ commit =
     append =
       Bench.sample(iterations, fn -> :ok end, fn _ -> prefix ++ [room_probe] end) |> Bench.stats()
 
+    # The same check with the count and path bytes kept in the state (what
+    # #44 tried): validation plus two comparisons, no walk of the list.
+    prefix_bytes = StrokeRules.canvas_bytes(prefix)
+
+    check_with_totals =
+      Bench.sample(iterations, fn -> :ok end, fn _ ->
+        {:ok, s} = StrokeRules.validate(room_probe)
+
+        held < StrokeRules.max_strokes() and
+          prefix_bytes + byte_size(s.path) <= StrokeRules.max_canvas_bytes()
+      end)
+      |> Bench.stats()
+
     Bench.log("  #{held}: room #{Bench.fmt(room_stats)} | demo #{Bench.fmt(demo_stats)}")
 
     {held,
-     %{room: room_stats, demo: demo_stats, room_check_append: check, room_list_append: append}}
+     %{
+       demo_strokes_held: length(demo_prefix),
+       room: room_stats,
+       demo: demo_stats,
+       room_check_append: check,
+       room_check_with_totals: check_with_totals,
+       room_list_append: append
+     }}
   end
 
 barrier_only =
@@ -596,12 +739,53 @@ for k <- [0, 100, 300, 500] do
   Bench.log("  #{k}: room #{room_mem[k].total_bytes} B | demo #{demo_mem[k].total_bytes} B")
 end
 
-results = Map.put(results, :memory, %{room: room_mem, demo: demo_mem})
+# What the board's ownership data (each stroke's owner and gesture, since
+# #42) costs: the same 500 strokes held without those two keys.
+held = :sys.get_state(demo_pid).strokes
+set_demo.(Enum.map(held, &Map.drop(&1, [:owner, :gesture])))
+:erlang.garbage_collect(demo_pid)
+demo_without_ownership = Bench.mem(demo_pid)
+set_demo.(held)
+:erlang.garbage_collect(demo_pid)
+
+Bench.log(
+  "  demo 500 without owner/gesture: state #{demo_without_ownership.state_term_bytes} B " <>
+    "(ownership #{demo_mem[500].state_term_bytes - demo_without_ownership.state_term_bytes} B of the state's " <>
+    "#{demo_mem[500].state_term_bytes} B; binaries #{demo_without_ownership.binary_bytes} B)"
+)
+
+# The sets with fills, held by the room and the board (set directly, as
+# stored; garbage-collected first).
+set_room.(room_fill_strokes)
+set_demo.(demo_fill_strokes)
+:erlang.garbage_collect(room_pid)
+:erlang.garbage_collect(demo_pid)
+room_fills_mem = Bench.mem(room_pid)
+demo_fills_mem = Bench.mem(demo_pid)
+set_room.([])
+set_demo.([])
+
+Bench.log(
+  "  500 with 50 fills: room #{room_fills_mem.total_bytes} B | demo #{demo_fills_mem.total_bytes} B"
+)
+
+results =
+  Map.put(results, :memory, %{
+    room: room_mem,
+    demo: demo_mem,
+    demo_500_without_ownership: demo_without_ownership,
+    room_500_fills: room_fills_mem,
+    demo_500_fills: demo_fills_mem
+  })
 
 # ── 4. What a joining viewer receives at 500 strokes ─────────────────────
 Bench.log("join payloads at 500")
 set_room.(room_strokes)
-set_demo.(demo_strokes)
+# The board filled through its own entry point, so its caps apply (since
+# #44 it keeps at most 450,000 path bytes: not all 500 fixture strokes).
+set_demo.([])
+Enum.each(demo_strokes, &DemoBoardServer.add_stroke/1)
+demo_kept = length(DemoBoardServer.get_strokes())
 {:ok, view} = RoomServer.get_view(room.id, viewer)
 500 = length(view.drawing_strokes)
 
@@ -681,7 +865,11 @@ big_demo =
         gesture: "big-#{k}"
       }
 
-set_demo.(big_demo)
+# Through the board's own entry point, so its caps apply (a byte cap since
+# #44: it keeps only the newest strokes that fit).
+set_demo.([])
+Enum.each(big_demo, &DemoBoardServer.add_stroke/1)
+big_kept = length(DemoBoardServer.get_strokes())
 
 big_snapshot_time =
   Bench.sample(
@@ -708,7 +896,26 @@ big_view_time =
   Bench.sample(50, fn -> :ok end, fn _ -> {:ok, _} = RoomServer.get_view(room.id, viewer) end, 5)
   |> Bench.stats()
 
+# The same with the fills sets.
+set_room.(room_fill_strokes)
+set_demo.([])
+Enum.each(demo_fill_strokes, &DemoBoardServer.add_stroke/1)
+fills_kept = length(DemoBoardServer.get_strokes())
+{:ok, fills_view} = RoomServer.get_view(room.id, viewer)
+500 = length(fills_view.drawing_strokes)
+
+fills_snapshot_bytes =
+  DemoBoardServer.get_strokes() |> snapshot_msg.() |> encode_push.() |> IO.iodata_length()
+
 join = %{
+  room_view_500_fills: %{
+    fills: Enum.count(fills_view.drawing_strokes, &StrokeRules.fill?/1),
+    path_bytes: StrokeRules.canvas_bytes(fills_view.drawing_strokes),
+    external_bytes: :erlang.external_size(fills_view),
+    strokes_json_bytes: byte_size(Jason.encode!(fills_view.drawing_strokes)),
+    strokes_hologram_state_bytes: byte_size(encode_strokes.(fills_view.drawing_strokes))
+  },
+  demo_snapshot_500_fills: %{bytes: fills_snapshot_bytes, strokes_kept: fills_kept},
   room_view_500: %{
     build: view_time,
     external_bytes: :erlang.external_size(view),
@@ -716,8 +923,12 @@ join = %{
     strokes_hologram_state_bytes: byte_size(encode_strokes.(view.drawing_strokes)),
     strokes_hologram_state_encode: state_encode
   },
-  demo_snapshot_500: %{build: snapshot_time, bytes: snapshot_bytes},
-  demo_snapshot_500_x_7999: %{build: big_snapshot_time, bytes: big_snapshot_bytes},
+  demo_snapshot_500: %{build: snapshot_time, bytes: snapshot_bytes, strokes_kept: demo_kept},
+  demo_snapshot_500_x_7999: %{
+    build: big_snapshot_time,
+    bytes: big_snapshot_bytes,
+    strokes_kept: big_kept
+  },
   room_view_at_byte_cap: %{
     strokes: room_cap_count,
     build: big_view_time,
@@ -864,11 +1075,26 @@ end
 
 send_ms = 6_000
 interval_ms = 50
+undos = 40
+undo_interval_ms = 50
+
+# The board's snapshot as a joining visitor gets it, on the wire (smaller
+# when the socket compresses).
+set_demo.([])
+Enum.each(demo_strokes, &DemoBoardServer.add_stroke/1)
+snapshot_wire = :peer.call(peer, Bench.WS, :snapshot_probe, [ws_port], 30_000)
+set_demo.([])
+Bench.log("  snapshot on the wire: #{inspect(snapshot_wire)}")
 
 fanout =
   for subs <- [10, 50, 200], into: %{} do
+    :erlang.garbage_collect()
+    mem_before = :erlang.memory(:total)
     ^subs = :peer.call(peer, Bench.WS, :start_subscribers, [ws_port, subs], 60_000)
     Process.sleep(500)
+    # The server's memory per connected visitor (their socket and channel
+    # processes, and with compression each socket's zlib streams).
+    mem_per_subscriber = div(:erlang.memory(:total) - mem_before, subs)
 
     idle_sampler = sampler.()
     idle = utilization.(2_000)
@@ -894,9 +1120,71 @@ fanout =
     Process.sleep(300)
 
     reports = :peer.call(peer, Bench.WS, :collect, [], 30_000)
+
+    # A board undo with this many visitors connected: the board holds the
+    # 500 demo strokes, all of one owner, one gesture each; that owner undoes
+    # one every 50 ms. Timed: the undo call (DemoBoardServer.undo/1, its
+    # broadcast included), scheduler use meanwhile, and each visitor's
+    # receipt of its `stroke_removed` push (OS clock, same machine).
+    set_demo.(demo_strokes)
+    _ = :peer.call(peer, Bench.WS, :collect, [], 30_000)
+    undo_sampler = sampler.()
+    s0 = :scheduler.sample_all()
+
+    undo_marks =
+      for _ <- 1..undos do
+        sent_at = System.os_time(:microsecond)
+        t0 = Bench.now_ns()
+        {:ok, [_id]} = DemoBoardServer.undo("anon:bench")
+        call_us = (Bench.now_ns() - t0) / 1000
+        Process.sleep(undo_interval_ms)
+        {sent_at, call_us}
+      end
+
+    s1 = :scheduler.sample_all()
+    {undo_queue, undo_queue_owner} = stop_sampler.(undo_sampler)
+    {:total, undo_util, _} = List.keyfind(:scheduler.utilization(s0, s1), :total, 0)
+    Process.sleep(300)
+    undo_reports = :peer.call(peer, Bench.WS, :collect, [], 30_000)
+    sent_ats = Enum.map(undo_marks, &elem(&1, 0))
+
+    undo_lat =
+      undo_reports
+      |> Enum.flat_map(fn r -> r.removed |> Enum.zip(sent_ats) |> Enum.map(fn {at, sent} -> (at - sent) / 1000 end) end)
+      |> Enum.sort()
+
+    undo_row = %{
+      undos: undos,
+      interval_ms: undo_interval_ms,
+      call: undo_marks |> Enum.map(&elem(&1, 1)) |> Bench.stats(),
+      pushes_delivered: length(undo_lat),
+      delivered_ratio: Float.round(length(undo_lat) / (undos * subs), 4),
+      scheduler_utilization_pct: Float.round(undo_util * 100, 2),
+      longest_message_queue: undo_queue,
+      longest_message_queue_owner: undo_queue_owner,
+      delivery_latency_ms:
+        if(undo_lat == [],
+          do: nil,
+          else: %{
+            median: Float.round(Bench.pct(undo_lat, 50), 3),
+            p95: Float.round(Bench.pct(undo_lat, 95), 3),
+            max: Float.round(List.last(undo_lat), 3)
+          }
+        )
+    }
+
+    set_demo.([])
+
+    Bench.log(
+      "  #{subs} subscribers, board undo: call #{Bench.fmt(undo_row.call)}, util #{undo_row.scheduler_utilization_pct}%, " <>
+        "delivered #{undo_row.pushes_delivered}/#{undos * subs}, latency #{inspect(undo_row.delivery_latency_ms)}"
+    )
+
     :ok = :peer.call(peer, Bench.WS, :stop_subscribers, [])
     lat = reports |> Enum.flat_map(& &1.lat) |> Enum.map(&(&1 / 1000))
     received = reports |> Enum.map(&length(&1.lat)) |> Enum.sum()
+    payload_bytes = reports |> Enum.map(& &1.bytes) |> Enum.sum()
+    wire_bytes = reports |> Enum.map(& &1.wire) |> Enum.sum()
     lat_sorted = Enum.sort(lat)
     schedulers = System.schedulers_online()
     extra = max(busy - idle, 0.0)
@@ -910,6 +1198,9 @@ fanout =
       subscribers: subs,
       chunks_sent: sent,
       chunks_delivered: received,
+      server_memory_per_subscriber_bytes: mem_per_subscriber,
+      payload_bytes: payload_bytes,
+      wire_bytes: wire_bytes,
       delivered_ratio: if(sent > 0, do: Float.round(received / (sent * subs), 4), else: 0.0),
       scheduler_utilization_idle_pct: Float.round(idle * 100, 2),
       scheduler_utilization_pct: Float.round(busy * 100, 2),
@@ -925,12 +1216,14 @@ fanout =
             p95: Float.round(Bench.pct(lat_sorted, 95), 3),
             max: Float.round(List.last(lat_sorted), 3)
           }
-        )
+        ),
+      board_undo: undo_row
     }
 
     Bench.log(
       "  #{subs} subscribers: util #{row.scheduler_utilization_pct}% (idle #{row.scheduler_utilization_idle_pct}%), " <>
         "delivered #{received}/#{sent * subs}, max queue #{max_queue} (#{queue_owner}), " <>
+        "#{mem_per_subscriber} B/visitor, wire #{wire_bytes}/#{payload_bytes} B, " <>
         "latency #{inspect(row.delivery_latency_ms)}"
     )
 
@@ -942,6 +1235,8 @@ fanout =
 results =
   results
   |> Map.put(:fanout, %{
+    deflate_offered: System.get_env("BENCH_WS_DEFLATE") == "1",
+    snapshot_wire: snapshot_wire,
     chunk_interval_ms: interval_ms,
     send_ms: send_ms,
     delta_bytes_avg: div(Enum.sum(Enum.map(deltas, &byte_size/1)), length(deltas)),

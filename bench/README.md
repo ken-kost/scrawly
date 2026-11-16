@@ -9,14 +9,17 @@ too noisy for CI.
 |---|---|
 | `fixtures/{game,demo}-{100,300,500}.json` | stroke sets for the in-game canvas and the demo board (both 800x450 since #37; the baseline runs in `results/` had the board at 400x225) |
 | `fixtures/generate.mjs` | writes them (`--check` verifies the stored files) |
+| `fixtures/{game,demo}-fills-{100,300,500}.json` | the same sets with every tenth stroke a fill (#44) |
+| `fixtures/generate_fills.mjs` | writes them with the fill tool's own worker, in headless Chromium (`--check` too) |
 | `lib/fixture_gen.mjs` | the generator: synthetic pointer points through the app's own `createStrokeBuilder` |
 | `drawing_server.exs` | server benchmark (`mix run`, test env, scratch database) |
 | `drawing_client.mjs` | client benchmark (headless Chromium against a local prod build) |
 | `prod_server.sh` | builds and runs that prod build (scratch folder, port and database) |
 | `lib/bench_rpc.exs`, `lib/page_probe.js` | the client benchmark's server-side setup and in-page probe |
-| `own_layer.mjs` | the experiment behind the rendering decision (committed strokes in their own layer) |
+| `own_layer.mjs` | the experiment behind the rendering decision (committed strokes in their own layer; #44 made that split in the app, so on today's board it splits an already split canvas) |
 | `compare.mjs` | compares the medians of two runs |
-| `results/` | the baseline runs the report quotes (two of each) |
+| `table.mjs` | the headline figures of several runs side by side (Markdown) |
+| `results/` | the runs the report quotes: #36's baseline (`*-run{1,2}`), #44's "after features" (`*-after-features`) and final (`*-final`) |
 
 ## Fixtures
 
@@ -30,6 +33,16 @@ budget is 2 MB). Every stroke passes `StrokeRules.check_append/2` (the server
 benchmark checks).
 
     node bench/fixtures/generate.mjs --check
+
+The sets with fills (#44): the line set of the same canvas with stroke 9,
+19, 29, ... replaced by a fill, the area the fill tool works out
+(`priv/static/fill_worker.mjs`, run in headless Chromium) for a press at a
+seeded point over the strokes before it, in a seeded colour (a press that
+fills nothing or too detailed an area tries the next point). 10 / 30 / 50
+fills, ~734 KB of path data at 500. The worker rasters with Chromium, so
+`--check` needs the same Chromium build:
+
+    PLAYWRIGHT=... CHROME=... node bench/fixtures/generate_fills.mjs --check
 
 ## Requirements
 
@@ -55,24 +68,38 @@ on `BENCH_WS_PORT` (default 4199) for the fan-out part only. ~30 s.
     MIX_TEST_PARTITION=_bench MIX_ENV=test mix run --no-start bench/drawing_server.exs [OUT.json]
     MIX_TEST_PARTITION=_bench MIX_ENV=test mix ecto.drop             # when done
 
-`BENCH_ITERATIONS` (default 400) sets the samples per timing. Output (default
+`BENCH_ITERATIONS` (default 400) sets the samples per timing.
+`BENCH_WS_DEFLATE=1` makes the fan-out's visitors offer permessage-deflate
+(as browsers do), so a socket configured with `compress: true` compresses
+(#44's compression trial). Output (default
 `bench/results/server-<date>.json`), all times in microseconds:
 
 - `commit`: `RoomServer.append_drawing/3` (a GenServer call: validation,
   limits, append, publish) and `DemoBoardServer.add_stroke/1` (a cast plus a
   `:sys` round trip, `demo_barrier_round_trip`), with 0/100/300/499 strokes
   held; `room_check_append` and `room_list_append` time
-  `StrokeRules.check_append/2` and `strokes ++ [stroke]` alone.
+  `StrokeRules.check_append/2` and `strokes ++ [stroke]` alone, and
+  `room_check_with_totals` the same check with the count and bytes kept
+  in the state (validation plus two comparisons). Since #44 the board's
+  strokes are capped at 450,000 path bytes: `demo_strokes_held` is what it
+  holds for each count.
 - `at_500`: undo (by id) and clear with 500 strokes held.
 - `memory`: the room process and the demo board process after a GC, holding
   0/100/300/500 strokes committed through their real entry points.
   `process_bytes` is `:erlang.process_info(pid, :memory)`; `binary_bytes` the
-  refc binaries it references (`:binary`), each counted once and in full.
+  refc binaries it references (`:binary`), each counted once and in full;
+  `state_term_bytes` the state's own flat size (unlike the heap, not moved
+  by the heap's allocation steps). `demo_500_without_ownership`: the
+  board's state without each stroke's owner and gesture (#42), i.e. what
+  that ownership data costs; `room_500_fills`, `demo_500_fills`: the sets
+  with fills.
 - `join`: what a joining viewer gets at 500 strokes: `RoomServer.get_view/2`
   (time, `:erlang.external_size/1`, the strokes as JSON and as Hologram's page
   state encoding, and the time of that encoding); the demo board's `"strokes"`
-  push as the socket sends it (Phoenix V2 JSON), also for 500 strokes of
-  7,999 bytes (the board has no byte cap) and for the room at its 2 MB cap;
+  push as the socket sends it (Phoenix V2 JSON), the board filled through
+  `DemoBoardServer.add_stroke/1` (its caps apply), also for 500 strokes of
+  7,999 bytes (the byte cap keeps 56) and for the room at its 2 MB cap;
+  the same for the sets with fills (`*_fills`);
   `sse_stroke_completed`: what each viewer's SSE stream encodes per
   `:stroke_completed` (per connection: N viewers, N encodings).
 - `fanout`: one drawer pushing a ~150-byte chunk every 50 ms to `demo:board`
@@ -82,7 +109,12 @@ on `BENCH_WS_PORT` (default 4199) for the fan-out part only. ~30 s.
   and while relaying, server CPU per delivered chunk, the longest mailbox seen
   (sampled every 25 ms) and its owner, and delivery latency (send to client
   receipt). GameChannel relays through the same `broadcast_from` fast lane; a
-  room has at most 12 players and 50 watchers.
+  room has at most 12 players and 50 watchers. Per run also the server's
+  memory per connected visitor, the bytes on the wire against the payload
+  bytes, the board's snapshot as a joining visitor gets it on the wire
+  (`snapshot_wire`), and `board_undo`: with the visitors connected, the
+  board's owner undoes 40 strokes 50 ms apart (the call, scheduler use,
+  each visitor's receipt of `stroke_removed`).
 
 How it gets its numbers: the room is a real BENCH room in `:drawing` whose
 round timers are cancelled (no time-up, no hint reveals). Between samples it
@@ -103,9 +135,14 @@ the drawer's op rate limit, which is not what is measured.
    `MIX_ENV=prod HOLOGRAM_ENV=prod` (the script sets them) a release has
    Hologram disabled and every page 404s.
 
-2. Run (~8.8 min; `--quick` for a smoke run of ~2 min):
+2. Run (~22 min; `--quick` for a smoke run of ~4 min):
 
-       node bench/drawing_client.mjs [--out FILE]
+       node bench/drawing_client.mjs [--out FILE] [--only GROUPS] [--sizes 0,300] [--rates 1]
+
+   `--only` takes any of `drawer,tools,demo,viewer,fills,leak,leak_tools`
+   (the drawer page is loaded for `tools` and `viewer` too). A phase that
+   fails is logged and recorded under `errors`, and the run goes on; the
+   results file is written after every phase.
 
    With the server benchmark (~30 s) that is under 10 minutes for both. The
    rendering experiment, separately (it reloads the demo board, so not while
@@ -127,7 +164,8 @@ loaded twice, unmeasured, first (a fresh browser's first loads are slower).
 CPU throttling is `Emulation.setCPUThrottlingRate` (rate 4) on each page's
 CDP session; it doesn't slow raster threads.
 
-The probe (`lib/page_probe.js`, injected before the page's scripts) stamps
+The probe (`lib/page_probe.js`, injected before the page's scripts) counts
+Hologram's actions by name (`actions`), stamps
 each Realtime broadcast when its SSE event arrives and each demo board push
 when its WebSocket frame arrives, records a per-frame timeline of the
 canvases' stroke counts during a load, times frames (`requestAnimationFrame`
@@ -197,13 +235,38 @@ times in ms:
 - `leak`: at 1x, the room (100 strokes, committed one by one) and the demo
   board (500) are cleared and refilled 20 times while the three pages stay
   open; heap and nodes after a first cycle, after 10 more, after 20 more.
+- The tools (#38-#43, `tools`, on the drawer's canvas at every size and
+  rate): `drawer_hover`, the size ring following 300 mouse moves with no
+  button (traced like a gesture); `drawer_pick`, ten Alt+clicks (the
+  eyedropper's quick pick): the pointerdown handler and that plus the next
+  frame; `drawer_fill`, four fills at the canvas's corner (`background`,
+  the white around the drawing) and at its centre, each undone: pointerdown
+  to the frame after the shape's node, the main thread's and the fill
+  worker's busy time in that window (a trace); `drawer_slider_drag`,
+  `drawer_wheel_drag`, a one-second real mouse drag (CDP input, 60 moves)
+  on the size slider and on the colour wheel, traced, with the Hologram
+  actions they ran. At 500 the drawer first undoes one stroke (a full
+  canvas takes no fill) and draws it back after.
+- `runs_fills` (`fills`): the drawer, demo board and viewer scenarios with
+  the sets with fills, at 500 strokes.
+- `leak_tools` (#44): 20 rounds in which the drawer (game) and a visitor
+  (board) each use every tool (three strokes, a Ctrl and a right-button
+  stroke, an Alt+click pick, the size keys, a pick on the colour wheel, a
+  fill, Ctrl+Z, the toolbar's clear; a board clear is retried after
+  DemoBoardChannel's 5 s limit), the viewer following; heap and nodes
+  after 1, 11 and 21 rounds.
 
 ## Reading two runs
 
     node bench/compare.mjs bench/results/client-a.json bench/results/client-b.json
     node bench/compare.mjs bench/results/server-a.json bench/results/server-b.json --all
 
-It lists every median that moved more than 15% (`--tolerance`), ignoring
+For the headline figures of several runs side by side (the report's
+tables):
+
+    node bench/table.mjs bench/results/client-run1.json bench/results/client-after-features.json bench/results/client-final.json
+
+`compare.mjs` lists every median that moved more than 15% (`--tolerance`), ignoring
 medians under 1 (`--floor`: in ms results a sub-millisecond median is a few
 steps of the browser's 0.1 ms timer), and exits 1 if there is any. Medians are what the agreement
 rule is about; p95s and maxima of a few dozen samples move more.
