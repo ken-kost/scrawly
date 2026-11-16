@@ -9,7 +9,7 @@ defmodule ScrawlyWeb.Components.GameDemo do
   The board has the game canvas's coordinates (`viewBox="0 0 800 450"`), so
   a size draws as thick, relative to the canvas, on both. Its tools are the
   game's DrawingToolbar, every control, with its shortcuts (`[` / `]`, B, E,
-  I, Ctrl/Cmd+Z; draw_controls.mjs ignores them while the user types in the
+  I, F, Ctrl/Cmd+Z; draw_controls.mjs ignores them while the user types in the
   lobby chat, the code field or any other field); `tool` is HomePage's
   `draw_tool`, `saved` and `panel` its saved colours and colour panel flag,
   `can_undo` whether the visitor has a stroke of their own on the board (undo
@@ -20,8 +20,11 @@ defmodule ScrawlyWeb.Components.GameDemo do
   `#demo-board-active-path` (styled by JS when a stroke starts). The dot grid
   is drawn by CSS above the strokes (`.demo-canvas::after`), so the white
   eraser never paints over it. `#demo-board-ring`, beside the svg, is the
-  size ring (size_ring.mjs, on its own layer, hidden until JS shows it), and
-  `#demo-board-pick` the colour picker's swatch (eyedropper.mjs, the same).
+  size ring (size_ring.mjs, on its own layer, hidden until JS shows it),
+  `#demo-board-pick` the colour picker's swatch (eyedropper.mjs, the same),
+  and `#demo-board-notice` the fill tool's status line (fill_tool.mjs: why
+  an area wasn't filled, for a moment). Fills are strokes like the others
+  (demo_board.mjs paints their inside).
   """
   use Hologram.Component
 
@@ -58,6 +61,7 @@ defmodule ScrawlyWeb.Components.GameDemo do
           <circle class="size-ring-inner" />
         </svg>
         <span id="demo-board-pick" class="pick-swatch" aria-hidden="true"></span>
+        <span id="demo-board-notice" class="canvas-notice" role="status"></span>
       </div>
 
       <DrawingToolbar tool={@tool} saved={@saved} panel={@panel} can_undo={@can_undo} shortcuts={true} />

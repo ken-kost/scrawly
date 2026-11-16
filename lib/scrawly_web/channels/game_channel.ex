@@ -30,6 +30,9 @@ defmodule ScrawlyWeb.GameChannel do
   chunks stop at time-up and start right after the word is picked. Chunks must carry a
   stroke id of at most 64 bytes, an integer `seq`, a delta that passes
   `StrokeRules.valid_delta?/1`, and a valid colour and width when present.
+  A chunk is relayed with those five fields only: fills (the fill tool's
+  shapes) send no chunks, and a `fill` (or anything else) in a forged chunk
+  is dropped, so peers only ever draw a chunk as a line.
   A socket's chunks are limited to 60 a second (the client flushes at
   20 Hz, plus early flushes of full chunks); over that they are dropped
   silently.

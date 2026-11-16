@@ -688,12 +688,18 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # The colour panel's native controls (color_picker.mjs) and a pick from
   # the board (eyedropper.mjs) have set the model already; the state
   # follows, throttled, without a push.
+  # `tool` is the canvas's tool by then (a pick made with the picker goes
+  # back to the brush or the fill, see DrawingToolbar.select_color/3).
   def action(:color_picked, params, component),
     do:
       put_state(
         component,
         :draw_tool,
-        DrawingToolbar.select_color(draw_tool(component.state), Map.get(params, :color))
+        DrawingToolbar.select_color(
+          draw_tool(component.state),
+          Map.get(params, :color),
+          Map.get(params, :tool)
+        )
       )
 
   def action(:toggle_color_panel, _params, component),
@@ -726,6 +732,11 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # (eyedropper.mjs) and comes back as :color_picked.
   def action(:toggle_picker, _params, component),
     do: put_tool(component, DrawingToolbar.toggle_picker(draw_tool(component.state)))
+
+  # The "fill" button, and F (draw_controls.mjs). A fill is native
+  # (fill_tool.mjs) and reaches the board as a stroke ("stroke_complete").
+  def action(:toggle_fill, _params, component),
+    do: put_tool(component, DrawingToolbar.toggle_fill(draw_tool(component.state)))
 
   # ── Lobby & Room Actions ──────────────────────────────────────────
 

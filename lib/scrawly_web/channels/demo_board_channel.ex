@@ -13,10 +13,13 @@ defmodule ScrawlyWeb.DemoBoardChannel do
 
   Inbound events:
     * `"stroke_chunk"` (`%{stroke_id, seq, delta, color, width}`) — live in-flight chunk
-    * `"stroke_complete"` (`%{stroke_id, path, color, width, gesture}`) — final
-      stroke; `gesture` (optional, validated like a stroke id) is the id the
-      strokes of one split gesture share, stored with the stroke and never sent
-      out. Replies `:ok` when stored, or `{:error, %{reason: "invalid_stroke" |
+    * `"stroke_complete"` (`%{stroke_id, path, color, width, gesture, fill}`) —
+      final stroke; `gesture` (optional, validated like a stroke id) is the id
+      the strokes of one split gesture share, stored with the stroke and never
+      sent out. `fill: true` makes it a fill (the fill tool's closed shape:
+      `StrokeRules.validate/1`, its path `M L Z` only, width stored as 1); a
+      fill sends no chunks, and a fill press is its own gesture, so one undo
+      takes one fill back. Replies `:ok` when stored, or `{:error, %{reason: "invalid_stroke" |
       "rate_limited" | "unauthorized"}}` (peers then get `"stroke_abandon"` for
       its id, if the id itself is valid; an id already on the board is
       invalid). The sender commits the stroke optimistically and uses the reply
@@ -36,14 +39,16 @@ defmodule ScrawlyWeb.DemoBoardChannel do
   `StrokeRules.max_path_bytes/0` bytes, a chunk delta of at most
   `StrokeRules.max_delta_bytes/0`, `color` `#RRGGBB` and `width` an integer
   in 1..40, in chunks and completed strokes alike; a missing value is
-  invalid. Invalid or over-limit chunks and clears are dropped silently. Only
+  invalid. A fill's `fill` must be `true` exactly (`false` or none is a line,
+  anything else invalid); chunks are relayed with their own five fields
+  only, so a chunk can't carry a fill. Invalid or over-limit chunks and clears are dropped silently. Only
   the socket's 8 newest open strokes are remembered (abandoned for peers
   if it goes away mid-stroke).
 
   Outbound events (every payload built here from the public fields: no owner
   key or gesture id ever leaves the server):
     * `"strokes"` — full snapshot on every join and rejoin; the socket's own
-      strokes carry `mine: true`
+      strokes carry `mine: true`, fills `fill: true`
     * `"stroke"` — single newly added stroke with its `stroke_id`, sent to everyone
       including its sender, with `mine: true` for the sockets of its owner
     * `"stroke_removed"` — `%{stroke_ids: ids}`, an undo took them off the board
@@ -73,8 +78,8 @@ defmodule ScrawlyWeb.DemoBoardChannel do
     undo: {10, 1_000}
   }
 
-  # What a stroke shows to clients (#43's fills add their own field here).
-  @public_fields [:stroke_id, :path, :color, :width]
+  # What a stroke shows to clients (`fill` only a fill has).
+  @public_fields [:stroke_id, :path, :color, :width, :fill]
 
   @impl true
   def join("demo:board", _payload, socket) do
@@ -190,8 +195,9 @@ defmodule ScrawlyWeb.DemoBoardChannel do
 
   @doc """
   What a socket of actor key `key` (nil: no key) is sent for a stored
-  stroke: the fields every client may see, plus `mine: true` when it is
-  that key's. `owner` and `gesture` stay on the server.
+  stroke: the fields every client may see (`fill: true` for a fill), plus
+  `mine: true` when it is that key's. `owner` and `gesture` stay on the
+  server.
   """
   def public_stroke(stroke, key) do
     public = Map.take(stroke, @public_fields)
@@ -227,25 +233,34 @@ defmodule ScrawlyWeb.DemoBoardChannel do
   end
 
   defp complete_stroke(socket, stroke_id, payload) do
-    path = payload["path"]
-
-    with true <- StrokeRules.valid_stroke_id?(stroke_id),
-         true <- StrokeRules.valid_path?(path),
-         {:ok, color, width} <- style(payload),
+    with {:ok, stroke} <-
+           StrokeRules.validate(%{
+             id: stroke_id,
+             path: payload["path"],
+             color: payload["color"],
+             width: payload["width"],
+             fill: payload["fill"]
+           }),
          {:ok, gesture} <- gesture(payload, stroke_id),
          # Stored with its stroke_id, which the `stroke` echo carries to every
          # client (the sender included): the sender confirms its pending stroke
          # by id, peers swap their in-progress overlay for it in one step. The
-         # owner and the gesture stay on the server.
+         # owner and the gesture stay on the server; `fill: true` comes along
+         # for a fill.
          :ok <-
-           DemoBoardServer.add_stroke(%{
-             path: path,
-             color: color,
-             width: width,
-             stroke_id: stroke_id,
-             owner: board_key(socket),
-             gesture: gesture
-           }) do
+           DemoBoardServer.add_stroke(
+             Map.merge(
+               %{
+                 path: stroke.path,
+                 color: stroke.color,
+                 width: stroke.width,
+                 stroke_id: stroke.id,
+                 owner: board_key(socket),
+                 gesture: gesture
+               },
+               Map.take(stroke, [:fill])
+             )
+           ) do
       {:reply, :ok, forget_open_stroke(socket, stroke_id)}
     else
       _ -> reject_stroke(socket, stroke_id, "invalid_stroke")

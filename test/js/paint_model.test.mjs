@@ -125,7 +125,34 @@ test("a stroke is tested with its own width, round caps and joins; a fill with i
   ctx.asked.length = 0;
   assert.equal(hits(fill, 35, 35), true);
   assert.equal(hits(fill, 70, 35), false);
-  assert.deepEqual(ctx.asked.map((a) => a.kind), ["fill"]);
+  assert.deepEqual(ctx.asked.map((a) => [a.kind, a.rule]), [["fill", "evenodd"]]);
+
+  // A fill with a hole (the fill tool's outline and a dot it left out),
+  // painted evenodd: the hole is not the fill's.
+  const holed = { id: "h", path: "M 10 10 L 60 10 L 60 60 L 10 60 Z M 30 30 L 30 40 L 40 40 L 40 30 Z", color: "#16a34a", width: 1, fill: true };
+  assert.equal(hits(holed, 20, 20), true);
+  assert.equal(hits(holed, 35, 35), false);
+});
+
+test("the eyedropper over a fill: its colour inside, what is under it in its hole and outside", () => {
+  const { model } = fakeModel();
+  // Two holes: one over red, one over the empty canvas.
+  const holed = {
+    id: "h",
+    path: "M 100 50 L 300 50 L 300 150 L 100 150 Z M 140 90 L 140 110 L 160 110 L 160 90 Z M 240 120 L 240 140 L 260 140 L 260 120 Z",
+    color: "#16a34a",
+    width: 1,
+    fill: true,
+  };
+  const list = [red, holed];
+  assert.equal(model.colorAt(list, 120, 70), "#16a34a");
+  // The fill was painted over red, except in its hole.
+  assert.equal(model.colorAt(list, 200, 100), "#16a34a");
+  assert.equal(model.colorAt(list, 150, 100), "#d63838");
+  assert.equal(model.colorAt(list, 250, 130), "#ffffff");
+  assert.equal(model.colorAt(list, 600, 400), "#ffffff");
+  // A stroke drawn over the fill is on top.
+  assert.equal(model.colorAt([...list, blue], 200, 100), "#2a6df4");
 });
 
 test("overlapping strokes: the newest wins; erased paint and the empty canvas are white", () => {

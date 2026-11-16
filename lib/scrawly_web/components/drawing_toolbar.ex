@@ -5,12 +5,13 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   presets, the size range and the tool model are defined here once.
 
   The tool model is
-  `%{tool: :brush | :eraser | :picker, color: "#rrggbb", size: 1..40}`
-  (`default_tool/0`); the size is one for the brush and the eraser, and the
-  colour any `#rrggbb`. The page showing the canvas keeps it in its state as
-  `draw_tool`, passes it in as `tool`, changes it with `select_color/2`,
-  `select_size/2`, `select_brush/1`, `toggle_eraser/1` and
-  `toggle_picker/1`, and pushes every change to the canvas:
+  `%{tool: :brush | :eraser | :picker | :fill, color: "#rrggbb", size: 1..40}`
+  (`default_tool/0`); the size is one for the brush and the eraser (the
+  fill has none), and the colour any `#rrggbb`. The page showing the canvas
+  keeps it in its state as `draw_tool`, passes it in as `tool`, changes it
+  with `select_color/3`, `select_size/2`, `select_brush/1`,
+  `toggle_eraser/1`, `toggle_picker/1` and `toggle_fill/1`, and pushes
+  every change to the canvas:
   `JS.call(:setDrawTool, [js_tool(tool)])` (draw_tools.mjs, which also
   defines the eraser's stroke: white, at the tool's size).
 
@@ -49,15 +50,17 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   Stateless, so its events go to the page, which handles:
 
     * `:select_color` (`color`): the brush in that colour (a preset, a
-      saved colour);
-    * `:color_picked` (`color`): the same, from the panel's native controls,
-      which have already set the model (no push);
+      saved colour), or the fill in it while the fill is selected;
+    * `:color_picked` (`color`, `tool`): the same, from the panel's native
+      controls or a pick from the canvas, which have already set the model
+      (no push; `tool` is the model's tool by then, `select_color/3`);
     * `:toggle_color_panel`, `:close_color_panel`;
     * `:saved_colors` (`colors`): the saved list after "+ save" or a removal
       (color_picker.mjs has stored it);
     * `:select_size` (`size`, or the slider's `event.value`, see
       `size_param/1`): that size, brush or eraser alike;
-    * `:toggle_eraser`, `:toggle_picker`, `:undo_drawing`, `:clear_canvas`;
+    * `:toggle_eraser`, `:toggle_picker`, `:toggle_fill`, `:undo_drawing`,
+      `:clear_canvas`;
     * `:select_brush` (B, see below).
 
   `can_undo` (true by default) is whether there is anything to undo: the
@@ -73,31 +76,45 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   "pick" (`:picker`, a toggle like "erase", key I) selects the picker: a
   click on the canvas takes the colour under the pointer instead of
   drawing, and the tool goes back to the brush in that colour (the tool
-  used before the picker; the eraser comes back as the brush). With the
-  brush, an Alt+click picks without changing tools. Natively
+  used before the picker: the brush or the fill; the eraser comes back as
+  the brush). With the brush or the fill, an Alt+click picks without
+  changing tools. Natively
   (eyedropper.mjs, from the canvas's stroke list, paint_model.mjs): the
   colour goes into the model at once and the page's state follows with
   `:color_picked`, as from the colour panel. A swatch beside the pointer
   shows the colour under it while a click would pick. Picking is local:
   nothing goes to the server, and viewers see nothing of it.
 
+  ## The fill
+
+  "fill" (`:fill`, a toggle too, key F) selects the fill: a click on the
+  canvas fills the area under the pointer (closed by lines, or the canvas's
+  edge) with the tool's colour, and the fill stays selected. Natively
+  (fill_tool.mjs, with the fill worker): the area is worked out once, on the
+  drawer's client, from the canvas's stroke list, and committed as one more
+  stroke, a closed shape (`fill: true`, see `Scrawly.Games.StrokeRules`), so
+  viewers see the same shape and one undo takes it back. The size has no
+  effect on it; choosing a colour keeps it selected. Ctrl and the right
+  button still erase, and Alt+click still picks.
+
   With `shortcuts`, the toolbar names its shortcuts in `data-draw-shortcuts`
   and the hint shows them: `[` / `]` the size (with `:sizes`), B the brush
   and E the eraser, a toggle like its button (both with `:eraser`), I the
-  picker, a toggle too (`:picker`), Ctrl+Z / Cmd+Z undo (`:undo`).
+  picker, a toggle too (`:picker`), F the fill, also a toggle (`:fill`),
+  Ctrl+Z / Cmd+Z undo (`:undo`).
   draw_controls.mjs handles the
   keys, all of them behind one typing guard (nothing while focus is in a
   text field, a select or a contenteditable), and dispatches the toolbar's
   own actions to the page; the size keys step the slider.
 
   `controls` lists what the surface offers, in any order: `:colors`,
-  `:sizes`, `:eraser`, `:picker`, `:undo`, `:clear` (all by default,
-  `controls/0`). A shortcut is live, and named in the hint, only with its
-  control.
+  `:sizes`, `:eraser`, `:picker`, `:fill`, `:undo`, `:clear` (all by
+  default, `controls/0`). A shortcut is live, and named in the hint, only
+  with its control.
   """
   use Hologram.Component
 
-  @controls [:colors, :sizes, :eraser, :picker, :undo, :clear]
+  @controls [:colors, :sizes, :eraser, :picker, :fill, :undo, :clear]
   # The presets, {colour, accessible name}: the darker row, then the lighter
   # one, column by column (black over white, dark grey over light grey).
   @presets [
@@ -144,6 +161,7 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
     {:eraser, "brush", ["B"], "brush"},
     {:eraser, "eraser", ["E"], "eraser"},
     {:picker, "picker", ["I"], "pick"},
+    {:fill, "fill", ["F"], "fill"},
     {:sizes, "size", ["[", "]"], "size"}
   ]
 
@@ -179,12 +197,25 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
 
   @doc """
   The brush in `color`, any `#rrggbb` (either case, as
-  `Scrawly.Games.StrokeRules.valid_color?/1`); anything else changes
+  `Scrawly.Games.StrokeRules.valid_color?/1`), or the fill in it while the
+  fill is selected (draw_tools.mjs `colorTool`); anything else changes
   nothing.
+
+  `name` is the canvas's tool when the colour was set natively (the colour
+  panel, a pick from the canvas: `:color_picked` carries draw_tools.mjs's
+  tool by then): `"brush"` or `"fill"` is taken as it is (a pick made with
+  the picker goes back to either), anything else as above.
   """
-  def select_color(tool, color) do
-    if hex_color?(color), do: %{tool | tool: :brush, color: color}, else: tool
+  def select_color(tool, color, name \\ nil) do
+    if hex_color?(color),
+      do: %{tool | tool: color_tool(name, tool.tool), color: color},
+      else: tool
   end
+
+  defp color_tool("fill", _tool), do: :fill
+  defp color_tool("brush", _tool), do: :brush
+  defp color_tool(_name, :fill), do: :fill
+  defp color_tool(_name, _tool), do: :brush
 
   @doc "Whether `color` is a `#rrggbb` colour, in either case."
   # String.to_integer/2 is the runtime's binary_to_integer BIF (no Regex on
@@ -247,6 +278,10 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   def toggle_picker(%{tool: :picker} = tool), do: %{tool | tool: :brush}
   def toggle_picker(tool), do: %{tool | tool: :picker}
 
+  @doc "The fill, or back to the brush (its colour and size kept)."
+  def toggle_fill(%{tool: :fill} = tool), do: %{tool | tool: :brush}
+  def toggle_fill(tool), do: %{tool | tool: :fill}
+
   @doc "The tool as draw_tools.mjs's `setDrawTool` takes it."
   def js_tool(tool), do: %{tool: Atom.to_string(tool.tool), color: tool.color, size: tool.size}
 
@@ -296,13 +331,16 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
           <span class="size-value mono">{@tool.size}</span>
         </div>
       {/if}
-      {%if :eraser in @controls or :picker in @controls or :undo in @controls or :clear in @controls}
+      {%if :eraser in @controls or :picker in @controls or :fill in @controls or :undo in @controls or :clear in @controls}
         <div class="tool-group">
           {%if :eraser in @controls}
             <button type="button" class={"tool-btn" <> active(@tool.tool == :eraser)} $click={:toggle_eraser}>erase</button>
           {/if}
           {%if :picker in @controls}
             <button type="button" class={"tool-btn" <> active(@tool.tool == :picker)} title="pick a colour from the canvas" $click={:toggle_picker}>pick</button>
+          {/if}
+          {%if :fill in @controls}
+            <button type="button" class={"tool-btn" <> active(@tool.tool == :fill)} title="fill an area with the colour" $click={:toggle_fill}>fill</button>
           {/if}
           {%if :undo in @controls}
             <button type="button" class="tool-btn" disabled={off(@can_undo)} $click={:undo_drawing}>undo</button>
@@ -313,7 +351,7 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
         </div>
       {/if}
       {%if @shortcuts and hints(@controls) != []}
-        <span class="mono toolbar-hint">{%for h <- hints(@controls)}{h.sep}{%for k <- h.keys}<span class="kbd">{k}</span>{/for} {h.label}{/for}</span>
+        <span class="mono toolbar-hint">{%for h <- hints(@controls)}{h.sep}{%for k <- h.keys}<span class="kbd">{k}</span>{/for} {h.label}{/for}</span>
       {/if}
     </div>
     """
@@ -329,8 +367,10 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   defp off(true), do: nil
   defp off(_false), do: true
 
-  # A swatch is marked while the brush draws in its colour.
+  # A swatch is marked while the brush draws, or the fill fills, in its
+  # colour.
   defp swatch_class(%{tool: :brush, color: color}, color), do: "swatch active"
+  defp swatch_class(%{tool: :fill, color: color}, color), do: "swatch active"
   defp swatch_class(_tool, _color), do: "swatch"
 
   # The swatch grid is one Tab stop, the first preset; the arrow keys move

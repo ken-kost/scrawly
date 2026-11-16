@@ -514,6 +514,19 @@ test("a 1 s drag on the wheel writes the tool on every move and sends ~10 thrott
   assert.equal(picked().length, sent.length);
 });
 
+test("with the fill selected the panel keeps the fill, and color_picked says so", () => {
+  tools.setDrawTool({ color: "#0a0a0a", tool: "fill" });
+  const ui = renderControl();
+  open(ui);
+  clock.advance(1000);
+  fire("pointerdown", ev(ui.wheel, { pointerId: 9, pointerType: "mouse", button: 0, clientX: 100 + 76 + 50, clientY: 200 + 76 }));
+  fire("pointerup", ev(ui.wheel, { pointerId: 9 }));
+  assert.equal(tools.currentTool().tool, "fill");
+  const sent = dispatched.filter((d) => d.name === "color_picked").at(-1);
+  assert.deepEqual(sent.params, { color: tools.currentTool().color, tool: "fill" });
+  tools.setDrawTool({ tool: "brush" });
+});
+
 test("a right-button press on the wheel picks nothing", () => {
   const ui = renderControl();
   open(ui);

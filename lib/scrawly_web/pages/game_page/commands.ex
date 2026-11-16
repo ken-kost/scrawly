@@ -357,8 +357,9 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
   @doc """
   Stores a completed stroke drawn by the session user; the room publishes it
   as `:stroke_completed` to every page (the drawer's own tabs ignore it).
-  Only `room_id`, `stroke_id`, `path`, `color`, `width`, `op_epoch` and
-  `op_seq` are read from params.
+  Only `room_id`, `stroke_id`, `path`, `color`, `width`, `fill`, `op_epoch`
+  and `op_seq` are read from params. `fill: true` makes it a fill (the fill
+  tool's shape, see `StrokeRules`); without it, it is a line.
 
   The room process checks that the session user is the current drawer while
   `:drawing` and validates the stroke (`StrokeRules`, including the stroke id).
@@ -383,7 +384,8 @@ defmodule ScrawlyWeb.Pages.GamePage.Commands do
       id: Map.get(params, :stroke_id),
       path: Map.get(params, :path),
       color: Map.get(params, :color),
-      width: Map.get(params, :width)
+      width: Map.get(params, :width),
+      fill: Map.get(params, :fill)
     }
 
     with {:ok, uid} <- session_user_id(server),

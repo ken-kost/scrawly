@@ -41,14 +41,18 @@ export function fakeContext() {
       }
       return false;
     },
-    isPointInPath(shape, x, y) {
-      ctx.asked.push({ kind: "fill", d: shape.d });
-      const pts = polyline(shape.d);
+    // Each "M" starts a closed sub-path; the crossings of all of them are
+    // counted (the evenodd rule, the only one the fills use).
+    isPointInPath(shape, x, y, rule = "nonzero") {
+      ctx.asked.push({ kind: "fill", d: shape.d, rule: rule });
       let inside = false;
-      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-        const [xi, yi] = pts[i];
-        const [xj, yj] = pts[j];
-        if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+      for (const sub of String(shape.d).split("M").filter((t) => t.trim() !== "")) {
+        const pts = polyline(sub);
+        for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+          const [xi, yi] = pts[i];
+          const [xj, yj] = pts[j];
+          if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+        }
       }
       return inside;
     },

@@ -122,7 +122,7 @@ test("setDrawTool merges a partial change and ignores invalid fields", () => {
     color: "#d63838",
     size: 5,
   });
-  assert.deepEqual(tools.setDrawTool({ tool: "fill", color: "nope", size: 2.5 }), {
+  assert.deepEqual(tools.setDrawTool({ tool: "spray", color: "nope", size: 2.5 }), {
     tool: "eraser",
     color: "#d63838",
     size: 5,
@@ -179,7 +179,7 @@ function expectedTool(selected, { pointerType, button, ctrlKey, altKey }) {
   if (pointerType === "touch") return selected.tool;
   if (button === 2) return "eraser";
   if (button === 0 && ctrlKey) return "eraser";
-  if (button === 0 && altKey && selected.tool === "brush") return "picker";
+  if (button === 0 && altKey && (selected.tool === "brush" || selected.tool === "fill")) return "picker";
   return selected.tool;
 }
 
@@ -188,6 +188,7 @@ test("gestureTool, for every selected tool, pointer, button, Ctrl, Alt and Cmd",
     { tool: "brush", color: "#d63838", size: 7 },
     { tool: "eraser", color: "#2a6df4", size: 33 },
     { tool: "picker", color: "#1f9a4a", size: 12 },
+    { tool: "fill", color: "#9333ea", size: 3 },
   ];
   assert.deepEqual(selections.map((s) => s.tool), [...TOOLS]);
   // -1: no button changed (what a move reports); 1 middle, 3 back, 4
@@ -210,6 +211,7 @@ test("gestureTool, for every selected tool, pointer, button, Ctrl, Alt and Cmd",
               assert.equal(tool.color, selected.color, label);
               assert.equal(tool.size, selected.size, label);
               assert.equal(tools.picksColor(selected, press), tool.tool === "picker", label);
+              assert.equal(tools.fillsArea(selected, press), tool.tool === "fill", label);
 
               const stroke = tools.gestureStroke(selected, press);
               assert.deepEqual(stroke, { ...tools.strokeStyle(tool), tool: tool.tool }, label);
@@ -220,7 +222,7 @@ test("gestureTool, for every selected tool, pointer, button, Ctrl, Alt and Cmd",
       }
     }
   }
-  assert.equal(cases, 3 * 3 * buttons.length * 2 * 2 * 2);
+  assert.equal(cases, 4 * 3 * buttons.length * 2 * 2 * 2);
 });
 
 test("the cases that matter, by name", () => {
@@ -342,4 +344,48 @@ test("the tool before the picker is noted whenever the picker is selected", () =
   copy.setDrawTool({ tool: "picker" });
   assert.equal(tools.toolBeforePicker(), "brush");
   assert.equal(copy.toolBeforePicker(), "brush");
+});
+
+// ── The fill ─────────────────────────────────────────────────────────
+
+test("the fill is a tool: valid, kept by the model, drawing like the brush if asked", () => {
+  assert.ok(TOOLS.includes("fill"));
+  assert.deepEqual(tools.setDrawTool({ tool: "fill" }), { ...DEFAULT_TOOL, tool: "fill" });
+  // Its size stays the model's (the slider's), though a fill has none.
+  assert.deepEqual(tools.strokeStyle({ tool: "fill", color: "#123456", size: 9 }), { color: "#123456", width: 9 });
+  tools.resetDrawTool();
+});
+
+test("what fills: the fill's press; Ctrl and the right button erase, Alt picks", () => {
+  const mouse = (mods = {}) => ({ pointerType: "mouse", button: 0, ...mods });
+  const fill = { tool: "fill", color: "#9333ea", size: 6 };
+  assert.equal(tools.fillsArea(fill, mouse()), true);
+  assert.equal(tools.fillsArea(fill, { pointerType: "pen", button: 0 }), true);
+  // A touch fills, whatever the modifiers say.
+  assert.equal(tools.fillsArea(fill, { pointerType: "touch", button: 0, ctrlKey: true }), true);
+  // Cmd is no modifier here.
+  assert.equal(tools.fillsArea(fill, mouse({ metaKey: true })), true);
+
+  assert.equal(tools.gestureTool(fill, mouse({ ctrlKey: true })).tool, "eraser");
+  assert.equal(tools.gestureTool(fill, { pointerType: "mouse", button: 2 }).tool, "eraser");
+  assert.deepEqual(tools.gestureStroke(fill, mouse({ ctrlKey: true })), { color: ERASER.color, width: 6, tool: "eraser" });
+  // Alt+press picks a colour with the fill selected, as with the brush.
+  assert.equal(tools.picksColor(fill, mouse({ altKey: true })), true);
+  assert.equal(tools.fillsArea(fill, mouse({ altKey: true })), false);
+  // Nothing else fills.
+  for (const tool of ["brush", "eraser", "picker"]) assert.equal(tools.fillsArea({ ...fill, tool }, mouse()), false);
+});
+
+test("a pick comes back to the fill, and a colour choice keeps it", () => {
+  // Alt+press with the fill keeps the fill.
+  assert.equal(tools.toolAfterPick("fill", null), "fill");
+  // The picker chosen while filling gives way to the fill again.
+  assert.equal(tools.toolAfterPick("picker", "fill"), "fill");
+  tools.setDrawTool({ tool: "fill" });
+  tools.setDrawTool({ tool: "picker" });
+  assert.equal(tools.toolBeforePicker(), "fill");
+
+  assert.equal(tools.colorTool("fill"), "fill");
+  for (const name of ["brush", "eraser", "picker", undefined, "nope"]) assert.equal(tools.colorTool(name), "brush");
+  tools.resetDrawTool();
 });

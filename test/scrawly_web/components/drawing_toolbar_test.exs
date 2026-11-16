@@ -28,6 +28,10 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
   @custom %{tool: :brush, color: "#123456", size: 10}
   @eraser %{@brush | tool: :eraser}
   @picker %{@brush | tool: :picker}
+  @fill %{@brush | tool: :fill}
+  # Between a shortcut's key and its label in the hint (it wraps only
+  # between entries).
+  @nb "\u00a0"
 
   defp render_dom(node) do
     {html, _registry, _server} = Renderer.render_dom(node, %Renderer.Env{}, %Hologram.Server{})
@@ -219,12 +223,16 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
   describe "controls and shortcuts" do
     test "the game and the board offer every control, undo included, and name every shortcut" do
       hint =
-        ~s(<span class="mono toolbar-hint"><span class="kbd">⌘/Ctrl+Z</span> undo · <span class="kbd">B</span> brush · <span class="kbd">E</span> eraser · <span class="kbd">I</span> pick · <span class="kbd">[</span><span class="kbd">]</span> size</span>)
+        ~s(<span class="mono toolbar-hint"><span class="kbd">⌘/Ctrl+Z</span>#{@nb}undo · <span class="kbd">B</span>#{@nb}brush · <span class="kbd">E</span>#{@nb}eraser · <span class="kbd">I</span>#{@nb}pick · <span class="kbd">F</span>#{@nb}fill · <span class="kbd">[</span><span class="kbd">]</span>#{@nb}size</span>)
 
       for html <- [game_toolbar(@brush), board(@brush, [], true)] do
         assert html =~ ~s(<button type="button" class="tool-btn">undo</button>)
         assert html =~ ">pick</button>"
-        assert attr(toolbar_tag(html), "data-draw-shortcuts") == "undo brush eraser picker size"
+        assert html =~ ">fill</button>"
+
+        assert attr(toolbar_tag(html), "data-draw-shortcuts") ==
+                 "undo brush eraser picker fill size"
+
         assert html =~ hint
       end
     end
@@ -252,6 +260,7 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
       assert html =~ ">clear</button>"
       refute html =~ ">erase</button>"
       refute html =~ ">pick</button>"
+      refute html =~ ">fill</button>"
       refute html =~ ">undo</button>"
 
       assert toolbar(%{tool: @brush, controls: []}) =~ ~r/<div class="toolbar">\s*<\/div>/
@@ -270,7 +279,7 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
       refute html =~ "⌘/Ctrl+Z"
 
       assert html =~
-               ~s(<span class="kbd">B</span> brush · <span class="kbd">E</span> eraser</span>)
+               ~s(<span class="kbd">B</span>#{@nb}brush · <span class="kbd">E</span>#{@nb}eraser</span>)
 
       html = toolbar(%{tool: @brush, controls: [:sizes], shortcuts: true})
       assert attr(toolbar_tag(html), "data-draw-shortcuts") == "size"
@@ -279,10 +288,20 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
       html = toolbar(%{tool: @brush, controls: [:picker], shortcuts: true})
       assert attr(toolbar_tag(html), "data-draw-shortcuts") == "picker"
       assert html =~ ">pick</button>"
-      assert html =~ ~s(<span class="mono toolbar-hint"><span class="kbd">I</span> pick</span>)
+
+      assert html =~
+               ~s(<span class="mono toolbar-hint"><span class="kbd">I</span>#{@nb}pick</span>)
 
       refute toolbar(%{tool: @brush, controls: [:eraser], shortcuts: true}) =~
                ~s(<span class="kbd">I</span>)
+
+      # F comes with the fill button.
+      html = toolbar(%{tool: @brush, controls: [:fill], shortcuts: true})
+      assert attr(toolbar_tag(html), "data-draw-shortcuts") == "fill"
+      assert html =~ ">fill</button>"
+
+      assert html =~
+               ~s(<span class="mono toolbar-hint"><span class="kbd">F</span>#{@nb}fill</span>)
 
       html = toolbar(%{tool: @brush, controls: [:colors, :clear], shortcuts: true})
       assert toolbar_tag(html) == ~s(<div class="toolbar">)
@@ -406,10 +425,13 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
             select_size: %{event: %{value: "99"}},
             toggle_eraser: %{},
             toggle_picker: %{},
+            toggle_fill: %{},
             select_brush: %{},
-            color_picked: %{color: "#ffffff"}
+            color_picked: %{color: "#ffffff"},
+            color_picked: %{color: "#ffffff", tool: "fill"},
+            color_picked: %{color: "#ffffff", tool: "brush"}
           ],
-          tool <- [@brush, @eraser, @picker] do
+          tool <- [@brush, @eraser, @picker, @fill] do
         game = GamePage.action(name, params, %Component{state: %{draw_tool: tool}})
         home = HomePage.action(name, params, %Component{state: %{draw_tool: tool}})
         assert game.state.draw_tool == home.state.draw_tool, "#{name} from #{inspect(tool)}"
@@ -637,6 +659,86 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
         refute swatch =~ "style="
         refute swatch =~ "$"
       end
+    end
+  end
+
+  describe "the fill" do
+    test "fill and F select the fill on both pages, pushed; again, the brush" do
+      for {result, calls} <- both(:toggle_fill, %{}, %{draw_tool: @brush}) do
+        assert result.state.draw_tool == @fill
+        assert calls == [{:setDrawTool, [%{tool: "fill", color: "#2563eb", size: 10}]}]
+        assert result.next_command == nil
+      end
+
+      for {result, calls} <- both(:toggle_fill, %{}, %{draw_tool: @fill}) do
+        assert result.state.draw_tool == @brush
+        assert calls == [{:setDrawTool, [%{tool: "brush", color: "#2563eb", size: 10}]}]
+      end
+    end
+
+    test "the fill toggles; a colour keeps it; the other tools and sizes as for the brush" do
+      assert DrawingToolbar.toggle_fill(@brush) == @fill
+      assert DrawingToolbar.toggle_fill(@eraser) == @fill
+      assert DrawingToolbar.toggle_fill(@picker) == @fill
+      assert DrawingToolbar.toggle_fill(@fill) == @brush
+      # A swatch, the panel: the fill stays the fill.
+      assert DrawingToolbar.select_color(@fill, "#123456") == %{@fill | color: "#123456"}
+      assert DrawingToolbar.select_color(@fill, "nope") == @fill
+      assert DrawingToolbar.toggle_eraser(@fill) == @eraser
+      assert DrawingToolbar.toggle_picker(@fill) == @picker
+      assert DrawingToolbar.select_brush(@fill) == @brush
+      assert DrawingToolbar.select_size(@fill, 30) == %{@fill | size: 30}
+      assert DrawingToolbar.js_tool(@fill) == %{tool: "fill", color: "#2563eb", size: 10}
+    end
+
+    test "a native colour comes with the canvas's tool: the brush or the fill as it says" do
+      # A pick made with the picker chosen while filling goes back to the fill.
+      assert DrawingToolbar.select_color(@picker, "#123456", "fill") == %{
+               @fill
+               | color: "#123456"
+             }
+
+      assert DrawingToolbar.select_color(@fill, "#123456", "brush") == %{
+               @brush
+               | color: "#123456"
+             }
+
+      # Any other name (or none, an older page): select_color/2's rule.
+      for name <- [nil, "eraser", "picker", "nope", 3] do
+        assert DrawingToolbar.select_color(@picker, "#123456", name) == %{
+                 @brush
+                 | color: "#123456"
+               }
+
+        assert DrawingToolbar.select_color(@fill, "#123456", name) == %{@fill | color: "#123456"}
+      end
+
+      # An invalid colour changes nothing, the tool included.
+      assert DrawingToolbar.select_color(@picker, "red", "fill") == @picker
+
+      for {result, calls} <-
+            both(:color_picked, %{color: "#abcdef", tool: "fill"}, %{draw_tool: @picker}) do
+        assert result.state.draw_tool == %{@fill | color: "#abcdef"}
+        assert calls == []
+      end
+    end
+
+    test "the fill marks its button and the swatch of its colour" do
+      html = toolbar(%{tool: %{@fill | color: "#dc2626"}})
+      # The dark red swatch (no text) and the fill button.
+      assert [[_, ""], [_, "fill"]] = active(html)
+      assert html =~ ~s(class="swatch active" style="background: #dc2626;")
+      assert html =~ ~s(title="fill an area with the colour")
+    end
+
+    test "each canvas has an empty status line for the fill's notice" do
+      for {html, id} <- [{canvas(), "game-canvas-notice"}, {board(@brush), "demo-board-notice"}] do
+        assert html =~ ~s(<span id="#{id}" class="canvas-notice" role="status"></span>)
+      end
+
+      css = File.read!(Path.join(@root, "assets/css/app.css"))
+      assert css =~ ".canvas-notice:empty { display: none; }"
+      assert css =~ "svg[data-fill] { cursor: crosshair; }"
     end
   end
 

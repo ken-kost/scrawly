@@ -1039,7 +1039,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
     base = [room_id: component.props.room_id, op_epoch: op_epoch, op_seq: op_seq]
 
     case kind do
-      # The turn goes along so a rejection can be matched to it.
+      # The turn goes along so a rejection can be matched to it. A fill
+      # (fill_tool.mjs) carries `fill: true`.
       "commit" ->
         put_command(
           component,
@@ -1052,7 +1053,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
               width: Map.get(op, :width),
               game_id: Map.get(component.state, :game_id),
               round: Map.get(component.state, :round)
-            ]
+            ] ++ if(Map.get(op, :fill) == true, do: [fill: true], else: [])
         )
 
       "undo" ->
@@ -1112,12 +1113,18 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # the canvas (eyedropper.mjs) have set the model already; the state
   # follows, throttled, without a push (a push could put an older colour
   # back over a newer one mid-drag).
+  # `tool` is the canvas's tool by then (a pick made with the picker goes
+  # back to the brush or the fill, see DrawingToolbar.select_color/3).
   def action(:color_picked, params, component),
     do:
       put_state(
         component,
         :draw_tool,
-        DrawingToolbar.select_color(draw_tool(component.state), Map.get(params, :color))
+        DrawingToolbar.select_color(
+          draw_tool(component.state),
+          Map.get(params, :color),
+          Map.get(params, :tool)
+        )
       )
 
   def action(:toggle_color_panel, _params, component),
@@ -1152,6 +1159,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
   # nothing reaches the room.
   def action(:toggle_picker, _params, component),
     do: put_tool(component, DrawingToolbar.toggle_picker(draw_tool(component.state)))
+
+  # The "fill" button, and F (draw_controls.mjs). A fill is native
+  # (fill_tool.mjs) and reaches the room as a stroke, through the op queue.
+  def action(:toggle_fill, _params, component),
+    do: put_tool(component, DrawingToolbar.toggle_fill(draw_tool(component.state)))
 
   def action(:undo_drawing, _params, component), do: undo_last_stroke(component)
 
@@ -1362,7 +1374,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
           id: Map.get(params, :stroke_id),
           path: Map.get(params, :path),
           color: Map.get(params, :color),
-          width: Map.get(params, :width)
+          width: Map.get(params, :width),
+          fill: Map.get(params, :fill) == true
         }
       ])
 
@@ -1381,6 +1394,10 @@ defmodule ScrawlyWeb.Pages.GamePage do
           width: params.width || 2,
           seq: seq
         }
+
+        # A fill (StrokeRules.fill?/1) keeps its flag: DrawingCanvas paints
+        # its inside.
+        stroke = if Map.get(params, :fill) == true, do: Map.put(stroke, :fill, true), else: stroke
 
         put_state(component, :drawing_strokes, strokes ++ [stroke])
       end

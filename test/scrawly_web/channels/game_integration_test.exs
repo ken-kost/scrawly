@@ -157,6 +157,18 @@ defmodule ScrawlyWeb.GameIntegrationTest do
       assert [%{color: ^color}] = room_state!(room.id).drawing_strokes
     end
 
+    test "a forged chunk with a fill is relayed as a line's chunk, without the flag (#43)",
+         %{room: room, creator: creator} do
+      socket = join!(creator, room)
+      forged = chunk(%{"fill" => true, "delta" => "M 1 1 L 9 1 L 9 9 Z"})
+
+      relayed = assert_relayed(socket, forged)
+      assert relayed == Map.delete(forged, "fill")
+      assert Process.alive?(socket.channel_pid)
+      # Fills reach viewers only as completed strokes, through the room.
+      assert room_state!(room.id).drawing_strokes == []
+    end
+
     test "a non-drawer's chunk is not relayed", %{room: room, player: player} do
       socket = join!(player, room)
       refute_relayed(socket, chunk())

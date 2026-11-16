@@ -6,7 +6,9 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
   Its layers, bottom to top:
 
     1. `#game-canvas-strokes`: the completed strokes Hologram renders for
-       viewers (`data-stroke-id`);
+       viewers (`data-stroke-id`), in list order: a line stroked, a fill
+       (`StrokeRules.fill?/1`, the fill tool's closed shape) filled with its
+       colour, evenodd, no outline;
     2. `#game-canvas-drawer` (drawer only inside): the JS-owned
        `#game-canvas-drawer-strokes` group, where the drawer's committed
        strokes are drawn, and `#drawing-path`, the stroke in progress;
@@ -25,8 +27,12 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
   `:drawing`, with a mouse or a pen over the canvas). `#game-canvas-pick` is
   the colour picker's swatch beside the pointer (eyedropper.mjs), on its
   own layer too, shown under the same rules while a click would pick.
+  `#game-canvas-notice` is an empty status line over the canvas where the
+  fill tool (fill_tool.mjs) says, for a moment, why an area wasn't filled.
   """
   use Hologram.Component
+
+  alias Scrawly.Games.StrokeRules
 
   prop :is_drawer, :boolean, required: true
   prop :strokes, :list, required: true
@@ -42,9 +48,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
       >
         <g id="game-canvas-strokes">
           {%if !@is_drawer}
-            {%for stroke <- @strokes}
-              <path data-stroke-id={stroke.id} d={stroke.path} stroke={stroke.color} stroke-width={stroke.width} fill="none" stroke-linecap="round" stroke-linejoin="round" />
-            {/for}
+            {%for stroke <- @strokes}{%if StrokeRules.fill?(stroke)}<path data-stroke-id={stroke.id} d={stroke.path} fill={stroke.color} fill-rule="evenodd" stroke="none" />{%else}<path data-stroke-id={stroke.id} d={stroke.path} stroke={stroke.color} stroke-width={stroke.width} fill="none" stroke-linecap="round" stroke-linejoin="round" />{/if}{/for}
           {/if}
         </g>
         <g id="game-canvas-drawer">
@@ -60,6 +64,7 @@ defmodule ScrawlyWeb.Components.DrawingCanvas do
         <circle class="size-ring-inner" />
       </svg>
       <span id="game-canvas-pick" class="pick-swatch" aria-hidden="true"></span>
+      <span id="game-canvas-notice" class="canvas-notice" role="status"></span>
     </div>
     """
   end

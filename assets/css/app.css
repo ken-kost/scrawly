@@ -1029,6 +1029,30 @@ svg[data-size-ring] { cursor: crosshair; }
   will-change: transform;
 }
 svg[data-pick] { cursor: crosshair; }
+/* While a click would fill (fill_tool.mjs). */
+svg[data-fill] { cursor: crosshair; }
+/* The fill tool's notice ("too detailed to fill"): a short line over the
+   top of the canvas while it has text (fill_tool.mjs empties it). */
+.canvas-notice {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  /* Its own width (left: 50% alone would wrap it at half the frame). */
+  width: max-content;
+  max-width: calc(100% - 20px);
+  box-sizing: border-box;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(10, 10, 10, 0.85);
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: center;
+  z-index: 3;
+  pointer-events: none;
+}
+.canvas-notice:empty { display: none; }
 
 .toolbar {
   display: flex;
@@ -1056,10 +1080,10 @@ svg[data-pick] { cursor: crosshair; }
   border-radius: 999px;
   border: 1px solid var(--ink);
 }
-.tool-group { display: flex; gap: 4px; padding-left: 10px; border-left: 1px solid var(--hairline); }
-/* The home board's toolbar is narrow and always wraps after the colours, so
-   a divider would start its second row: no dividers there. */
-.demo-canvas + .toolbar .tool-group { padding-left: 0; border-left: 0; }
+/* No dividers between groups: both toolbars wrap (the colours, the size
+   control and the tool buttons rarely share one row), and a divider would
+   start a wrapped row. The toolbar's gap keeps the groups apart. */
+.tool-group { display: flex; gap: 4px; }
 .tool-btn {
   height: 26px;
   padding: 0 8px;
@@ -1100,7 +1124,10 @@ svg[data-pick] { cursor: crosshair; }
 }
 .size-dot.eraser { background: var(--canvas); border: 1px dashed var(--ink); }
 .size-value { min-width: 2ch; font-size: 11px; color: var(--muted); }
-.toolbar-hint { margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap; }
+/* Wraps only between its entries (a key and its label are joined by a
+   no-break space), right-aligned, where the toolbar is narrower than it
+   (the home board's card at ~880-1024 px windows). */
+.toolbar-hint { margin-left: auto; font-size: 11px; color: var(--muted); text-align: right; }
 
 /* Colours (DrawingToolbar): the chip with the tool's colour, the presets in
    2 rows of 12 with the saved colours as a third row (each removable: its x

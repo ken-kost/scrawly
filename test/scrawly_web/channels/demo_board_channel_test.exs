@@ -646,6 +646,95 @@ defmodule ScrawlyWeb.DemoBoardChannelTest do
     end
   end
 
+  describe "fills (#43)" do
+    @square "M 101 101 L 299 101 L 299 299 L 101 299 Z M 150 150 L 150 160 L 160 160 L 160 150 Z"
+
+    defp fill(id, overrides \\ %{}) do
+      Map.merge(
+        %{
+          "stroke_id" => id,
+          "gesture" => id,
+          "path" => @square,
+          "color" => "#2563EB",
+          "width" => 1,
+          "fill" => true
+        },
+        overrides
+      )
+    end
+
+    test "a fill is stored, echoed and in the snapshot with fill: true, its width 1",
+         %{socket: me} do
+      {:ok, _, other} = join_board(@other)
+      assert [%{strokes: []}] = pushed(other, "strokes", 1)
+
+      ref = push(me, "stroke_complete", fill("d-fill-1", %{"width" => 33}))
+      assert_reply ref, :ok
+
+      expected = %{stroke_id: "d-fill-1", path: @square, color: "#2563EB", width: 1, fill: true}
+      assert pushed(me, "stroke", 1) == [Map.put(expected, :mine, true)]
+      assert pushed(other, "stroke", 1) == [expected]
+
+      assert [%{stroke_id: "d-fill-1", fill: true, width: 1, owner: @me, gesture: "d-fill-1"}] =
+               DemoBoardServer.get_strokes()
+
+      # A line next to it carries no fill key at all.
+      add_stroke!(me, "d-line-1")
+      {:ok, _, again} = join_board(@other)
+      assert [%{strokes: [stored_fill, line]}] = pushed(again, "strokes", 1)
+      assert stored_fill == expected
+      refute Map.has_key?(line, :fill)
+      assert DemoBoardChannel.public_stroke(hd(DemoBoardServer.get_strokes()), nil) == expected
+    end
+
+    test "a fill whose path or colour isn't a fill's is rejected, abandoned, not stored",
+         %{socket: socket} do
+      for {id, bad} <- [
+            {"d-badfill-1", %{"path" => "M 1 2 Q 3 4 5 6 Z"}},
+            {"d-badfill-2", %{"path" => "m 1 2 l 3 4 z"}},
+            {"d-badfill-3", %{"path" => "M 1e3 2 L 3 4 Z"}},
+            {"d-badfill-4", %{"path" => "M 1 1 " <> String.duplicate("L 2 2 ", 1_400) <> "Z"}},
+            {"d-badfill-5", %{"color" => "blue"}},
+            {"d-badfill-6", %{"color" => nil}},
+            {"d-badfill-7", %{"fill" => "true"}},
+            {"d-badfill-8", %{"fill" => 1}}
+          ] do
+        ref = push(socket, "stroke_complete", fill(id, bad))
+        assert_reply ref, :error, %{reason: "invalid_stroke"}
+        assert_broadcast "stroke_abandon", %{"stroke_id" => ^id}
+      end
+
+      assert DemoBoardServer.get_strokes() == []
+    end
+
+    test "fill: false is a line (a line's rules: its width checked)", %{socket: socket} do
+      ref = push(socket, "stroke_complete", Map.put(stroke("d-false-1"), "fill", false))
+      assert_reply ref, :ok
+      assert_push "stroke", pushed_line
+      refute Map.has_key?(pushed_line, :fill)
+
+      ref = push(socket, "stroke_complete", fill("d-false-2", %{"fill" => false, "width" => 99}))
+      assert_reply ref, :error, %{reason: "invalid_stroke"}
+    end
+
+    test "one undo takes one fill back", %{socket: me} do
+      add_stroke!(me, "d-before-fill")
+      ref = push(me, "stroke_complete", fill("d-fill-u"))
+      assert_reply ref, :ok
+
+      assert undo!(me) == {:ok, %{stroke_ids: ["d-fill-u"]}}
+      assert board_ids() == ["d-before-fill"]
+    end
+
+    test "a forged chunk with a fill is relayed as a line's chunk, without the flag",
+         %{socket: socket} do
+      push(socket, "stroke_chunk", chunk("d-chunk-fill", %{"fill" => true, "delta" => @square}))
+      assert_broadcast "stroke_chunk", relayed
+      refute Map.has_key?(relayed, "fill")
+      assert Map.keys(relayed) |> Enum.sort() == ~w(color delta seq stroke_id width)
+    end
+  end
+
   test "no pushed message carries an owner key or a gesture id", %{socket: me} do
     user_key = Ecto.UUID.generate()
     {:ok, _, other} = join_board(user_key)

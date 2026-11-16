@@ -13,6 +13,10 @@ defmodule Scrawly.Games.DemoBoardServer do
   messages carry them to the channel processes, which build every pushed
   payload from the public fields only (`ScrawlyWeb.DemoBoardChannel`).
 
+  A fill (the fill tool's closed shape, `fill: true`, see
+  `Scrawly.Games.StrokeRules`) is stored and broadcast like any stroke, its
+  flag with it; a fill press is a gesture of its own.
+
   `undo/1` removes the owner's newest gesture still on the board: every
   stroke of that owner with that gesture id, wherever other strokes came
   between them. A stroke the 500 cap has dropped is gone, so it can't be
@@ -28,7 +32,8 @@ defmodule Scrawly.Games.DemoBoardServer do
   @max_strokes 500
 
   @typedoc """
-  A stored stroke. `owner` and `gesture` never leave the server.
+  A stored stroke (`fill: true` for a fill). `owner` and `gesture` never
+  leave the server.
   """
   @type stroke :: %{
           required(:stroke_id) => String.t(),
@@ -36,7 +41,8 @@ defmodule Scrawly.Games.DemoBoardServer do
           required(:color) => String.t(),
           required(:width) => pos_integer,
           required(:owner) => String.t(),
-          required(:gesture) => String.t()
+          required(:gesture) => String.t(),
+          optional(:fill) => true
         }
 
   # ── Client API ─────────────────────────────────────────────────────
