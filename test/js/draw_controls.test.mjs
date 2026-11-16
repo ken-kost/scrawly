@@ -315,7 +315,7 @@ test("no toolbar with shortcuts, or not this one's: nothing happens", () => {
   keydown("]");
   assert.equal(e.defaultPrevented, false);
 
-  // The home board: no undo control.
+  // A toolbar without the undo control.
   renderToolbar("brush eraser size");
   const z = keydown("z", { ctrlKey: true });
   assert.equal(z.defaultPrevented, false);

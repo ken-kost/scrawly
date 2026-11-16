@@ -15,18 +15,38 @@ defmodule ScrawlyWeb.UserSocket do
   # never the session's sign-in JWT, which stays in the http-only session
   # cookie. A valid token (unexpired, and its session token still stored and
   # unrevoked: one lookup) assigns the user; anything else, including no token,
-  # connects anonymously, which is enough for the public demo board. The
-  # channels authorize what a socket may do.
+  # leaves `user_id` nil.
+  #
+  # The home page's board connects with a board token (ScrawlyWeb.BoardToken,
+  # `board_token`): a valid one assigns the caller's actor key as `board_key`
+  # (an account's id, or an anonymous visitor's "anon:" key), which only
+  # DemoBoardChannel reads; it never makes the socket a user's for the game
+  # channel. Without one the socket can watch the board but not draw. A
+  # socket carrying both tokens keeps an account's board key only when it is
+  # that user's.
+  #
+  # A connect always succeeds: the channels authorize what a socket may do.
   @impl true
-  def connect(%{"token" => token}, socket, _connect_info) when is_binary(token) do
-    case ScrawlyWeb.SocketToken.verify(token) do
-      {:ok, user_id} -> {:ok, assign(socket, :user_id, user_id)}
-      :error -> {:ok, assign(socket, :user_id, nil)}
-    end
+  def connect(params, socket, _connect_info) do
+    user_id = verified(params, "token", &ScrawlyWeb.SocketToken.verify/1)
+    board_key = verified(params, "board_token", &ScrawlyWeb.BoardToken.verify/1)
+
+    board_key =
+      if user_id != nil and ScrawlyWeb.BoardToken.account_key?(board_key) and
+           board_key != user_id,
+         do: nil,
+         else: board_key
+
+    {:ok, socket |> assign(:user_id, user_id) |> assign(:board_key, board_key)}
   end
 
-  def connect(_params, socket, _connect_info) do
-    {:ok, assign(socket, :user_id, nil)}
+  defp verified(params, name, verify) do
+    with token when is_binary(token) <- Map.get(params, name),
+         {:ok, value} <- verify.(token) do
+      value
+    else
+      _ -> nil
+    end
   end
 
   # Socket IDs are topics that allow you to identify all sockets for a given user:
@@ -43,11 +63,18 @@ defmodule ScrawlyWeb.UserSocket do
   # a new connect with a socket token of that session fails
   # SocketToken.verify/1.
   #
+  # A board socket of an account (its board key is the user's id) has the
+  # user's id too, so revoking the user's tokens closes it as well.
+  #
   # Returning `nil` makes this socket anonymous: account-less sockets must not
   # share one "user_socket:" id (a disconnect broadcast to it would hit them all).
   @impl true
   def id(%{assigns: %{user_id: user_id}}) when is_binary(user_id) and user_id != "",
     do: "user_socket:#{user_id}"
+
+  def id(%{assigns: %{board_key: key}}) do
+    if ScrawlyWeb.BoardToken.account_key?(key), do: "user_socket:#{key}", else: nil
+  end
 
   def id(_socket), do: nil
 end

@@ -35,7 +35,13 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
   end
 
   defp toolbar(props) do
-    %{controls: DrawingToolbar.controls(), shortcuts: false, saved: [], panel: false}
+    %{
+      controls: DrawingToolbar.controls(),
+      shortcuts: false,
+      saved: [],
+      panel: false,
+      can_undo: true
+    }
     |> Map.merge(props)
     |> then(&DrawingToolbar.template().(&1))
     |> render_dom()
@@ -44,8 +50,11 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
   # The game's toolbar as GamePage renders it for the drawer.
   defp game_toolbar(tool), do: toolbar(%{tool: tool, shortcuts: true})
 
-  defp board(tool, saved \\ []),
-    do: render_dom(GameDemo.template().(%{tool: tool, saved: saved, panel: false}))
+  defp board(tool, saved \\ [], can_undo \\ false),
+    do:
+      render_dom(
+        GameDemo.template().(%{tool: tool, saved: saved, panel: false, can_undo: can_undo})
+      )
 
   defp canvas, do: render_dom(DrawingCanvas.template().(%{is_drawer: true, strokes: []}))
 
@@ -208,22 +217,26 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
   end
 
   describe "controls and shortcuts" do
-    test "the game offers every control and names every shortcut; the board has no undo" do
-      game = game_toolbar(@brush)
-      assert game =~ ">undo</button>"
-      assert game =~ ">pick</button>"
-      assert attr(toolbar_tag(game), "data-draw-shortcuts") == "undo brush eraser picker size"
+    test "the game and the board offer every control, undo included, and name every shortcut" do
+      hint =
+        ~s(<span class="mono toolbar-hint"><span class="kbd">⌘/Ctrl+Z</span> undo · <span class="kbd">B</span> brush · <span class="kbd">E</span> eraser · <span class="kbd">I</span> pick · <span class="kbd">[</span><span class="kbd">]</span> size</span>)
 
-      assert game =~
-               ~s(<span class="mono toolbar-hint"><span class="kbd">⌘/Ctrl+Z</span> undo · <span class="kbd">B</span> brush · <span class="kbd">E</span> eraser · <span class="kbd">I</span> pick · <span class="kbd">[</span><span class="kbd">]</span> size</span>)
+      for html <- [game_toolbar(@brush), board(@brush, [], true)] do
+        assert html =~ ~s(<button type="button" class="tool-btn">undo</button>)
+        assert html =~ ">pick</button>"
+        assert attr(toolbar_tag(html), "data-draw-shortcuts") == "undo brush eraser picker size"
+        assert html =~ hint
+      end
+    end
 
-      board = board(@brush)
-      refute board =~ "undo"
-      assert board =~ ">pick</button>"
-      assert attr(toolbar_tag(board), "data-draw-shortcuts") == "brush eraser picker size"
+    test "undo is disabled while there is nothing to undo" do
+      disabled = ~s(<button type="button" class="tool-btn" disabled="true">undo</button>)
 
-      assert board =~
-               ~s(<span class="mono toolbar-hint"><span class="kbd">B</span> brush · <span class="kbd">E</span> eraser · <span class="kbd">I</span> pick · <span class="kbd">[</span><span class="kbd">]</span> size</span>)
+      assert toolbar(%{tool: @brush, can_undo: false}) =~ disabled
+      refute toolbar(%{tool: @brush, can_undo: true}) =~ disabled
+      # The board's: nothing of the visitor's own on it (GameDemo's default).
+      assert board(@brush) =~ disabled
+      refute board(@brush, [], true) =~ disabled
     end
 
     test "without shortcuts the toolbar names none and shows no hint" do
@@ -370,16 +383,17 @@ defmodule ScrawlyWeb.Components.DrawingToolbarTest do
       assert calls == [{:clearBoard, []}]
     end
 
-    test "the home page pushes its tool before it connects the board, then loads saved colours" do
+    test "the home page pushes its tool, loads saved colours and asks for the board's token" do
       component = %Component{state: %{draw_tool: @eraser, saved_colors: []}}
       {result, calls} = js_calls(fn -> HomePage.action(:connect_lobby, %{}, component) end)
 
       assert calls == [
                {:setDrawTool, [%{tool: "eraser", color: "#2563eb", size: 10}]},
-               {:connectDemoBoard, []},
                {:savedColors, []}
              ]
 
+      # The board connects once the token comes (:board_token_ready).
+      assert result.next_command.name == :board_token
       # On the server JS.call returns :ok: the state keeps its (empty) list.
       assert result.state.saved_colors == []
     end

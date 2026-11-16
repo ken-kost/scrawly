@@ -60,6 +60,10 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
     * `:toggle_eraser`, `:toggle_picker`, `:undo_drawing`, `:clear_canvas`;
     * `:select_brush` (B, see below).
 
+  `can_undo` (true by default) is whether there is anything to undo: the
+  page's own idea of it (the drawer's history, the board's strokes of the
+  visitor's own), the undo button is disabled while it is false.
+
   A gesture pressed with the right mouse button, or with Ctrl held, erases
   without selecting the eraser (draw_tools.mjs `gestureTool`): the tool
   shown here doesn't change for it.
@@ -150,6 +154,7 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
   # panel is open.
   prop :saved, :list, default: []
   prop :panel, :boolean, default: false
+  prop :can_undo, :boolean, default: true
 
   @doc "Every control a surface can offer."
   def controls, do: @controls
@@ -300,7 +305,7 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
             <button type="button" class={"tool-btn" <> active(@tool.tool == :picker)} title="pick a colour from the canvas" $click={:toggle_picker}>pick</button>
           {/if}
           {%if :undo in @controls}
-            <button type="button" class="tool-btn" $click={:undo_drawing}>undo</button>
+            <button type="button" class="tool-btn" disabled={off(@can_undo)} $click={:undo_drawing}>undo</button>
           {/if}
           {%if :clear in @controls}
             <button type="button" class="tool-btn" $click={:clear_canvas}>clear</button>
@@ -319,6 +324,10 @@ defmodule ScrawlyWeb.Components.DrawingToolbar do
 
   defp open(true), do: " open"
   defp open(_false), do: ""
+
+  # `disabled` while a control has nothing to act on.
+  defp off(true), do: nil
+  defp off(_false), do: true
 
   # A swatch is marked while the brush draws in its colour.
   defp swatch_class(%{tool: :brush, color: color}, color), do: "swatch active"

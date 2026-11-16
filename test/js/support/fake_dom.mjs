@@ -161,3 +161,22 @@ export function overlayIds() {
   const group = document.getElementById("game-canvas-overlay");
   return group ? group.children.map((c) => c.getAttribute("data-remote-in-progress")) : [];
 }
+
+// A long gesture through the engine's router: a press, `moves` pointer
+// moves along a zigzag (2 viewBox units apart, so every point is kept),
+// then the release. 600 moves make a path of well over SPLIT_AT, so the
+// engine splits it.
+export function scribble(svg, moves = 600, pointerId = 1) {
+  const target = svg.children[0];
+  globalThis.__fire("pointerdown", {
+    target, pointerId, isPrimary: true, pointerType: "mouse", button: 0,
+    clientX: 10, clientY: 10, preventDefault() {},
+  });
+  for (let i = 1; i <= moves; i++) {
+    globalThis.__fire("pointermove", {
+      pointerId, pointerType: "mouse", buttons: 1,
+      clientX: 10 + (i % 300) * 2 + 0.3, clientY: 10 + Math.floor(i / 300) * 40 + (i % 2) * 7.7,
+    });
+  }
+  globalThis.__fire("pointerup", { pointerId });
+}

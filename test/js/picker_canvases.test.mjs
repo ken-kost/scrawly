@@ -197,6 +197,8 @@ test("off the drawing (a viewer, between turns) a press picks nothing", () => {
 });
 
 test("only the colour leaves the page: one color_picked, nothing for the room", () => {
+  // (The mount told the page about undo, :undo_available.)
+  dispatched.length = 0;
   tools.setDrawTool({ tool: "picker" });
   tap(svg, 150, 100);
   assert.deepEqual(

@@ -5,6 +5,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
   js_import :connectDemoBoard, from: "./demo_board.mjs"
   js_import :disconnectDemoBoard, from: "./demo_board.mjs"
   js_import :clearBoard, from: "./demo_board.mjs"
+  js_import :undoBoard, from: "./demo_board.mjs"
   js_import :setDrawTool, from: "./draw_tools.mjs"
   js_import :savedColors, from: "./color_picker.mjs"
 
@@ -19,7 +20,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   alias Scrawly.Games.{LobbyChatServer, RoomServer}
   alias Scrawly.Games.RoomServer.Broadcasts
-  alias ScrawlyWeb.{CommandParams, RoomCodes, RoomSettings, RoomSubscriptions}
+  alias ScrawlyWeb.{BoardToken, CommandParams, RoomCodes, RoomSettings, RoomSubscriptions}
   alias ScrawlyWeb.Components.RoomList
   alias ScrawlyWeb.Components.RoomSettingsForm
   alias ScrawlyWeb.Components.{DrawingToolbar, GameDemo}
@@ -33,6 +34,9 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   # Same for a "have a code?" lookup.
   @join_by_code_timeout_ms 10_000
+
+  # A board that refused its token asks for a fresh one at most this often.
+  @board_token_refresh_ms 30_000
 
   # The room list and the lobby chat are pushed on the `:lobby` Realtime
   # channel (see "Lobby broadcasts" below); init loads the current ones and
@@ -90,6 +94,12 @@ defmodule ScrawlyWeb.Pages.HomePage do
       # loads them after mount (:connect_lobby, :page_shown).
       |> put_state(:saved_colors, [])
       |> put_state(:color_panel, false)
+      # Whether the visitor has a stroke of their own on the board to undo
+      # (demo_board.mjs tells, :undo_available). The board's token
+      # (ScrawlyWeb.BoardToken) is never in state: it comes in a command's
+      # reply and goes straight to demo_board.mjs (:board_token_ready).
+      |> put_state(:can_undo, false)
+      |> put_state(:board_token_at, nil)
       |> put_action(:connect_lobby)
 
     {component, put_subscription(server, Broadcasts.lobby_channel())}
@@ -200,7 +210,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
             <h2>demo</h2>
             <span class="mono" style="font-size: 11px; color: var(--muted);">one shared board · everyone draws</span>
           </div>
-          <GameDemo tool={@draw_tool} saved={@saved_colors} panel={@color_panel} />
+          <GameDemo tool={@draw_tool} saved={@saved_colors} panel={@color_panel} can_undo={@can_undo} />
           <div style="margin-top: 16px; padding: 16px; border: 1px solid var(--hairline); border-radius: 8px;">
             <div class="section-label">how it works</div>
             <ol style="margin: 12px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.65;">
@@ -646,13 +656,26 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # ── Demo board tools (DrawingToolbar) ─────────────────────────────
   # Pointer input is native (stroke_engine.mjs via demo_board.mjs); only the
   # tool lives here, and every change reaches JS (draw_tools.mjs) at once.
-  # The toolbar's shortcuts ([ / ], B, E, I) dispatch the same actions
-  # (draw_controls.mjs, which ignores them while the user types anywhere).
+  # The toolbar's shortcuts ([ / ], B, E, I, Ctrl/Cmd+Z) dispatch the same
+  # actions (draw_controls.mjs, which ignores them while the user types
+  # anywhere, so Ctrl+Z in the lobby chat or the code field undoes the
+  # typing).
 
   def action(:clear_canvas, _params, component) do
     JS.call(:clearBoard, [])
     component
   end
+
+  # The undo button and Ctrl/Cmd+Z: the visitor's newest gesture on the
+  # board (demo_board.mjs; the server removes only the caller's strokes).
+  def action(:undo_drawing, _params, component) do
+    JS.call(:undoBoard, [])
+    component
+  end
+
+  # demo_board.mjs: whether a stroke of the visitor's own is on the board.
+  def action(:undo_available, params, component),
+    do: put_state(component, :can_undo, Map.get(params, :available) == true)
 
   # A preset or a saved colour.
   def action(:select_color, params, component),
@@ -706,10 +729,34 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
   # ── Lobby & Room Actions ──────────────────────────────────────────
 
+  # The board connects once its token is here (:board_token_ready).
   def action(:connect_lobby, _params, component) do
     push_tool(component.state)
-    JS.call(:connectDemoBoard, [])
-    load_saved_colors(component)
+
+    component
+    |> load_saved_colors()
+    |> put_command(:board_token)
+  end
+
+  # The reply of :board_token (and of :resync_lobby, :lobby_resynced): the
+  # token goes straight to demo_board.mjs, never into state (state is
+  # rendered into the HTML and snapshotted for Back/Forward). nil: the board
+  # can be watched, not drawn on.
+  def action(:board_token_ready, params, component) do
+    JS.call(:connectDemoBoard, [board_token_param(params)])
+    component
+  end
+
+  # demo_board.mjs: the board refused this tab's token (none, expired after
+  # a reconnect, or the server closed the socket because the user's tokens
+  # were revoked). A fresh one at most every @board_token_refresh_ms.
+  def action(:board_token_refused, _params, component) do
+    now = System.monotonic_time(:millisecond)
+    at = Map.get(component.state, :board_token_at)
+
+    if is_integer(at) and now >= at and now - at < @board_token_refresh_ms,
+      do: component,
+      else: component |> put_state(:board_token_at, now) |> put_command(:board_token)
   end
 
   # Dispatched by the template's inline script each time this page instance's
@@ -719,8 +766,9 @@ defmodule ScrawlyWeb.Pages.HomePage do
   # left with, and the server still holds the subscriptions of the page shown
   # before (e.g. a game page's room channels) instead of `:lobby`. So the
   # second time round the page reloads both lists, subscribes again and
-  # drops the rooms' subscriptions (:resync_lobby), and reconnects the demo
-  # board with the tool the restored toolbar shows.
+  # drops the rooms' subscriptions (:resync_lobby), pushes the tool the
+  # restored toolbar shows, and reconnects the demo board with the token
+  # that command's reply brings (:lobby_resynced).
   def action(:page_shown, _params, component) do
     # Hologram 0.12.8 keeps the put_page/2 that left this page in the
     # component it saves (only next_action and next_command are cleared), so
@@ -730,11 +778,12 @@ defmodule ScrawlyWeb.Pages.HomePage do
 
     if component.state.page_shown? do
       push_tool(component.state)
-      JS.call(:connectDemoBoard, [])
       stale_rooms = JS.call(:takeStaleRoomChannels, [nil])
 
       component
       |> put_state(:color_panel, false)
+      # The board's instance is new; it tells again (:undo_available).
+      |> put_state(:can_undo, false)
       |> load_saved_colors()
       |> put_command(:resync_lobby,
         stale_rooms: if(is_list(stale_rooms), do: stale_rooms, else: [])
@@ -797,7 +846,9 @@ defmodule ScrawlyWeb.Pages.HomePage do
     put_state(component, :lobby_chat_messages, [])
   end
 
-  def action(:lobby_resynced, %{rooms: rooms, messages: messages}, component) do
+  def action(:lobby_resynced, %{rooms: rooms, messages: messages} = params, component) do
+    JS.call(:connectDemoBoard, [board_token_param(params)])
+
     component
     |> put_state(:rooms, rooms)
     |> put_state(:lobby_chat_messages, messages)
@@ -857,6 +908,13 @@ defmodule ScrawlyWeb.Pages.HomePage do
     if gen == component.state.lobby_chat_notice_gen,
       do: put_state(component, :lobby_chat_notice, nil),
       else: component
+  end
+
+  defp board_token_param(params) do
+    case Map.get(params, :board_token) do
+      token when is_binary(token) and token != "" -> token
+      _none -> nil
+    end
   end
 
   # The demo board's tool, as the page's toolbar shows it.
@@ -988,16 +1046,24 @@ defmodule ScrawlyWeb.Pages.HomePage do
   end
 
   # After a Back/Forward restore (:page_shown): the current lists, the
-  # :lobby subscription again, and none to the rooms in `stale_rooms`.
+  # :lobby subscription again, none to the rooms in `stale_rooms`, and a
+  # board token.
   def command(:resync_lobby, params, server) do
     server
     |> RoomSubscriptions.drop_stale(params, keep_lobby?: true)
     |> put_subscription(Broadcasts.lobby_channel())
     |> put_action(:lobby_resynced,
       rooms: RoomServer.list_lobby_rooms(),
-      messages: recent_chat_lines()
+      messages: recent_chat_lines(),
+      board_token: BoardToken.mint(server)
     )
   end
+
+  # The demo board's token for this visitor (ScrawlyWeb.BoardToken): after
+  # the page loaded (:connect_lobby) and when the board refused one
+  # (:board_token_refused). nil when there is no actor key.
+  def command(:board_token, _params, server),
+    do: put_action(server, :board_token_ready, board_token: BoardToken.mint(server))
 
   def command(name, _params, server), do: CommandParams.deny_unknown(server, name)
 

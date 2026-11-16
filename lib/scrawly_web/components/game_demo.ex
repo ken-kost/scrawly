@@ -8,10 +8,12 @@ defmodule ScrawlyWeb.Components.GameDemo do
 
   The board has the game canvas's coordinates (`viewBox="0 0 800 450"`), so
   a size draws as thick, relative to the canvas, on both. Its tools are the
-  game's DrawingToolbar without undo, with its shortcuts (`[` / `]`, B, E, I;
-  draw_controls.mjs ignores them while the user types in the lobby chat,
-  the code field or any other field); `tool` is HomePage's `draw_tool`,
-  `saved` and `panel` its saved colours and colour panel flag.
+  game's DrawingToolbar, every control, with its shortcuts (`[` / `]`, B, E,
+  I, Ctrl/Cmd+Z; draw_controls.mjs ignores them while the user types in the
+  lobby chat, the code field or any other field); `tool` is HomePage's
+  `draw_tool`, `saved` and `panel` its saved colours and colour panel flag,
+  `can_undo` whether the visitor has a stroke of their own on the board (undo
+  takes back only the visitor's own strokes, demo_board.mjs).
 
   The svg's layers, bottom to top: the JS-owned `#demo-board-strokes` and
   `#demo-board-overlay` groups (JS only inserts into these), then
@@ -29,6 +31,7 @@ defmodule ScrawlyWeb.Components.GameDemo do
   # HomePage's saved colours and colour panel flag (DrawingToolbar).
   prop :saved, :list, default: []
   prop :panel, :boolean, default: false
+  prop :can_undo, :boolean, default: false
 
   def template do
     ~HOLO"""
@@ -57,8 +60,7 @@ defmodule ScrawlyWeb.Components.GameDemo do
         <span id="demo-board-pick" class="pick-swatch" aria-hidden="true"></span>
       </div>
 
-      <DrawingToolbar tool={@tool} saved={@saved} panel={@panel}
-        controls={[:colors, :sizes, :eraser, :picker, :clear]} shortcuts={true} />
+      <DrawingToolbar tool={@tool} saved={@saved} panel={@panel} can_undo={@can_undo} shortcuts={true} />
     </div>
     """
   end

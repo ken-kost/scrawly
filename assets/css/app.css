@@ -1074,6 +1074,8 @@ svg[data-pick] { cursor: crosshair; }
 }
 .tool-btn:hover { background: var(--surface-2); }
 .tool-btn.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+/* Undo with nothing of the user's own to take back. */
+.tool-btn:disabled { opacity: .4; cursor: not-allowed; background: var(--surface); }
 
 /* The size: a slider, a dot at the size in the tool's colour (dashed white
    for the eraser) and the number. */

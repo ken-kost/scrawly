@@ -187,6 +187,9 @@ defmodule ScrawlyWeb.Pages.GamePage do
               # client loads them after mount (:mounted, :page_shown).
               |> put_state(:saved_colors, [])
               |> put_state(:color_panel, false)
+              # Whether the drawer's history holds anything to undo
+              # (drawing_manager.mjs tells, :undo_available).
+              |> put_state(:can_undo, false)
               # On a phone the scores are a one-line strip; tapping it shows
               # the full list over the canvas until the next tap.
               |> put_state(:show_all_scores, false)
@@ -387,6 +390,8 @@ defmodule ScrawlyWeb.Pages.GamePage do
         component
         |> close_room_settings()
         |> put_state(:color_panel, false)
+        # restoreCanvas above tells it again (:undo_available).
+        |> put_state(:can_undo, false)
         |> load_saved_colors()
         |> put_state(:restoring?, true)
         |> put_state(:invite_copy, restored_invite_copy(state))
@@ -1149,6 +1154,11 @@ defmodule ScrawlyWeb.Pages.GamePage do
     do: put_tool(component, DrawingToolbar.toggle_picker(draw_tool(component.state)))
 
   def action(:undo_drawing, _params, component), do: undo_last_stroke(component)
+
+  # drawing_manager.mjs: whether the drawer's history holds anything to
+  # undo (the toolbar's undo button).
+  def action(:undo_available, params, component),
+    do: put_state(component, :can_undo, Map.get(params, :available) == true)
 
   # ── Score strip (phones) ───────────────────────────────────────────
   # Under 720 px the scoreboard is a one-line strip; a tap on it shows the
@@ -2270,7 +2280,7 @@ defmodule ScrawlyWeb.Pages.GamePage do
           <DrawingCanvas is_drawer={@is_drawer} strokes={@drawing_strokes} />
 
           {%if @is_drawer}
-            <DrawingToolbar tool={@draw_tool} saved={@saved_colors} panel={@color_panel} shortcuts={true} />
+            <DrawingToolbar tool={@draw_tool} saved={@saved_colors} panel={@color_panel} can_undo={@can_undo} shortcuts={true} />
           {%else}
             <div class="toolbar toolbar-viewer" style="justify-content: space-between;">
               <div class="row" style="gap: 8px;">

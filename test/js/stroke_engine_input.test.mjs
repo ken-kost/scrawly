@@ -391,3 +391,27 @@ test("takePress is not asked for presses the engine ignores (disabled, other but
   assert.equal(asked, 1);
   release();
 });
+
+test("every stroke of one gesture carries its gesture id: the first stroke's, through every split", () => {
+  const ends = [];
+  engine = createStrokeEngine({
+    svgId: SVG_ID,
+    activePathId: "test-active-path",
+    canStart: () => ({ owner: "test" }),
+    getTool: (_ctx, p) => tools.gestureStroke(tools.currentTool(), p),
+    newStrokeId: () => "s-" + ++nextId,
+    onEnd: (s) => ends.push([s.id, s.gesture]),
+    splitAt: 200,
+  });
+  engine.enable();
+
+  press({});
+  for (let i = 1; i <= 60; i++) move(10 + i * 3, 10 + (i % 2) * 4);
+  release();
+  assert.ok(ends.length >= 3, `split into ${ends.length}`);
+  assert.deepEqual(ends.map((e) => e[1]), ends.map(() => "s-1"));
+
+  // The next gesture has its own.
+  drag({});
+  assert.deepEqual(ends.at(-1), ["s-" + nextId, "s-" + nextId]);
+});

@@ -177,7 +177,8 @@ end
     # relayed chunk, now - seq (the sender puts its send time, in this
     # node's OS clock in us, in seq).
     def subscriber(port, parent) do
-      {sock, rest} = connect(port, "/socket/websocket?vsn=2.0.0&demo=true")
+      # Watch only: no board token.
+      {sock, rest} = connect(port, "/socket/websocket?vsn=2.0.0")
       send_text(sock, ~s(["1","1","demo:board","phx_join",{}]))
       :ok = :inet.setopts(sock, active: true)
       send(parent, {:joined, self()})
@@ -224,11 +225,12 @@ end
       end
     end
 
-    # The drawer: joins, then pushes one chunk every `interval_ms` for
-    # `duration_ms`, a new stroke id every 40 chunks, deltas cycled from
+    # The drawer: joins with a board token (ScrawlyWeb.BoardToken: a socket
+    # without one may not draw), then pushes one chunk every `interval_ms`
+    # for `duration_ms`, a new stroke id every 40 chunks, deltas cycled from
     # `deltas`.
-    def sender(port, deltas, interval_ms, duration_ms, parent) do
-      {sock, _rest} = connect(port, "/socket/websocket?vsn=2.0.0&demo=true")
+    def sender(port, board_token, deltas, interval_ms, duration_ms, parent) do
+      {sock, _rest} = connect(port, "/socket/websocket?vsn=2.0.0&board_token=#{board_token}")
       send_text(sock, ~s(["1","1","demo:board","phx_join",{}]))
       Process.sleep(300)
       deadline = System.monotonic_time(:millisecond) + duration_ms
@@ -301,9 +303,9 @@ end
     end
 
     # Runs in the peer: the drawer's session; returns the chunks sent.
-    def run_sender(port, deltas, interval_ms, duration_ms) do
+    def run_sender(port, board_token, deltas, interval_ms, duration_ms) do
       me = self()
-      spawn(fn -> sender(port, deltas, interval_ms, duration_ms, me) end)
+      spawn(fn -> sender(port, board_token, deltas, interval_ms, duration_ms, me) end)
 
       receive do
         {:sent, n} -> n
@@ -363,14 +365,36 @@ end)
 game = Enum.map(game, &Map.take(&1, [:id, :path, :color, :width, :kind]))
 room_strokes = Enum.map(game, &Map.take(&1, [:id, :path, :color, :width]))
 
+# DemoBoardServer stores every stroke with its owner (an actor key) and
+# gesture.
 demo_strokes =
-  Enum.map(demo, fn s -> %{path: s.path, color: s.color, width: s.width, stroke_id: s.id} end)
+  Enum.map(demo, fn s ->
+    %{
+      path: s.path,
+      color: s.color,
+      width: s.width,
+      stroke_id: s.id,
+      owner: "anon:bench",
+      gesture: s.id
+    }
+  end)
 
 # The stroke committed in the commit benchmarks: the set's first medium
 # stroke (~1.5 KB) under an id of its own.
 probe = game |> Enum.find(&(&1.kind == "medium")) |> Map.take([:path, :color, :width])
 room_probe = Map.put(probe, :id, "bench-probe")
-demo_probe = %{path: probe.path, color: probe.color, width: probe.width, stroke_id: "bench-probe"}
+
+demo_probe = %{
+  path: probe.path,
+  color: probe.color,
+  width: probe.width,
+  stroke_id: "bench-probe",
+  owner: "anon:bench"
+}
+
+# The drawer's board token, for an anonymous visitor's session.
+board_token =
+  ScrawlyWeb.BoardToken.mint(%Hologram.Server{session: %{}, session_id: "bench-drawer"})
 
 # ── A room in :drawing ───────────────────────────────────────────────────
 n = System.unique_integer([:positive])
@@ -598,13 +622,17 @@ state_encode =
   )
   |> Bench.stats()
 
+# The snapshot as DemoBoardChannel pushes it: the public fields of each
+# stroke (a visitor with none of their own on the board: no `mine` flags).
 snapshot_msg = fn strokes ->
   %Phoenix.Socket.Message{
     join_ref: "1",
     ref: nil,
     topic: "demo:board",
     event: "strokes",
-    payload: %{strokes: strokes}
+    payload: %{
+      strokes: Enum.map(strokes, &ScrawlyWeb.DemoBoardChannel.public_stroke(&1, "anon:viewer"))
+    }
   }
 end
 
@@ -643,7 +671,15 @@ big_path = fn seed ->
 end
 
 big_demo =
-  for k <- 1..500, do: %{path: big_path.(k), color: "#000000", width: 4, stroke_id: "big-#{k}"}
+  for k <- 1..500,
+      do: %{
+        path: big_path.(k),
+        color: "#000000",
+        width: 4,
+        stroke_id: "big-#{k}",
+        owner: "anon:bench",
+        gesture: "big-#{k}"
+      }
 
 set_demo.(big_demo)
 
@@ -846,7 +882,7 @@ fanout =
           peer,
           Bench.WS,
           :run_sender,
-          [ws_port, deltas, interval_ms, send_ms],
+          [ws_port, board_token, deltas, interval_ms, send_ms],
           send_ms + 20_000
         )
       end)

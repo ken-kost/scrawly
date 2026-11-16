@@ -205,12 +205,24 @@ defmodule ScrawlyWeb.KeyboardShortcutsTest do
       end
     end
 
-    test "Ctrl+Z's action (:undo_drawing) undoes the last stroke" do
+    test "Ctrl+Z's action (:undo_drawing) undoes the last gesture, on both pages" do
       component = drawer()
       {result, calls} = js_calls(fn -> GamePage.action(:undo_drawing, %{}, component) end)
 
       assert result == component
       assert calls == [{:undoStroke, []}]
+
+      # Home: the visitor's own newest gesture on the board (demo_board.mjs).
+      {result, calls} = js_calls(fn -> HomePage.action(:undo_drawing, %{}, component) end)
+      assert result == component
+      assert calls == [{:undoBoard, []}]
+    end
+
+    test "the undo button follows what drawing_manager.mjs says there is to undo" do
+      on = GamePage.action(:undo_available, %{available: true}, drawer(%{can_undo: false}))
+      assert on.state.can_undo == true
+      assert GamePage.action(:undo_available, %{available: false}, on).state.can_undo == false
+      assert GamePage.action(:undo_available, %{available: 1}, on).state.can_undo == false
     end
 
     test "a size key's step reaches the page as the slider's :select_size, eraser kept" do
