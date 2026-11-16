@@ -576,7 +576,7 @@ html, body {
   display: inline-block;
   transform: translateY(-4px) skewX(-12deg);
   color: var(--accent);
-  margin: 0 -2px 0 2px;
+  margin: 0 0.1em 0 0.18em;
 }
 /* The hero's buttons wrap on the narrowest screens. */
 .hero .row { flex-wrap: wrap; }

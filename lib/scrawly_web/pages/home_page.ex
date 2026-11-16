@@ -120,11 +120,7 @@ defmodule ScrawlyWeb.Pages.HomePage do
       <window $key_down.n="shortcut_new" />
       <section class="hero">
         <div>
-          <h1>draw.<span class="slash">/</span>guess.<br/>quietly.</h1>
-          <p class="sub" style="margin-top: 16px;">
-            a pen, a word, sixty seconds. scrawly is a small online game
-            where one person draws and everyone else races to name it.
-          </p>
+          <h1>draw.<span class="slash">/</span>guess.</h1>
           <div class="row" style="gap: 8px; margin-top: 24px;">
             {%if @authenticated && !@is_guest}
               <button class="app-btn app-btn-primary app-btn-lg" $click={:show_create_room}>
